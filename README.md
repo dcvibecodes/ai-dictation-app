@@ -8,10 +8,12 @@ A full-stack web application that records your voice, transcribes it using AI, a
 
 Recording goes through a two-step AI pipeline:
 
-1. **Transcription** — your audio is sent to [Mistral's Voxtral](https://mistral.ai) model which converts speech to raw text
-2. **Cleanup** — the raw text is sent to OpenAI's GPT-4.1-mini with a detailed system prompt that fixes grammar, punctuation, removes filler words (uh, um), converts spoken numbers to digits, and structures the output into paragraphs
+1. **Transcription** — your audio is sent to a speech-to-text AI model which converts speech to raw text
+2. **Cleanup** — the raw text is sent to a language model with a detailed system prompt that fixes grammar, punctuation, removes filler words (uh, um), converts spoken numbers to digits, and structures the output into paragraphs
 
 The cleaned transcript is automatically copied to your clipboard the moment it's ready.
+
+> **Any model, your choice.** The app is model-agnostic. Both the transcription model and the cleanup model can be swapped for any provider or model you prefer — simply update the relevant values in your `.env` file. The developer's recommended defaults are **Mistral Voxtral** (`voxtral-mini-latest`) for transcription and **OpenAI GPT-4.1-mini** for cleanup, but you are not locked into either.
 
 ---
 
@@ -39,8 +41,8 @@ The cleaned transcript is automatically copied to your clipboard the moment it's
 |---|---|
 | Frontend | HTML, CSS, JavaScript (vanilla) |
 | Backend | Node.js, Express |
-| Transcription | Mistral Voxtral (`voxtral-mini-latest`) |
-| Cleanup | OpenAI GPT-4.1-mini |
+| Transcription | Any speech-to-text AI model (developer recommendation: Mistral Voxtral `voxtral-mini-latest`) |
+| Cleanup | Any language model / chat AI (developer recommendation: OpenAI GPT-4.1-mini) |
 | Audio handling | Web Audio API, MediaRecorder API |
 | File uploads | Multer |
 | Font | Inter (Google Fonts) |
@@ -64,22 +66,25 @@ npm install
 
 ### 3. Create your `.env` file
 
-Create a file called `.env` in the root folder with the following:
+Create a file called `.env` in the root folder. The app supports any speech-to-text model for transcription and any language model for cleanup. Below are the developer's recommended defaults — swap in any model and provider of your choice.
 
 ```
 PORT=3000
 
-TRANSCRIPTION_API_KEY=your_mistral_api_key
+# Transcription — any speech-to-text model (recommended: Mistral Voxtral)
+TRANSCRIPTION_API_KEY=your_transcription_api_key
 TRANSCRIPTION_BASE_URL=https://api.mistral.ai/v1
 TRANSCRIPTION_MODEL=voxtral-mini-latest
 
-CLEANUP_API_KEY=your_openai_api_key
+# Cleanup — any language model (recommended: OpenAI GPT-4.1-mini)
+CLEANUP_API_KEY=your_cleanup_api_key
 CLEANUP_BASE_URL=
 CLEANUP_MODEL=gpt-4.1-mini
 ```
 
-- Get your Mistral API key at [console.mistral.ai](https://console.mistral.ai)
-- Get your OpenAI API key at [platform.openai.com](https://platform.openai.com)
+- Get a Mistral API key at [console.mistral.ai](https://console.mistral.ai)
+- Get an OpenAI API key at [platform.openai.com](https://platform.openai.com)
+- To use a different provider, update the `API_KEY`, `BASE_URL`, and `MODEL` fields for whichever service you choose
 
 ### 4. Run the app
 
@@ -145,7 +150,7 @@ ai-dictation-app/
 
 ## Notes
 
-- The app runs locally — your audio is sent to Mistral and OpenAI APIs but is never stored anywhere permanently
+- The app runs locally — your audio is sent to whichever AI APIs you configure, but is never stored anywhere permanently
 - Temporary audio files are deleted from the server immediately after transcription
 - Session history only lives in memory — it resets when you refresh the page
 - Custom prompts are the only thing saved permanently (in `prompts.json`)
