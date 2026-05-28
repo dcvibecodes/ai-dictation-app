@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Environment variables (API keys — never upload this)
+.env
+
+# Uploaded audio temp files
+uploads/
+
+# Prompt data (personal, stays local)
+prompts.json
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Dictation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+
+    <header>
+      <div class="header-top">
+        <div class="brand">
+          <span class="logo">🎙️</span>
+          <div>
+            <h1>AI Dictation</h1>
+            <p class="subtitle">Speak. Transcribe. Clean up.</p>
+          </div>
+        </div>
+        <button id="themeToggle" class="theme-toggle" title="Toggle theme">
+          <span id="themeIcon">🌙</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="card recorder-card">
+      <canvas id="waveform"></canvas>
+      <div class="recorder-right">
+        <div id="timer">00:00</div>
+        <div class="controls">
+          <button id="toggleBtn" class="btn btn-record">
+            <span class="btn-icon">●</span> Start Recording
+          </button>
+          <button id="clearBtn" class="btn btn-clear">✕ Clear</button>
+        </div>
+        <div id="status" class="status">Ready — press S to start</div>
+      </div>
+    </div>
+
+    <!-- Prompt selector bar -->
+    <div class="card prompt-bar">
+      <span class="prompt-bar-label">Prompt</span>
+      <div class="prompt-bar-tabs" id="promptBarTabs"></div>
+      <button class="pill-btn prompt-manage-btn" onclick="openManageModal()">⚙ Manage</button>
+    </div>
+
+    <div class="results">
+      <div class="card output-card">
+        <div class="card-header">
+          <h2>Raw Transcript</h2>
+          <div class="card-actions">
+            <span class="word-count" id="rawWordCount">0 words</span>
+            <button class="pill-btn" onclick="copyText('rawTranscript')">Copy</button>
+          </div>
+        </div>
+        <textarea id="rawTranscript" placeholder="Raw transcript will appear here..."></textarea>
+      </div>
+
+      <div class="card output-card">
+        <div class="card-header">
+          <h2>Cleaned Transcript</h2>
+          <div class="card-actions">
+            <span class="word-count" id="cleanWordCount">0 words</span>
+            <button class="pill-btn" onclick="copyText('cleanTranscript')">Copy</button>
+          </div>
+        </div>
+        <textarea id="cleanTranscript" placeholder="AI-cleaned transcript will appear here..."></textarea>
+      </div>
+    </div>
+
+    <div class="card history-card" id="historySection">
+      <div class="card-header">
+        <h2>Session History</h2>
+        <button class="pill-btn" onclick="clearHistory()">Clear All</button>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </div>
+
+    <!-- Add/Edit Prompt Modal -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 id="modalTitle">New Prompt</h3>
+          <button class="modal-close" onclick="closePromptModal()">✕</button>
+        </div>
+        <input type="text" id="promptNameInput" class="modal-input" placeholder="Prompt name (e.g. Casual Notes)" maxlength="40">
+        <textarea id="promptTextInput" class="modal-textarea" placeholder="Write your cleanup instructions here..."></textarea>
+        <div class="modal-footer">
+          <button class="pill-btn" onclick="closePromptModal()">Cancel</button>
+          <button class="pill-btn pill-btn-accent" onclick="savePrompt()">Save Prompt</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manage Prompts Modal -->
+    <div class="modal-overlay" id="manageOverlay" onclick="closeManageModal(event)">
+      <div class="modal modal-wide">
+        <div class="modal-header">
+          <h3>Manage Prompts</h3>
+          <button class="modal-close" onclick="closeManageModal()">✕</button>
+        </div>
+        <div class="manage-list" id="manageList"></div>
+        <div class="modal-footer">
+          <button class="pill-btn pill-btn-accent" id="manageAddBtn" onclick="openAddPromptModal()">+ Add Prompt</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
