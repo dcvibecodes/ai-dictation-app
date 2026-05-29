@@ -37,8 +37,44 @@ window.addEventListener('resize', resizeCanvas);
 
 // ── Clean transcript toggle ───────────────────────────
 const cleanToggle = document.getElementById('cleanToggle');
+const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 cleanToggle.checked = localStorage.getItem('cleanTranscript') !== 'false';
-cleanToggle.addEventListener('change', () => localStorage.setItem('cleanTranscript', cleanToggle.checked));
+cleanToggle.addEventListener('change', () => {
+  localStorage.setItem('cleanTranscript', cleanToggle.checked);
+  updateSendCleanupBtn();
+});
+
+function updateSendCleanupBtn() {
+  const hasRaw = document.getElementById('rawTranscript').value.trim() !== '';
+  sendCleanupBtn.style.display = (!cleanToggle.checked && hasRaw) ? '' : 'none';
+}
+
+async function sendRawForCleanup() {
+  const rawTranscript = document.getElementById('rawTranscript').value.trim();
+  if (!rawTranscript) return;
+  sendCleanupBtn.disabled = true;
+  sendCleanupBtn.textContent = '… Cleaning';
+  try {
+    const cleanRes = await fetch('/cleanup', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rawTranscript, prompt: getActivePrompt().text })
+    });
+    if (!cleanRes.ok) throw new Error(`Cleanup failed: ${cleanRes.status}`);
+    const cleanData = await cleanRes.json();
+    if (cleanData.error) throw new Error(cleanData.error);
+    const cleanedTranscript = cleanData.cleanedTranscript || '';
+    document.getElementById('cleanTranscript').value = cleanedTranscript;
+    updateWordCount('cleanTranscript', 'cleanWordCount');
+    navigator.clipboard.writeText(cleanedTranscript);
+    showToast('Cleaned transcript copied!');
+    setStatus('Done ✓', 'done');
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'error');
+  }
+  sendCleanupBtn.disabled = false;
+  sendCleanupBtn.textContent = '✦ Clean up';
+}
 
 // ── Status ─────────────────────────────────────────────
 function setStatus(text, type = '') {
@@ -98,7 +134,10 @@ function countWords(text) {
 function updateWordCount(textareaId, countElId) {
   document.getElementById(countElId).textContent = countWords(document.getElementById(textareaId).value) + ' words';
 }
-document.getElementById('rawTranscript').addEventListener('input', () => updateWordCount('rawTranscript', 'rawWordCount'));
+document.getElementById('rawTranscript').addEventListener('input', () => {
+  updateWordCount('rawTranscript', 'rawWordCount');
+  updateSendCleanupBtn();
+});
 document.getElementById('cleanTranscript').addEventListener('input', () => updateWordCount('cleanTranscript', 'cleanWordCount'));
 
 // ── Clear ──────────────────────────────────────────────
@@ -107,6 +146,7 @@ clearBtn.onclick = () => {
   document.getElementById('cleanTranscript').value = '';
   document.getElementById('rawWordCount').textContent = '0 words';
   document.getElementById('cleanWordCount').textContent = '0 words';
+  updateSendCleanupBtn();
   setStatus('Ready — press S to start');
   timerEl.textContent = '00:00';
 };
@@ -403,6 +443,7 @@ async function startRecording() {
       setStatus('Recording cancelled', 'error');
       toggleBtn.disabled = false;
       setButtonState('idle');
+      setTimeout(() => setStatus('Ready — press S to start'), 1000);
       return;
     }
     setStatus('Transcribing...', 'processing');
@@ -421,6 +462,7 @@ async function startRecording() {
       const rawTranscript = uploadData.rawTranscript || '';
       document.getElementById('rawTranscript').value = rawTranscript;
       updateWordCount('rawTranscript', 'rawWordCount');
+      updateSendCleanupBtn();
 
       // Step 2 — clean up (optional)
       if (cleanToggle.checked) {

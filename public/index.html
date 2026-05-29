@@ -45,7 +45,7 @@
     <div class="card prompt-bar">
       <label class="clean-toggle-label">
         <input type="checkbox" id="cleanToggle" checked>
-        <span>Clean transcript</span>
+        <span>Always clean transcript</span>
       </label>
       <span class="prompt-bar-label">Prompt</span>
       <div class="prompt-bar-tabs" id="promptBarTabs"></div>
@@ -58,6 +58,7 @@
           <h2>Raw Transcript</h2>
           <div class="card-actions">
             <span class="word-count" id="rawWordCount">0 words</span>
+            <button class="pill-btn" id="sendCleanupBtn" style="display:none" onclick="sendRawForCleanup()">✦ Clean up</button>
             <button class="pill-btn" onclick="copyText('rawTranscript')">Copy</button>
           </div>
         </div>
