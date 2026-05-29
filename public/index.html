@@ -34,6 +34,7 @@
           <button id="toggleBtn" class="btn btn-record">
             <span class="btn-icon">●</span> Start Recording
           </button>
+          <button id="cancelBtn" class="btn btn-cancel" style="display:none">✕ Cancel</button>
           <button id="clearBtn" class="btn btn-clear">✕ Clear</button>
         </div>
         <div id="status" class="status">Ready — press S to start</div>
@@ -42,6 +43,10 @@
 
     <!-- Prompt selector bar -->
     <div class="card prompt-bar">
+      <label class="clean-toggle-label">
+        <input type="checkbox" id="cleanToggle" checked>
+        <span>Clean transcript</span>
+      </label>
       <span class="prompt-bar-label">Prompt</span>
       <div class="prompt-bar-tabs" id="promptBarTabs"></div>
       <button class="pill-btn prompt-manage-btn" onclick="openManageModal()">⚙ Manage</button>

@@ -1,10 +1,12 @@
 let mediaRecorder, audioChunks = [], audioContext, analyser, source, animationId;
 let timerInterval, secondsElapsed = 0;
 let isRecording = false;
+let cancelled = false;
 let history = [];
 
-const toggleBtn = document.getElementById('toggleBtn');
-const clearBtn  = document.getElementById('clearBtn');
+const toggleBtn  = document.getElementById('toggleBtn');
+const cancelBtn  = document.getElementById('cancelBtn');
+const clearBtn   = document.getElementById('clearBtn');
 const statusEl  = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl   = document.getElementById('timer');
@@ -32,6 +34,11 @@ function resizeCanvas() {
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
+
+// ── Clean transcript toggle ───────────────────────────
+const cleanToggle = document.getElementById('cleanToggle');
+cleanToggle.checked = localStorage.getItem('cleanTranscript') !== 'false';
+cleanToggle.addEventListener('change', () => localStorage.setItem('cleanTranscript', cleanToggle.checked));
 
 // ── Status ─────────────────────────────────────────────
 function setStatus(text, type = '') {
@@ -390,6 +397,14 @@ async function startRecording() {
     stopTimer();
     clearWaveform();
 
+    if (cancelled) {
+      cancelled = false;
+      audioChunks = [];
+      setStatus('Recording cancelled', 'error');
+      toggleBtn.disabled = false;
+      setButtonState('idle');
+      return;
+    }
     setStatus('Transcribing...', 'processing');
     toggleBtn.disabled = true;
 
@@ -407,25 +422,33 @@ async function startRecording() {
       document.getElementById('rawTranscript').value = rawTranscript;
       updateWordCount('rawTranscript', 'rawWordCount');
 
-      // Step 2 — send raw text + active prompt as JSON, get cleaned text
-      setStatus('Cleaning up...', 'processing');
-      const cleanRes = await fetch('/cleanup', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ rawTranscript, prompt: getActivePrompt().text })
-      });
-      if (!cleanRes.ok) throw new Error(`Cleanup failed: ${cleanRes.status} ${cleanRes.statusText}`);
-      const cleanData = await cleanRes.json();
-      if (cleanData.error) throw new Error(cleanData.error);
+      // Step 2 — clean up (optional)
+      if (cleanToggle.checked) {
+        setStatus('Cleaning up...', 'processing');
+        const cleanRes = await fetch('/cleanup', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ rawTranscript, prompt: getActivePrompt().text })
+        });
+        if (!cleanRes.ok) throw new Error(`Cleanup failed: ${cleanRes.status} ${cleanRes.statusText}`);
+        const cleanData = await cleanRes.json();
+        if (cleanData.error) throw new Error(cleanData.error);
 
-      const cleanedTranscript = cleanData.cleanedTranscript || '';
-      document.getElementById('cleanTranscript').value = cleanedTranscript;
-      updateWordCount('cleanTranscript', 'cleanWordCount');
+        const cleanedTranscript = cleanData.cleanedTranscript || '';
+        document.getElementById('cleanTranscript').value = cleanedTranscript;
+        updateWordCount('cleanTranscript', 'cleanWordCount');
 
-      if (cleanedTranscript) {
-        addToHistory(rawTranscript, cleanedTranscript);
-        navigator.clipboard.writeText(cleanedTranscript);
-        showToast('Cleaned transcript copied!');
+        if (cleanedTranscript) {
+          addToHistory(rawTranscript, cleanedTranscript);
+          navigator.clipboard.writeText(cleanedTranscript);
+          showToast('Cleaned transcript copied!');
+        }
+      } else {
+        document.getElementById('cleanTranscript').value = '';
+        document.getElementById('cleanWordCount').textContent = '0 words';
+        addToHistory(rawTranscript, rawTranscript);
+        navigator.clipboard.writeText(rawTranscript);
+        showToast('Raw transcript copied!');
       }
       setStatus('Done ✓', 'done');
     } catch (err) {
@@ -438,7 +461,15 @@ async function startRecording() {
 
   mediaRecorder.start();
   setButtonState('recording');
-  setStatus('Recording... — press S to stop', 'active');
+  setStatus('Recording... — press S to stop, C to cancel', 'active');
+}
+
+function cancelRecording() {
+  cancelled = true;
+  mediaRecorder.stop();
+  mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  setButtonState('idle');
+  cancelBtn.style.display = 'none';
 }
 
 function stopRecording() {
@@ -454,11 +485,13 @@ function setButtonState(state) {
     processing: { html: '<span class="btn-icon">…</span> Processing',      cls: 'btn btn-record' }
   };
   isRecording = state === 'recording';
+  cancelBtn.style.display = state === 'recording' ? '' : 'none';
   toggleBtn.innerHTML = states[state].html;
   toggleBtn.className = states[state].cls;
 }
 
 toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
+cancelBtn.onclick = cancelRecording;
 
 // ── Copy ───────────────────────────────────────────────
 function copyText(id) {
@@ -481,6 +514,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); }
     else { closeManageModal(); }
+  }
+  if (e.key === 'c' && isRecording && !e.ctrlKey && !e.metaKey && !e.altKey &&
+      !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+    cancelRecording();
   }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey && !e.altKey &&
       !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {

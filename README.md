@@ -27,7 +27,9 @@ The cleaned transcript is automatically copied to your clipboard the moment it's
 - 🔢 **Live word count** on both transcript panels
 - 🕓 **Session history** — all transcriptions from the current session saved with timestamps, restore or copy any past entry
 - ✕ **Clear button** — wipe both panels and start fresh
-- ⌨️ **Keyboard shortcut** — press `S` to start and stop recording without touching the mouse
+- 🚫 **Cancel recording** — abort a recording mid-session without sending audio to the API; no credits consumed
+- 🔀 **Clean transcript toggle** — skip the cleanup step entirely when the raw transcript is sufficient (useful when the transcription model already removes filler words)
+- ⌨️ **Keyboard shortcuts** — press `S` to start/stop recording, `C` to cancel recording without touching the mouse
 - 🌙 ☀️ **Dark and light theme** — toggle with one click, preference saved across sessions
 - 💬 **Custom prompts** — create up to 4 custom cleanup prompts and switch between them instantly
 - 🔒 **Protected default prompt** — the built-in prompt can be edited but the original is always restorable
@@ -107,12 +109,13 @@ You can create up to 4 additional custom prompts via the **⚙ Manage** button o
 
 ---
 
-## Keyboard Shortcut
+## Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
 | `S` | Start recording |
-| `S` | Stop recording |
+| `S` | Stop recording (sends audio for transcription) |
+| `C` | Cancel recording (discards audio, no API call made) |
 | `Escape` | Close any open modal |
 
 ---
