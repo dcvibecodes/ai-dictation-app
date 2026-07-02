@@ -7,6 +7,9 @@ node_modules/
 # Uploaded audio temp files
 uploads/
 
+# Data directory (passwords, session secrets, API keys)
+data/
+
 # Prompt data (personal, stays local)
 prompts.json
 

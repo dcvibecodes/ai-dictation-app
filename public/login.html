@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Dictation Tool</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="auth.css">
+</head>
+<body>
+  <div class="auth-container">
+    <div class="auth-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+        <line x1="12" y1="19" x2="12" y2="23"></line>
+        <line x1="8" y1="23" x2="16" y2="23"></line>
+      </svg>
+      <h1>Dictation Tool</h1>
+    </div>
+    <div class="auth-card">
+      <h2>Login</h2>
+      <p>Enter your password to access the dictation tool.</p>
+      <div id="errorMsg" class="auth-error" style="display:none"></div>
+      <form action="/login" method="POST">
+        <input type="password" name="password" placeholder="Password" required autocomplete="current-password" autofocus>
+        <button type="submit">Login</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error') === '1') {
+      const el = document.getElementById('errorMsg');
+      el.style.display = 'block';
+      el.textContent = 'Incorrect password. Try again.';
+    }
+  </script>
+</body>
+</html>
