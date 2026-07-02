@@ -250,7 +250,8 @@ app.post('/cleanup', requireOwner, async (req, res) => {
 });
 // --- Static files (AFTER all API routes) ---
 app.use((req, res, next) => {
-  const publicPaths = ['/login.html', '/setup.html', '/auth.css'];
+  // Public paths that don't need auth
+  const publicPaths = ['/login.html', '/setup.html', '/auth.css', '/manifest.json', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/sw.js'];
   if (publicPaths.includes(req.path)) return express.static(path.join(__dirname, 'public'))(req, res, next);
   if (!req.isOwner) return res.status(401).send('Unauthorized');
   express.static(path.join(__dirname, 'public'))(req, res, next);
