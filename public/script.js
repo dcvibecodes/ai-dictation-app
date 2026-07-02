@@ -414,3 +414,9 @@ document.addEventListener('keydown', e => {
 // ── Init ───────────────────────────────────────────────
 loadPrompts();
 renderHistory();
+
+
+// ── Service Worker (PWA) ───────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}

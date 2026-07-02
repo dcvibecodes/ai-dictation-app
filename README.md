@@ -1,6 +1,6 @@
 # Dictation Tool
 
-A password-protected dictation app that records your voice, transcribes it, and cleans up the transcript using AI. No `.env` file required — configure everything from the UI.
+A password-protected dictation PWA that records your voice, transcribes it, and cleans up the transcript using AI. No `.env` file required — configure everything from the UI. Installable as a standalone app on any device.
 
 ---
 
@@ -27,20 +27,33 @@ No `.env` file needed. All configuration lives in the UI.
 
 ---
 
+## Install as App (PWA)
+
+Since this is a Progressive Web App, you can install it as a standalone window — no app store, no admin rights needed:
+
+1. Open the app in Chrome/Edge
+2. Click the install icon in the address bar (or three-dot menu → "Install app")
+3. It appears in your taskbar/start menu and opens in its own window
+
+Works on desktop and mobile. Ideal for work computers where you can't install software.
+
+---
+
 ## Features
 
+- **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Dictate tab** — record, transcribe, and clean up in one flow
 - **Frequency bar waveform** — live audio visualization while recording
 - **Auto-clean toggle** — skip cleanup when you just want raw text
-- **Multiple cleanup prompts** — create up to 4 custom prompts, switch instantly
-- **History tab** — persistent session history (localStorage, 20 entries), restore or copy any past transcription
-- **Settings tab** — configure API keys, base URLs, models, and manage prompts all in one place
+- **Multiple cleanup prompts** — up to 4 custom prompts, switch instantly
+- **History tab** — persistent session history (localStorage, 20 entries)
+- **Settings tab** — API keys, models, base URLs, and prompt management
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Dark/light theme** — respects system preference on login, toggleable in-app
+- **Dark/light theme** — toggleable, login page respects system preference
 - **Keyboard shortcuts** — `S` start/stop, `C` cancel, `Escape` close modals
-- **Auto-copy** — cleaned transcript copied to clipboard automatically
-- **Works with any provider** — Mistral, OpenAI, Grok, Gemini, or any compatible API
+- **Auto-copy** — transcript copied to clipboard automatically
+- **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
 
 ---
 
@@ -50,7 +63,7 @@ No `.env` file needed. All configuration lives in the UI.
 |---|---|
 | Dictate | Record, transcribe, clean up, copy |
 | History | View/restore/copy past transcriptions |
-| Settings | API keys, models, base URLs, cleanup prompts |
+| Settings | API config + cleanup prompt management |
 
 ---
 
@@ -64,6 +77,16 @@ No `.env` file needed. All configuration lives in the UI.
 
 ---
 
+## Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `S` | Start/stop recording |
+| `C` | Cancel recording |
+| `Escape` | Close modal |
+
+---
+
 ## Project Structure
 
 ```
@@ -74,7 +97,12 @@ dictation-app/
 │   ├── setup.html       # First-time setup
 │   ├── auth.css         # Auth page styles
 │   ├── script.js        # Frontend logic
-│   └── styles.css       # Main styles
+│   ├── styles.css       # Main styles
+│   ├── sw.js            # Service worker (PWA)
+│   ├── manifest.json    # PWA manifest
+│   ├── favicon.svg      # App icon
+│   ├── icon-192.png     # PWA icon
+│   └── icon-512.png     # PWA icon
 ├── data/                # Auto-created, gitignored
 │   ├── owner.hash       # Password hash
 │   ├── session.secret   # HMAC secret
@@ -82,6 +110,7 @@ dictation-app/
 ├── uploads/             # Temp audio (auto-deleted)
 ├── prompts.json         # Custom prompts
 ├── server.js            # Express backend
+├── generate-icons.js    # Icon generator (run once)
 ├── package.json
 └── .gitignore
 ```
@@ -90,16 +119,18 @@ dictation-app/
 
 ## API Configuration
 
-Configure from the Settings tab. Supports any provider with an OpenAI-compatible API format:
+Configure from the Settings tab. Works with any provider that uses the same API format:
 
 | Field | Example |
 |---|---|
-| Transcription API Key | `sk-...` or Mistral key |
-| Transcription Base URL | `https://api.mistral.ai/v1` (blank = OpenAI default) |
+| Transcription API Key | Mistral key, OpenAI key, etc. |
+| Transcription Base URL | `https://api.mistral.ai/v1` (required for non-OpenAI) |
 | Transcription Model | `whisper-1`, `voxtral-mini-latest` |
-| Cleanup API Key | `sk-...` |
-| Cleanup Base URL | blank for OpenAI, or provider URL |
+| Cleanup API Key | Your provider's key |
+| Cleanup Base URL | Provider URL (blank = OpenAI) |
 | Cleanup Model | `gpt-4.1-mini`, `mistral-large-latest` |
+
+The base URL must match the provider that issued the key.
 
 ---
 
@@ -107,19 +138,19 @@ Configure from the Settings tab. Supports any provider with an OpenAI-compatible
 
 | Layer | Technology |
 |---|---|
-| Frontend | Vanilla HTML/CSS/JS, Inter font |
+| Frontend | Vanilla HTML/CSS/JS, Inter font, PWA |
 | Backend | Node.js, Express |
 | Auth | bcryptjs, cookie-parser, HMAC sessions |
-| AI | Any OpenAI-compatible speech-to-text + chat API |
+| AI | Any compatible speech-to-text + chat API |
 | Audio | Web Audio API, MediaRecorder |
 
 ---
 
 ## Notes
 
-- No `.env` file required — configure everything from Settings tab
+- No `.env` file required — all config via Settings tab
 - Audio temp files deleted immediately after transcription
 - Session history is browser-side (localStorage)
 - API keys stored in `data/settings.json` (gitignored)
-- Prompts stored in `prompts.json`
-- The `data/` directory is auto-created on first run and fully gitignored
+- `data/` directory auto-created on first run, fully gitignored
+- PWA works offline for the UI shell; recording requires network for AI APIs

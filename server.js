@@ -248,7 +248,6 @@ app.post('/cleanup', requireOwner, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // --- Static files (AFTER all API routes) ---
 app.use((req, res, next) => {
   const publicPaths = ['/login.html', '/setup.html', '/auth.css'];
