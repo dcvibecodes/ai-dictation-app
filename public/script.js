@@ -287,16 +287,19 @@ function visualize() {
   }
   draw();
 }
-function clearWaveform() {
-  ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
-  // Draw a subtle center line when idle
+function drawIdleLine() {
   const y = waveformCanvas.height / 2;
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-subtle').trim() || '#1e1e1e';
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#2e2e2e';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, y);
   ctx.lineTo(waveformCanvas.width, y);
   ctx.stroke();
+}
+
+function clearWaveform() {
+  ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+  drawIdleLine();
 }
 
 // ── Word Count ─────────────────────────────────────────
@@ -812,6 +815,7 @@ loadPrompts();
 renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
+drawIdleLine();
 
 // ── Service Worker (PWA) ───────────────────────────────
 if ('serviceWorker' in navigator) {
