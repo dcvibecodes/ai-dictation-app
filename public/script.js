@@ -716,7 +716,11 @@ async function copyText(id) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-  if (e.key === 'c' && isRecording && !e.ctrlKey && !e.metaKey) cancelRecording();
+  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) {
+    if (processingAbortController) { abortProcessing(); }
+    else if (isRecording) { cancelRecording(); }
+    else { clearBtn.click(); }
+  }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleBtn.click(); }
 });
 

@@ -51,7 +51,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Settings tab** — API keys, models, base URLs, and prompt management
 - **Locked settings** — API config is read-only by default, click Edit to modify
 - **Dark/light theme** — toggleable, login page respects system preference
-- **Keyboard shortcuts** — `S` start/stop, `C` cancel, `Escape` close modals
+- **Keyboard shortcuts** — `S` start/stop, `C` cancel/clear/abort, `Escape` close modals
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
@@ -91,7 +91,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | Key | Action |
 |---|---|
 | `S` | Start/stop recording |
-| `C` | Cancel recording |
+| `C` | Cancel recording / abort processing / clear text |
 | `Escape` | Close modal |
 
 ---
