@@ -21,39 +21,28 @@ const downloadRecordingBtn = document.getElementById('downloadRecordingBtn');
 const clearRecordingBtn = document.getElementById("clearRecordingBtn");
 const uploadAudioBtn = document.getElementById("uploadAudioBtn");
 const fileInput = document.getElementById("fileInput");
-const statusBar = document.getElementById("statusBar");
 
 const AUDIO_DB = 'dictationAudioBackup';
 const AUDIO_STORE = 'recordings';
 const AUDIO_KEY = 'latest';
 
-// ── Status Bar (replaces bottom toast) ─────────────────
-function showStatusBar(msg, type, isProcessing) {
-  statusBar.textContent = msg || '';
-  statusBar.className = 'status-bar';
-  if (type) statusBar.classList.add('status-bar-' + type);
-  if (isProcessing) {
-    statusBar.classList.add('status-bar-processing');
-    // Show a cancel button inside the bar
-    const existingBtn = statusBar.querySelector('.cancel-processing-btn');
-    if (!existingBtn) {
-      const btn = document.createElement('button');
-      btn.className = 'cancel-processing-btn';
-      btn.textContent = 'Cancel';
-      btn.onclick = cancelProcessing;
-      statusBar.appendChild(btn);
-    }
-  } else {
-    const btn = statusBar.querySelector('.cancel-processing-btn');
-    if (btn) btn.remove();
+// ── Status helper (shows in the sub-row span, replaces bottom toast) ──
+function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
+function setStatusProcessing(t) {
+  setStatus(t, 'processing');
+  // Add a Cancel button next to the status text if not already present
+  if (!document.querySelector('.processing-cancel-btn')) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-sm processing-cancel-btn';
+    btn.textContent = 'Cancel';
+    btn.onclick = cancelProcessing;
+    statusEl.parentNode.insertBefore(btn, statusEl.nextSibling);
   }
-  statusBar.classList.add('visible');
 }
-
-function hideStatusBar() {
-  statusBar.classList.remove('visible');
-  statusBar.textContent = '';
-  statusBar.className = 'status-bar';
+function clearProcessingUI() {
+  setStatus('Ready');
+  const btn = document.querySelector('.processing-cancel-btn');
+  if (btn) btn.remove();
 }
 
 function cancelProcessing() {
@@ -142,13 +131,10 @@ function formatBytes(bytes) {
 }
 
 async function getBestAudioBackup() {
-  // Prefer IndexedDB, fall back to in-memory blob
   try {
     const dbRecord = await getAudioBackup();
     if (dbRecord) return dbRecord;
-  } catch {
-    // IndexedDB unavailable
-  }
+  } catch {}
   if (inMemoryAudioBlob) {
     return { id: AUDIO_KEY, blob: inMemoryAudioBlob, type: inMemoryAudioBlob.type || 'audio/webm', size: inMemoryAudioBlob.size, createdAt: Date.now(), seconds: secondsElapsed };
   }
@@ -221,7 +207,7 @@ async function sendRawForCleanup() {
   const raw = document.getElementById('rawTranscript').value.trim();
   if (!raw) return;
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
-  showStatusBar('Cleaning up…', 'info', true);
+  setStatusProcessing('Cleaning up…');
   try {
     const abortController = new AbortController();
     processingAbortController = abortController;
@@ -235,26 +221,23 @@ async function sendRawForCleanup() {
     autoResize(el);
     updateWordCount('cleanTranscript', 'cleanWordCount');
     await copyToClipboard(el.value);
-    showStatusBar('Copied to clipboard', 'success');
-    setTimeout(hideStatusBar, 2000);
-    setStatus('Done ✓', 'done');
+    setStatus('Copied ✓', 'done');
+    setTimeout(() => setStatus('Ready'), 2000);
   } catch (e) {
     if (e.name === 'AbortError') {
-      showStatusBar('Cancelled', 'error');
-      setTimeout(hideStatusBar, 1500);
       setStatus('Cancelled', 'error');
+      setTimeout(() => setStatus('Ready'), 1500);
     } else {
-      showStatusBar('Error: ' + e.message, 'error');
-      setTimeout(hideStatusBar, 2500);
       setStatus('Error: ' + e.message, 'error');
+      setTimeout(() => setStatus('Ready'), 3000);
     }
   }
   processingAbortController = null;
+  clearProcessingUI();
   sendCleanupBtn.disabled = false; sendCleanupBtn.textContent = 'Clean up';
 }
 
 // ── Status / Timer ────────────────────────────────────
-function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
 function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(() => { secondsElapsed++; timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0'); }, 1000); }
 function stopTimer() { clearInterval(timerInterval); }
 
@@ -266,7 +249,6 @@ function getBarColor() {
   }
   return cachedBarColor;
 }
-// Invalidate color cache when theme changes
 const _origSetTheme = setTheme;
 setTheme = function(theme) {
   _origSetTheme(theme);
@@ -314,11 +296,7 @@ document.getElementById('cleanTranscript').addEventListener('input', () => updat
 
 // ── Clear ──────────────────────────────────────────────
 clearBtn.onclick = async () => {
-  // If processing, cancel it first
-  if (processingAbortController) {
-    cancelProcessing();
-  }
-  // Stop active recording first to avoid confusing state
+  if (processingAbortController) cancelProcessing();
   if (isRecording) stopRecording();
   ['rawTranscript', 'cleanTranscript'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.style.height = '130px'; });
   document.getElementById('rawWordCount').textContent = '0w';
@@ -326,7 +304,7 @@ clearBtn.onclick = async () => {
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
-  hideStatusBar();
+  clearProcessingUI();
   updateSendCleanupBtn(); setStatus('Ready'); timerEl.textContent = '00:00';
 };
 
@@ -429,7 +407,7 @@ async function savePrompt() {
   const res = await fetch('/prompts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: isD ? 'Default' : name, text }) });
   if (res.status === 401) { window.location.href = '/login'; return; }
   const data = await res.json();
-  if (data.error) { /* silent */ return; }
+  if (data.error) { return; }
   if (!editingPromptId) { activePromptId = id; localStorage.setItem('activePromptId', id); }
   await loadPrompts(); closePromptModal();
 }
@@ -520,8 +498,7 @@ async function transcribeAudioBlob(audioBlob) {
   toggleBtn.classList.add('processing');
   toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
   retryRecordingBtn.disabled = true;
-  setStatus('Transcribing…', 'processing');
-  showStatusBar('Transcribing…', 'info', true);
+  setStatusProcessing('Transcribing…');
 
   const rawEl = document.getElementById('rawTranscript');
   const cleanEl = document.getElementById('cleanTranscript');
@@ -546,8 +523,7 @@ async function transcribeAudioBlob(audioBlob) {
     updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
 
     if (cleanToggle.checked && raw.trim()) {
-      setStatus('Cleaning…', 'processing');
-      showStatusBar('Cleaning up…', 'info', true);
+      setStatusProcessing('Cleaning up…');
       const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
       if (cRes.status === 401) { window.location.href = '/login'; return; }
       if (!cRes.ok) {
@@ -556,9 +532,8 @@ async function transcribeAudioBlob(audioBlob) {
         await clearAudioBackup();
         await clearInMemoryAudioBackup();
         hideRecoveryRow();
-        setStatus('Cleanup failed: click Clean up to retry', 'error');
-        showStatusBar('Cleanup failed — raw transcript copied', 'error');
-        setTimeout(hideStatusBar, 2500);
+        setStatus('Cleanup failed — use Clean up to retry', 'error');
+        setTimeout(() => setStatus('Ready'), 3000);
         return;
       }
       const cData = await cRes.json();
@@ -566,30 +541,30 @@ async function transcribeAudioBlob(audioBlob) {
       const cleaned = cData.cleanedTranscript || '';
       cleanEl.value = cleaned; autoResize(cleanEl);
       updateWordCount('cleanTranscript', 'cleanWordCount');
-      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); showStatusBar('Copied to clipboard', 'success'); setTimeout(hideStatusBar, 2000); }
+      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); }
     } else {
       cleanEl.value = '';
       document.getElementById('cleanWordCount').textContent = '0w';
-      addToHistory(raw, raw); await copyToClipboard(raw); showStatusBar('Copied to clipboard', 'success'); setTimeout(hideStatusBar, 2000);
+      addToHistory(raw, raw); await copyToClipboard(raw);
     }
 
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
-    setStatus('Done ✓', 'done');
+    setStatus('Copied ✓', 'done');
+    setTimeout(() => setStatus('Ready'), 2000);
   } catch (e) {
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
-      showStatusBar('Cancelled', 'error');
-      setTimeout(hideStatusBar, 1500);
+      setTimeout(() => setStatus('Ready'), 1500);
     } else {
       setStatus('Error: ' + e.message, 'error');
-      showStatusBar('Error: ' + e.message, 'error');
-      setTimeout(hideStatusBar, 2500);
+      setTimeout(() => setStatus('Ready'), 3000);
       showRecoveryRow();
     }
   } finally {
     processingAbortController = null;
+    clearProcessingUI();
     retryRecordingBtn.disabled = false;
     resetButton();
   }
@@ -621,7 +596,6 @@ async function startRecording() {
       toggleBtn.classList.remove('recording');
       cancelBtn.style.display = 'none';
 
-      // Close AudioContext to release resources
       if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
       if (cancelled) {
@@ -682,7 +656,6 @@ clearRecordingBtn.onclick = async () => {
 };
 
 // ── Utilities ──────────────────────────────────────────
-// File Upload (transcribe audio from disk)
 if (uploadAudioBtn) {
   uploadAudioBtn.onclick = () => fileInput.click();
 }
@@ -693,14 +666,19 @@ if (fileInput) {
     fileInput.value = '';
     try {
       await saveAudioBackup(file);
-    } catch {
-      // silent
-    }
+    } catch {}
     await transcribeAudioBlob(file);
   };
 }
 
-async function copyText(id) { const t = document.getElementById(id).value; if (t) { await copyToClipboard(t); showStatusBar(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied', 'success'); setTimeout(hideStatusBar, 1500); } }
+async function copyText(id) {
+  const t = document.getElementById(id).value;
+  if (t) {
+    await copyToClipboard(t);
+    setStatus(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied', 'done');
+    setTimeout(() => setStatus('Ready'), 1500);
+  }
+}
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
@@ -725,7 +703,6 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
   const RECORDER_MIN_BOTTOM = 0;
   const RECORDER_MAX_BOTTOM = () => window.innerHeight - 80;
 
-  // Restore saved position
   const savedBottom = localStorage.getItem('recorderBarBottom');
   if (savedBottom !== null) {
     const val = parseFloat(savedBottom);
@@ -734,7 +711,6 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
     }
   }
 
-  // Touch handlers — drag anywhere, buttons still get their own touch events
   recorderRow.addEventListener('touchstart', e => {
     if (e.target.closest('button, input, canvas')) return;
     isDragging = false;
@@ -769,7 +745,6 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
     startY = 0;
   });
 
-  // Mouse handlers (for desktop testing)
   recorderRow.addEventListener('mousedown', e => {
     if (e.target.closest('button, input, canvas')) return;
     isDragging = false;
@@ -808,7 +783,6 @@ loadPrompts();
 renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
-
 
 // ── Service Worker (PWA) ───────────────────────────────
 if ('serviceWorker' in navigator) {
