@@ -522,6 +522,7 @@ async function transcribeAudioBlob(audioBlob) {
     rawEl.value = raw; autoResize(rawEl);
     updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
 
+    let copiedLabel = '';
     if (cleanToggle.checked && raw.trim()) {
       setStatusProcessing('Cleaning up…');
       const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
@@ -541,17 +542,18 @@ async function transcribeAudioBlob(audioBlob) {
       const cleaned = cData.cleanedTranscript || '';
       cleanEl.value = cleaned; autoResize(cleanEl);
       updateWordCount('cleanTranscript', 'cleanWordCount');
-      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); }
+      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
     } else {
       cleanEl.value = '';
       document.getElementById('cleanWordCount').textContent = '0w';
       addToHistory(raw, raw); await copyToClipboard(raw);
+      copiedLabel = 'Raw copied';
     }
 
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
-    setStatus('Copied ✓', 'done');
+    setStatus(copiedLabel, 'done');
     // Delay clearing processing UI so "Copied ✓" is visible
     setTimeout(() => {
       clearProcessingUI();
