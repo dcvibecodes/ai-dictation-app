@@ -272,7 +272,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .help-details[open] .help-summary::before { transform: rotate(90deg); }
 .help-summary:hover { background: var(--accent-dim); }
 .help-content {
-  padding: 0 12px 12px;
+  padding: 8px 12px 14px;
   font-size: 0.76rem;
   color: var(--text-muted);
   line-height: 1.6;
