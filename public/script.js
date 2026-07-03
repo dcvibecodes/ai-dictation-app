@@ -552,22 +552,37 @@ async function transcribeAudioBlob(audioBlob) {
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     setStatus('Copied ✓', 'done');
-    setTimeout(() => setStatus('Ready'), 2000);
+    // Delay clearing processing UI so "Copied ✓" is visible
+    setTimeout(() => {
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+    }, 2000);
+    return; // Don't fall through to finally which would clear immediately
   } catch (e) {
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
-      setTimeout(() => setStatus('Ready'), 1500);
+      setTimeout(() => {
+        clearProcessingUI();
+        retryRecordingBtn.disabled = false;
+        resetButton();
+      }, 1500);
     } else {
       setStatus('Error: ' + e.message, 'error');
-      setTimeout(() => setStatus('Ready'), 3000);
+      setTimeout(() => {
+        clearProcessingUI();
+        retryRecordingBtn.disabled = false;
+        resetButton();
+      }, 3000);
       showRecoveryRow();
     }
-  } finally {
-    processingAbortController = null;
-    clearProcessingUI();
-    retryRecordingBtn.disabled = false;
-    resetButton();
+    return; // Don't fall through to finally
   }
+  // Only reached on early returns (401 redirects)
+  processingAbortController = null;
+  clearProcessingUI();
+  retryRecordingBtn.disabled = false;
+  resetButton();
 }
 
 async function startRecording() {
