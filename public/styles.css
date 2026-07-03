@@ -23,6 +23,7 @@ body {
   min-height: 100vh; padding: 20px 20px 60px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
 }
 .app { max-width: 820px; margin: auto; }
 
@@ -204,7 +205,7 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
 @media (max-width: 600px) {
   body {
     min-height: 100svh;
-    padding: max(14px, env(safe-area-inset-top)) 14px calc(172px + env(safe-area-inset-bottom));
+    padding: max(22px, calc(env(safe-area-inset-top) + 12px)) 14px calc(152px + env(safe-area-inset-bottom));
   }
 
   .app { max-width: 480px; }
@@ -213,8 +214,8 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
     position: sticky;
     top: 0;
     z-index: 20;
-    margin: -2px -2px 14px;
-    padding: 2px 2px 10px;
+    margin: 0 0 14px;
+    padding: 0 0 10px;
     background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: blur(16px);
   }
