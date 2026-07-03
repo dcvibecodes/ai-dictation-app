@@ -266,9 +266,10 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
     grid-template-columns: minmax(64px, 1fr) auto minmax(64px, 1fr);
     grid-template-areas:
       "wave wave wave"
-      "timer record actions";
+      "timer record actions"
+      "clear . upload";
     align-items: center;
-    gap: 11px 12px;
+    gap: 8px 12px;
     padding: 12px 12px 14px;
     border: 1px solid var(--border-subtle);
     border-radius: 22px;
@@ -322,16 +323,26 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
     letter-spacing: 0.4px;
   }
 
-  #cancelBtn,
-  #clearBtn,
-  #uploadAudioBtn {
+  #cancelBtn {
     grid-area: actions;
     justify-self: end;
     min-height: 32px;
   }
 
-  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn { display: none; }
-  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn + #uploadAudioBtn { display: none; }
+  #clearBtn {
+    grid-area: clear;
+    justify-self: start;
+    min-height: 32px;
+  }
+
+  #uploadAudioBtn {
+    grid-area: upload;
+    justify-self: end;
+    min-height: 32px;
+  }
+
+  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) ~ #clearBtn { display: none; }
+  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) ~ #uploadAudioBtn { display: none; }
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }
