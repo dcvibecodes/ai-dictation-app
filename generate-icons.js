@@ -2,12 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-function createPNG(size, dark = false) {
+function createPNG(size) {
   const w = size, h = size;
   const raw = Buffer.alloc((w * 4 + 1) * h);
   const samples = 4;
-  const bg = dark ? 10 : 255;
-  const fg = dark ? 245 : 26;
+  const bg = 10;
+  const fg = 245;
 
   // Keep the mark inside a generous safe area so Windows taskbar scaling
   // does not make the PWA icon look larger or lower than nearby icons.
@@ -90,10 +90,7 @@ function createPNG(size, dark = false) {
 }
 
 [192, 512].forEach(s => {
-  const lightPng = createPNG(s);
-  const darkPng = createPNG(s, true);
-  fs.writeFileSync(path.join(__dirname, 'public', `icon-${s}.png`), lightPng);
-  fs.writeFileSync(path.join(__dirname, 'public', `icon-dark-${s}.png`), darkPng);
-  console.log(`✓ icon-${s}.png (${lightPng.length} bytes)`);
-  console.log(`✓ icon-dark-${s}.png (${darkPng.length} bytes)`);
+  const png = createPNG(s);
+  fs.writeFileSync(path.join(__dirname, 'public', `icon-${s}.png`), png);
+  console.log(`✓ icon-${s}.png (${png.length} bytes)`);
 });
