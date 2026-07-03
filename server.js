@@ -14,7 +14,7 @@ const upload = multer({
   dest: 'uploads/',
   limits: { fileSize: 50 * 1024 * 1024 } // 50 MB max audio file
 });
-const PORT   = process.env.PORT || 3000;
+const PORT   = process.env.PORT || 3003;
 
 // --- Config ---
 const DATA_DIR      = path.join(__dirname, 'data');
