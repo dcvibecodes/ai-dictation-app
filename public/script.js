@@ -4,6 +4,7 @@ let isRecording = false;
 let cancelled = false;
 let history = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
 let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
+let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
 
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
@@ -20,10 +21,47 @@ const downloadRecordingBtn = document.getElementById('downloadRecordingBtn');
 const clearRecordingBtn = document.getElementById("clearRecordingBtn");
 const uploadAudioBtn = document.getElementById("uploadAudioBtn");
 const fileInput = document.getElementById("fileInput");
+const statusBar = document.getElementById("statusBar");
 
 const AUDIO_DB = 'dictationAudioBackup';
 const AUDIO_STORE = 'recordings';
 const AUDIO_KEY = 'latest';
+
+// ── Status Bar (replaces bottom toast) ─────────────────
+function showStatusBar(msg, type, isProcessing) {
+  statusBar.textContent = msg || '';
+  statusBar.className = 'status-bar';
+  if (type) statusBar.classList.add('status-bar-' + type);
+  if (isProcessing) {
+    statusBar.classList.add('status-bar-processing');
+    // Show a cancel button inside the bar
+    const existingBtn = statusBar.querySelector('.cancel-processing-btn');
+    if (!existingBtn) {
+      const btn = document.createElement('button');
+      btn.className = 'cancel-processing-btn';
+      btn.textContent = 'Cancel';
+      btn.onclick = cancelProcessing;
+      statusBar.appendChild(btn);
+    }
+  } else {
+    const btn = statusBar.querySelector('.cancel-processing-btn');
+    if (btn) btn.remove();
+  }
+  statusBar.classList.add('visible');
+}
+
+function hideStatusBar() {
+  statusBar.classList.remove('visible');
+  statusBar.textContent = '';
+  statusBar.className = 'status-bar';
+}
+
+function cancelProcessing() {
+  if (processingAbortController) {
+    processingAbortController.abort();
+    processingAbortController = null;
+  }
+}
 
 // ── Utilities ──────────────────────────────────────────
 // Escape HTML to prevent XSS when interpolating user/AI content into innerHTML
@@ -183,8 +221,11 @@ async function sendRawForCleanup() {
   const raw = document.getElementById('rawTranscript').value.trim();
   if (!raw) return;
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
+  showStatusBar('Cleaning up…', 'info', true);
   try {
-    const res = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }) });
+    const abortController = new AbortController();
+    processingAbortController = abortController;
+    const res = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) throw new Error(`Failed: ${res.status}`);
     const data = await res.json();
@@ -194,9 +235,21 @@ async function sendRawForCleanup() {
     autoResize(el);
     updateWordCount('cleanTranscript', 'cleanWordCount');
     await copyToClipboard(el.value);
-    showToast('Cleaned & copied!');
+    showStatusBar('Copied to clipboard', 'success');
+    setTimeout(hideStatusBar, 2000);
     setStatus('Done ✓', 'done');
-  } catch (e) { setStatus('Error: ' + e.message, 'error'); }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      showStatusBar('Cancelled', 'error');
+      setTimeout(hideStatusBar, 1500);
+      setStatus('Cancelled', 'error');
+    } else {
+      showStatusBar('Error: ' + e.message, 'error');
+      setTimeout(hideStatusBar, 2500);
+      setStatus('Error: ' + e.message, 'error');
+    }
+  }
+  processingAbortController = null;
   sendCleanupBtn.disabled = false; sendCleanupBtn.textContent = 'Clean up';
 }
 
@@ -261,6 +314,10 @@ document.getElementById('cleanTranscript').addEventListener('input', () => updat
 
 // ── Clear ──────────────────────────────────────────────
 clearBtn.onclick = async () => {
+  // If processing, cancel it first
+  if (processingAbortController) {
+    cancelProcessing();
+  }
   // Stop active recording first to avoid confusing state
   if (isRecording) stopRecording();
   ['rawTranscript', 'cleanTranscript'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.style.height = '130px'; });
@@ -269,6 +326,7 @@ clearBtn.onclick = async () => {
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
+  hideStatusBar();
   updateSendCleanupBtn(); setStatus('Ready'); timerEl.textContent = '00:00';
 };
 
@@ -352,7 +410,7 @@ function renderPromptsList() {
 async function restoreDefault() {
   const res = await fetch('/prompts/default', { method: 'DELETE' });
   if (res.status === 401) { window.location.href = '/login'; return; }
-  defaultOverride = null; await loadPrompts(); showToast('Restored');
+  defaultOverride = null; await loadPrompts();
 }
 function openAddPromptModal() { editingPromptId = null; document.getElementById('modalTitle').textContent = 'New Prompt'; document.getElementById('promptNameInput').value = ''; document.getElementById('promptNameInput').disabled = false; document.getElementById('promptTextInput').value = ''; document.getElementById('modalOverlay').classList.add('open'); }
 function openEditPromptModal(id) { editingPromptId = id; const isD = id === 'default'; const p = isD ? { name: 'Default', text: getDefaultPromptText() } : prompts.find(x => x.id === id); if (!p) return; document.getElementById('modalTitle').textContent = isD ? 'Edit Default' : 'Edit Prompt'; document.getElementById('promptNameInput').value = p.name; document.getElementById('promptNameInput').disabled = isD; document.getElementById('promptTextInput').value = p.text; document.getElementById('modalOverlay').classList.add('open'); }
@@ -371,16 +429,16 @@ async function savePrompt() {
   const res = await fetch('/prompts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: isD ? 'Default' : name, text }) });
   if (res.status === 401) { window.location.href = '/login'; return; }
   const data = await res.json();
-  if (data.error) { showToast(data.error); return; }
+  if (data.error) { /* silent */ return; }
   if (!editingPromptId) { activePromptId = id; localStorage.setItem('activePromptId', id); }
-  await loadPrompts(); closePromptModal(); showToast('Saved');
+  await loadPrompts(); closePromptModal();
 }
 async function deletePrompt(id) {
   if (!confirm('Delete this prompt? This cannot be undone.')) return;
   const res = await fetch(`/prompts/${id}`, { method: 'DELETE' });
   if (res.status === 401) { window.location.href = '/login'; return; }
   if (activePromptId === id) { activePromptId = 'default'; localStorage.setItem('activePromptId', 'default'); }
-  await loadPrompts(); showToast('Deleted');
+  await loadPrompts();
 }
 
 // ── History ────────────────────────────────────────────
@@ -402,11 +460,10 @@ function restoreHistory(i) {
   r.value = history[i].raw; c.value = history[i].cleaned;
   autoResize(r); autoResize(c);
   updateWordCount('rawTranscript', 'rawWordCount'); updateWordCount('cleanTranscript', 'cleanWordCount');
-  showToast('Restored');
 }
-async function copyHistoryItem(i) { await copyToClipboard(history[i].cleaned); showToast('Copied!'); }
-function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); showToast('Deleted'); }
-function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); showToast('History cleared'); }
+async function copyHistoryItem(i) { await copyToClipboard(history[i].cleaned); }
+function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); }
+function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
 
 // ── Settings ───────────────────────────────────────────
 let settingsLocked = true;
@@ -455,8 +512,7 @@ async function saveSettings() {
   };
   const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.status === 401) { window.location.href = '/login'; return; }
-  if (res.ok) { showToast('Settings saved'); loadSettingsUI(); }
-  else showToast('Error saving settings');
+  if (res.ok) { loadSettingsUI(); }
 }
 
 // ── Recording ──────────────────────────────────────────
@@ -465,14 +521,17 @@ async function transcribeAudioBlob(audioBlob) {
   toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
   retryRecordingBtn.disabled = true;
   setStatus('Transcribing…', 'processing');
+  showStatusBar('Transcribing…', 'info', true);
 
   const rawEl = document.getElementById('rawTranscript');
   const cleanEl = document.getElementById('cleanTranscript');
+  const abortController = new AbortController();
+  processingAbortController = abortController;
 
   try {
     const fd = new FormData();
     fd.append('audio', audioBlob, 'rec.webm');
-    const uRes = await fetch('/upload', { method: 'POST', body: fd });
+    const uRes = await fetch('/upload', { method: 'POST', body: fd, signal: abortController.signal });
     if (uRes.status === 401) { window.location.href = '/login'; return; }
     if (uRes.status === 413) {
       const errData = await uRes.json().catch(() => ({}));
@@ -488,18 +547,18 @@ async function transcribeAudioBlob(audioBlob) {
 
     if (cleanToggle.checked && raw.trim()) {
       setStatus('Cleaning…', 'processing');
-      const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }) });
+      showStatusBar('Cleaning up…', 'info', true);
+      const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
       if (cRes.status === 401) { window.location.href = '/login'; return; }
       if (!cRes.ok) {
-        // Upload succeeded, cleanup failed — raw transcript is already on screen.
-        // Add raw to history, clean up backup, and let user use the manual Clean up button.
         addToHistory(raw, raw);
         await copyToClipboard(raw);
         await clearAudioBackup();
         await clearInMemoryAudioBackup();
         hideRecoveryRow();
         setStatus('Cleanup failed: click Clean up to retry', 'error');
-        showToast('Raw transcript copied, cleanup failed');
+        showStatusBar('Cleanup failed — raw transcript copied', 'error');
+        setTimeout(hideStatusBar, 2500);
         return;
       }
       const cData = await cRes.json();
@@ -507,23 +566,30 @@ async function transcribeAudioBlob(audioBlob) {
       const cleaned = cData.cleanedTranscript || '';
       cleanEl.value = cleaned; autoResize(cleanEl);
       updateWordCount('cleanTranscript', 'cleanWordCount');
-      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); showToast('Cleaned transcript copied'); }
+      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); showStatusBar('Copied to clipboard', 'success'); setTimeout(hideStatusBar, 2000); }
     } else {
       cleanEl.value = '';
       document.getElementById('cleanWordCount').textContent = '0w';
-      addToHistory(raw, raw); await copyToClipboard(raw); showToast('Raw transcript copied');
+      addToHistory(raw, raw); await copyToClipboard(raw); showStatusBar('Copied to clipboard', 'success'); setTimeout(hideStatusBar, 2000);
     }
 
-    // Full success: clean up backup, hide recovery row
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     setStatus('Done ✓', 'done');
   } catch (e) {
-    setStatus('Error: ' + e.message, 'error');
-    // Only show recovery row when upload/transcription itself failed
-    showRecoveryRow();
+    if (e.name === 'AbortError') {
+      setStatus('Cancelled', 'error');
+      showStatusBar('Cancelled', 'error');
+      setTimeout(hideStatusBar, 1500);
+    } else {
+      setStatus('Error: ' + e.message, 'error');
+      showStatusBar('Error: ' + e.message, 'error');
+      setTimeout(hideStatusBar, 2500);
+      showRecoveryRow();
+    }
   } finally {
+    processingAbortController = null;
     retryRecordingBtn.disabled = false;
     resetButton();
   }
@@ -568,9 +634,8 @@ async function startRecording() {
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
       try {
         await saveAudioBackup(audioBlob);
-        inMemoryAudioBlob = null; // IndexedDB succeeded, no need for fallback
+        inMemoryAudioBlob = null;
       } catch {
-        // If IndexedDB fails (private browsing, quota), keep blob in memory as fallback
         inMemoryAudioBlob = audioBlob;
       }
       await transcribeAudioBlob(audioBlob);
@@ -597,12 +662,12 @@ toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
 cancelBtn.onclick = cancelRecording;
 retryRecordingBtn.onclick = async () => {
   const backup = await getBestAudioBackup();
-  if (!backup) { hideRecoveryRow(); showToast('No saved recording'); return; }
+  if (!backup) { hideRecoveryRow(); return; }
   await transcribeAudioBlob(backup.blob);
 };
 downloadRecordingBtn.onclick = async () => {
   const backup = await getBestAudioBackup();
-  if (!backup) { hideRecoveryRow(); showToast('No saved recording'); return; }
+  if (!backup) { hideRecoveryRow(); return; }
   const url = URL.createObjectURL(backup.blob);
   const a = document.createElement('a');
   a.href = url;
@@ -614,7 +679,6 @@ clearRecordingBtn.onclick = async () => {
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
-  showToast('Recording cleared');
 };
 
 // ── Utilities ──────────────────────────────────────────
@@ -630,14 +694,13 @@ if (fileInput) {
     try {
       await saveAudioBackup(file);
     } catch {
-      // Backup is a silent safety net — no need to alert user
+      // silent
     }
     await transcribeAudioBlob(file);
   };
 }
 
-async function copyText(id) { const t = document.getElementById(id).value; if (t) { await copyToClipboard(t); showToast(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied'); } }
-function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
+async function copyText(id) { const t = document.getElementById(id).value; if (t) { await copyToClipboard(t); showStatusBar(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied', 'success'); setTimeout(hideStatusBar, 1500); } }
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
@@ -673,7 +736,6 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
 
   // Touch handlers — drag anywhere, buttons still get their own touch events
   recorderRow.addEventListener('touchstart', e => {
-    // Don't start drag tracking if the touch is on a button, canvas, or input
     if (e.target.closest('button, input, canvas')) return;
     isDragging = false;
     startY = e.touches[0].clientY;
@@ -682,7 +744,7 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
   }, { passive: true });
 
   recorderRow.addEventListener('touchmove', e => {
-    if (startY === 0) return; // not tracking (touch started on button)
+    if (startY === 0) return;
     const dy = e.touches[0].clientY - startY;
     if (!isDragging && Math.abs(dy) > DRAG_THRESHOLD) {
       isDragging = true;
