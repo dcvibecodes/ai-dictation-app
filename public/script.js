@@ -105,7 +105,7 @@ async function updateRecoveryUI(record) {
   try {
     const backup = record === undefined ? await getAudioBackup() : record;
     recoveryRow.style.display = backup ? '' : 'none';
-    if (backup) recoveryInfo.textContent = `Recording saved locally · ${formatBytes(backup.size)}`;
+    if (backup) recoveryInfo.textContent = `Saved temporarily · will be removed once transcription succeeds · ${formatBytes(backup.size)}`;
   } catch {
     recoveryRow.style.display = 'none';
   }
