@@ -8,12 +8,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
-  <link rel="manifest" href="/manifest.json?v=9">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=9">
+  <link rel="manifest" href="/manifest.json?v=10">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=10">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
   <div class="app">
@@ -142,6 +142,123 @@
         <div id="promptsList" class="prompts-list"></div>
       </div>
 
+      <!-- Help & Troubleshooting -->
+      <div class="settings-section">
+        <div class="tab-panel-header">
+          <h2>Help & Troubleshooting</h2>
+        </div>
+        <details class="help-details">
+          <summary class="help-summary">How recording works</summary>
+          <div class="help-content">
+            <ol class="help-list">
+              <li><strong>Tap the mic button</strong> (or press <kbd>S</kbd>) to start recording. The button turns red and shows a waveform while recording.</li>
+              <li><strong>Tap it again</strong> to stop. The audio is automatically saved to local storage as a backup.</li>
+              <li><strong>Transcription</strong> begins immediately — the audio is sent to the server, which forwards it to the configured transcription API (e.g. Whisper).</li>
+              <li><strong>Auto-cleanup</strong> (if enabled) sends the raw transcript to a second API for grammar fixing, punctuation, and formatting.</li>
+              <li>The cleaned result is automatically <strong>copied to your clipboard</strong> and saved to history.</li>
+            </ol>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Uploading audio files</summary>
+          <div class="help-content">
+            <p>Click the <strong>Upload</strong> button next to Clear to select an audio file from disk. Supported formats include <strong>MP3, WAV, OGG, WebM, M4A, FLAC, AAC</strong> — any audio format your browser supports. The maximum file size is <strong>50 MB</strong>. Larger files will show an error message.</p>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Keyboard shortcuts</summary>
+          <div class="help-content">
+            <ul class="help-list">
+              <li><kbd>S</kbd> — Start / Stop recording</li>
+              <li><kbd>C</kbd> — Cancel recording (discards the audio)</li>
+              <li><kbd>Esc</kbd> — Close the prompt editor modal</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Error messages & what to do</summary>
+          <div class="help-content">
+            <table class="help-table">
+              <tr>
+                <td class="help-err">Microphone access denied</td>
+                <td>Your browser blocked the microphone. Check your browser permissions for this site and allow microphone access. Reload the page after granting permission.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Upload: 413</td>
+                <td>The recording is too large (over 50 MB). Try a shorter recording or reduce the audio quality. If using a reverse proxy, check its <code>client_max_body_size</code> setting.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Upload: 4xx / 5xx</td>
+                <td>The server could not process your audio. This may be a temporary issue — try again. If it persists, check the transcription API key in Settings.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Transcription API key not configured</td>
+                <td>Go to Settings > API Configuration and enter your transcription API key. The key is stored on the server and never exposed to the client.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Cleanup API key not configured</td>
+                <td>Go to Settings > API Configuration and enter your cleanup API key if you want auto-cleanup. You can also type in the cleanup API key or disable auto-cleanup using the checkbox.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Cleanup failed</td>
+                <td>The raw transcript was successfully transcribed and copied to your clipboard, but the cleanup step failed. Click the <strong>Clean up</strong> button on the Raw transcript panel to retry the cleanup on its own.</td>
+              </tr>
+              <tr>
+                <td class="help-err">Transcription failed</td>
+                <td>The audio was saved as a backup. A recovery bar appears with <strong>Retry</strong> (re-upload the saved audio), <strong>Download</strong> (save the audio file locally), and <strong>Clear</strong> (dismiss).</td>
+              </tr>
+              <tr>
+                <td class="help-err">Audio file too large</td>
+                <td>The uploaded file exceeds 50 MB. Upload a shorter or smaller file, or record directly with the mic button.</td>
+              </tr>
+              <tr>
+                <td class="help-err">No saved recording</td>
+                <td>The recovery bar appeared but no backup exists. This can happen if IndexedDB storage was cleared or is unavailable (e.g. private browsing with restrictions).</td>
+              </tr>
+              <tr>
+                <td class="help-err">Unauthorized</td>
+                <td>Your session has expired. You'll be redirected to the login page. Log in again to continue.</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Local storage & data</summary>
+          <div class="help-content">
+            <table class="help-table">
+              <tr>
+                <td>Recording backup</td>
+                <td>Audio recordings are stored in your browser's <strong>IndexedDB</strong> (database: <code>dictationAudioBackup</code>). If IndexedDB is unavailable (private browsing), the audio is kept in memory as a fallback. Backups are automatically deleted after successful transcription.</td>
+              </tr>
+              <tr>
+                <td>Session history</td>
+                <td>Your last 20 transcriptions are saved in <strong>localStorage</strong> under <code>dictationHistory</code>. The raw and cleaned text are stored here — not the audio. Use Clear All in the History tab to delete them.</td>
+              </tr>
+              <tr>
+                <td>Settings & preferences</td>
+                <td>API keys are stored on the server in the <code>data/settings.json</code> file. Your theme selection, auto-clean toggle, active prompt, and recorder bar position are stored in localStorage under their respective keys.</td>
+              </tr>
+              <tr>
+                <td>Clearing data</td>
+                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript and any audio backup. Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
+              </tr>
+            </table>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Offline usage</summary>
+          <div class="help-content">
+            <p>This app works as a <strong>Progressive Web App (PWA)</strong>. When you're offline:</p>
+            <ul class="help-list">
+              <li>You can still <strong>record audio</strong> — the mic works without a connection.</li>
+              <li><strong>Transcription will fail</strong> until you're back online. The recovery bar will appear with a copy of your recording.</li>
+              <li>When you reconnect, tap <strong>Retry</strong> to send the saved recording for transcription.</li>
+              <li>An orange banner at the top shows your connectivity status.</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
     </div>
 
     <!-- Edit Prompt Modal -->
@@ -162,6 +279,6 @@
 
     <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
   </div>
-  <script src="script.js?v=9"></script>
+  <script src="script.js?v=10"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@ let timerInterval, secondsElapsed = 0;
 let isRecording = false;
 let cancelled = false;
 let history = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
+let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
@@ -102,14 +103,36 @@ function formatBytes(bytes) {
   return mb >= 1 ? mb.toFixed(1) + ' MB' : Math.ceil(bytes / 1024) + ' KB';
 }
 
-async function updateRecoveryUI(record) {
+async function getBestAudioBackup() {
+  // Prefer IndexedDB, fall back to in-memory blob
   try {
-    const backup = record === undefined ? await getAudioBackup() : record;
+    const dbRecord = await getAudioBackup();
+    if (dbRecord) return dbRecord;
+  } catch {
+    // IndexedDB unavailable
+  }
+  if (inMemoryAudioBlob) {
+    return { id: AUDIO_KEY, blob: inMemoryAudioBlob, type: inMemoryAudioBlob.type || 'audio/webm', size: inMemoryAudioBlob.size, createdAt: Date.now(), seconds: secondsElapsed };
+  }
+  return null;
+}
+
+async function clearInMemoryAudioBackup() {
+  inMemoryAudioBlob = null;
+}
+
+async function showRecoveryRow() {
+  try {
+    const backup = await getBestAudioBackup();
     recoveryRow.style.display = backup ? '' : 'none';
-    if (backup) recoveryInfo.textContent = `Saved temporarily · will be removed once transcription succeeds · ${formatBytes(backup.size)}`;
+    if (backup) recoveryInfo.textContent = `Transcription failed · ${formatBytes(backup.size)} recording saved for retry`;
   } catch {
     recoveryRow.style.display = 'none';
   }
+}
+
+function hideRecoveryRow() {
+  recoveryRow.style.display = 'none';
 }
 
 // ── Tabs ───────────────────────────────────────────────
@@ -244,7 +267,8 @@ clearBtn.onclick = async () => {
   document.getElementById('rawWordCount').textContent = '0w';
   document.getElementById('cleanWordCount').textContent = '0w';
   await clearAudioBackup();
-  updateRecoveryUI(null);
+  await clearInMemoryAudioBackup();
+  hideRecoveryRow();
   updateSendCleanupBtn(); setStatus('Ready'); timerEl.textContent = '00:00';
 };
 
@@ -442,6 +466,9 @@ async function transcribeAudioBlob(audioBlob) {
   retryRecordingBtn.disabled = true;
   setStatus('Transcribing…', 'processing');
 
+  const rawEl = document.getElementById('rawTranscript');
+  const cleanEl = document.getElementById('cleanTranscript');
+
   try {
     const fd = new FormData();
     fd.append('audio', audioBlob, 'rec.webm');
@@ -456,34 +483,46 @@ async function transcribeAudioBlob(audioBlob) {
     if (uData.error) throw new Error(uData.error);
 
     const raw = uData.rawTranscript || '';
-    const rawEl = document.getElementById('rawTranscript');
     rawEl.value = raw; autoResize(rawEl);
     updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
 
-    if (cleanToggle.checked) {
+    if (cleanToggle.checked && raw.trim()) {
       setStatus('Cleaning…', 'processing');
       const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }) });
       if (cRes.status === 401) { window.location.href = '/login'; return; }
-      if (!cRes.ok) throw new Error(`Cleanup: ${cRes.status}`);
+      if (!cRes.ok) {
+        // Upload succeeded, cleanup failed — raw transcript is already on screen.
+        // Add raw to history, clean up backup, and let user use the manual Clean up button.
+        addToHistory(raw, raw);
+        await copyToClipboard(raw);
+        await clearAudioBackup();
+        await clearInMemoryAudioBackup();
+        hideRecoveryRow();
+        setStatus('Cleanup failed: click Clean up to retry', 'error');
+        showToast('Raw transcript copied, cleanup failed');
+        return;
+      }
       const cData = await cRes.json();
       if (cData.error) throw new Error(cData.error);
       const cleaned = cData.cleanedTranscript || '';
-      const cleanEl = document.getElementById('cleanTranscript');
       cleanEl.value = cleaned; autoResize(cleanEl);
       updateWordCount('cleanTranscript', 'cleanWordCount');
       if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); showToast('Cleaned transcript copied'); }
     } else {
-      document.getElementById('cleanTranscript').value = '';
+      cleanEl.value = '';
       document.getElementById('cleanWordCount').textContent = '0w';
       addToHistory(raw, raw); await copyToClipboard(raw); showToast('Raw transcript copied');
     }
 
+    // Full success: clean up backup, hide recovery row
     await clearAudioBackup();
-    updateRecoveryUI(null);
+    await clearInMemoryAudioBackup();
+    hideRecoveryRow();
     setStatus('Done ✓', 'done');
   } catch (e) {
     setStatus('Error: ' + e.message, 'error');
-    updateRecoveryUI();
+    // Only show recovery row when upload/transcription itself failed
+    showRecoveryRow();
   } finally {
     retryRecordingBtn.disabled = false;
     resetButton();
@@ -528,11 +567,11 @@ async function startRecording() {
 
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
       try {
-        const backup = await saveAudioBackup(audioBlob);
-        updateRecoveryUI(backup);
+        await saveAudioBackup(audioBlob);
+        inMemoryAudioBlob = null; // IndexedDB succeeded, no need for fallback
       } catch {
-        updateRecoveryUI(null);
-        showToast('Could not save local backup');
+        // If IndexedDB fails (private browsing, quota), keep blob in memory as fallback
+        inMemoryAudioBlob = audioBlob;
       }
       await transcribeAudioBlob(audioBlob);
     };
@@ -557,13 +596,13 @@ function stopRecording() { mediaRecorder.stop(); mediaRecorder.stream.getTracks(
 toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
 cancelBtn.onclick = cancelRecording;
 retryRecordingBtn.onclick = async () => {
-  const backup = await getAudioBackup();
-  if (!backup) { updateRecoveryUI(null); showToast('No saved recording'); return; }
+  const backup = await getBestAudioBackup();
+  if (!backup) { hideRecoveryRow(); showToast('No saved recording'); return; }
   await transcribeAudioBlob(backup.blob);
 };
 downloadRecordingBtn.onclick = async () => {
-  const backup = await getAudioBackup();
-  if (!backup) { updateRecoveryUI(null); showToast('No saved recording'); return; }
+  const backup = await getBestAudioBackup();
+  if (!backup) { hideRecoveryRow(); showToast('No saved recording'); return; }
   const url = URL.createObjectURL(backup.blob);
   const a = document.createElement('a');
   a.href = url;
@@ -573,7 +612,8 @@ downloadRecordingBtn.onclick = async () => {
 };
 clearRecordingBtn.onclick = async () => {
   await clearAudioBackup();
-  updateRecoveryUI(null);
+  await clearInMemoryAudioBackup();
+  hideRecoveryRow();
   showToast('Recording cleared');
 };
 
@@ -588,10 +628,9 @@ if (fileInput) {
     if (!file) return;
     fileInput.value = '';
     try {
-      const backup = await saveAudioBackup(file);
-      updateRecoveryUI(backup);
+      await saveAudioBackup(file);
     } catch {
-      showToast('Could not save local backup');
+      // Backup is a silent safety net — no need to alert user
     }
     await transcribeAudioBlob(file);
   };
@@ -618,7 +657,7 @@ window.addEventListener('offline', updateOnlineStatus);
 
 // ── Draggable recorder bar (mobile) ────────────────────
 if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
-  let isTracking = false, isDragging = false, startY = 0, startBottom = 0;
+  let isDragging = false, startY = 0, startBottom = 0;
   const DRAG_THRESHOLD = 8;
   const RECORDER_MIN_BOTTOM = 0;
   const RECORDER_MAX_BOTTOM = () => window.innerHeight - 80;
@@ -632,9 +671,10 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
     }
   }
 
-  // Touch handlers — track from anywhere, only drag after threshold
+  // Touch handlers — drag anywhere, buttons still get their own touch events
   recorderRow.addEventListener('touchstart', e => {
-    isTracking = true;
+    // Don't start drag tracking if the touch is on a button, canvas, or input
+    if (e.target.closest('button, input, canvas')) return;
     isDragging = false;
     startY = e.touches[0].clientY;
     startBottom = window.innerHeight - recorderRow.getBoundingClientRect().bottom;
@@ -642,7 +682,7 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
   }, { passive: true });
 
   recorderRow.addEventListener('touchmove', e => {
-    if (!isTracking) return;
+    if (startY === 0) return; // not tracking (touch started on button)
     const dy = e.touches[0].clientY - startY;
     if (!isDragging && Math.abs(dy) > DRAG_THRESHOLD) {
       isDragging = true;
@@ -657,22 +697,19 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
   }, { passive: false });
 
   recorderRow.addEventListener('touchend', () => {
-    if (!isTracking) return;
-    isTracking = false;
     if (isDragging) {
       isDragging = false;
       recorderRow.style.transition = '';
       document.body.style.userSelect = '';
       const finalBottom = parseFloat(recorderRow.style.bottom);
       if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
-      // Suppress click if we dragged
-      recorderRow.addEventListener('click', function suppress(e) { e.preventDefault(); e.stopPropagation(); recorderRow.removeEventListener('click', suppress, true); }, true);
     }
+    startY = 0;
   });
 
   // Mouse handlers (for desktop testing)
   recorderRow.addEventListener('mousedown', e => {
-    isTracking = true;
+    if (e.target.closest('button, input, canvas')) return;
     isDragging = false;
     startY = e.clientY;
     startBottom = window.innerHeight - recorderRow.getBoundingClientRect().bottom;
@@ -680,7 +717,7 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
     e.preventDefault();
   });
   document.addEventListener('mousemove', e => {
-    if (!isTracking) return;
+    if (startY === 0) return;
     const dy = e.clientY - startY;
     if (!isDragging && Math.abs(dy) > DRAG_THRESHOLD) {
       isDragging = true;
@@ -693,8 +730,6 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
     }
   });
   document.addEventListener('mouseup', () => {
-    if (!isTracking) return;
-    isTracking = false;
     if (isDragging) {
       isDragging = false;
       recorderRow.style.transition = '';
@@ -702,13 +737,14 @@ if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
       const finalBottom = parseFloat(recorderRow.style.bottom);
       if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
     }
+    startY = 0;
   });
 }
 
 // ── Init ───────────────────────────────────────────────
 loadPrompts();
 renderHistory();
-updateRecoveryUI();
+hideRecoveryRow();
 updateOnlineStatus();
 
 

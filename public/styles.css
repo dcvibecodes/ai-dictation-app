@@ -72,12 +72,24 @@ header {
   border: 2px solid var(--border); background: var(--bg-surface);
   color: var(--accent); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.2s; flex-shrink: 0;
+  transition: all 0.15s; flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .record-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+.record-btn:active {
+  transform: scale(0.88);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  transition: all 0.05s;
+}
 .record-btn.recording { border-color: var(--danger); background: var(--danger-dim); color: var(--danger); }
-.record-btn.recording:hover { background: rgba(239,68,68,0.12); }
+.record-btn.recording:hover { background: rgba(239,68,68,0.15); }
+.record-btn.recording:active {
+  transform: scale(0.88);
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.3);
+  transition: all 0.05s;
+}
 .record-btn.processing { border-color: var(--warning); color: var(--warning); pointer-events: none; opacity: 0.7; }
 
 .stop-icon { width: 14px; height: 14px; border-radius: 2px; background: var(--danger); }
@@ -138,7 +150,37 @@ header {
 
 .prompt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clean-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); cursor: pointer; user-select: none; }
-.clean-toggle-label input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+.clean-toggle-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+  position: relative;
+}
+.clean-toggle-label input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.clean-toggle-label input[type="checkbox"]:checked::after {
+  content: '';
+  display: block;
+  width: 5px;
+  height: 9px;
+  border: solid var(--accent-contrast);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  position: absolute;
+  top: 1px;
+}
 .prompt-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
 .prompt-tab { padding: 3px 9px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 0.7rem; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
 .prompt-tab:hover { border-color: var(--accent); color: var(--accent); }
@@ -202,6 +244,80 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .prompt-item-badge { font-size: 0.6rem; font-weight: 600; padding: 1px 5px; border-radius: 3px; background: var(--accent-dim); color: var(--accent); margin-right: auto; }
 .prompt-item-actions { display: flex; gap: 4px; }
 .prompt-item-preview { font-size: 0.72rem; color: var(--text-faint); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Help & Troubleshooting ── */
+.help-details {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.help-summary {
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.help-summary::-webkit-details-marker { display: none; }
+.help-summary::before {
+  content: '▶';
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  transition: transform 0.15s;
+}
+.help-details[open] .help-summary::before { transform: rotate(90deg); }
+.help-summary:hover { background: var(--accent-dim); }
+.help-content {
+  padding: 0 12px 12px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.help-content p { margin-bottom: 6px; }
+.help-list { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.help-list li { margin-bottom: 2px; }
+.help-list kbd,
+.help-content kbd {
+  display: inline-block;
+  padding: 0 4px;
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.help-content code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  background: var(--accent-dim);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+.help-table { width: 100%; border-collapse: collapse; }
+.help-table tr { border-bottom: 1px solid var(--border-subtle); }
+.help-table tr:last-child { border-bottom: none; }
+.help-table td {
+  padding: 8px 4px;
+  font-size: 0.74rem;
+  vertical-align: top;
+  line-height: 1.5;
+}
+.help-table td:first-child {
+  width: 34%;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  padding-right: 12px;
+}
+.help-err { color: var(--danger); }
 
 /* ── Modal ── */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.15s; padding: 16px; }
@@ -272,7 +388,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     align-items: center;
     gap: 11px 12px;
     padding: 12px 12px 14px;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     border-radius: 22px;
     background: color-mix(in srgb, var(--bg) 82%, transparent);
     box-shadow: 0 18px 60px rgba(0,0,0,0.28);
@@ -293,6 +409,10 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   }
 
   .record-btn:hover { background: var(--text); border-color: var(--text); }
+  .record-btn:active {
+    transform: scale(0.88);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 0 0 7px var(--bg), 0 0 0 4px var(--accent-glow);
+  }
   .record-btn.recording {
     background: var(--danger);
     border-color: var(--danger);

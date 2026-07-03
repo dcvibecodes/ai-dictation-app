@@ -53,8 +53,16 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Dark/light theme** — toggleable, login page respects system preference
 - **Keyboard shortcuts** — `S` start/stop, `C` cancel, `Escape` close modals
 - **Auto-copy** — transcript copied to clipboard automatically
-- **Local backup** — recording saved to IndexedDB on stop; retry, download, or clear from the recovery strip if upload fails
+- **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
+- **In-memory audio fallback** — if IndexedDB is unavailable (private browsing), audio is kept in memory as a safety net
+- **Smart recovery row** — only appears when transcription/upload fails, not on cleanup failure; raw transcript stays on screen
+- **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB
+- **Comprehensive Settings help** — collapsible troubleshooting guide covering all error states, local storage, keyboard shortcuts, and offline usage
+- **Stronger button feedback** — visual glow ring on press for instant tap confirmation
+- **Draggable recorder bar (mobile)** — touch anywhere (except buttons) to reposition the bar; position persisted across sessions
+- **Custom checkbox styling** — monochrome, visible in both themes without using accent colors
+- **Improved dark theme contrast** — recorder card border adjusted for clear visibility in dark mode
 
 ---
 
