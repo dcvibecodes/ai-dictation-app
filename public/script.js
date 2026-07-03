@@ -176,11 +176,11 @@ function getSystemTheme() {
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  cachedBarColor = null;
 }
 applyTheme(getSystemTheme());
 window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
   applyTheme(e.matches ? 'light' : 'dark');
+  cachedBarColor = null;
 });
 
 // ── Auto-resize ───────────────────────────────────────
