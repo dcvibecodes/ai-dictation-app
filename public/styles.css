@@ -134,6 +134,7 @@ header {
   font-weight: 500;
 }
 .recovery-actions { display: flex; align-items: center; gap: 5px; }
+.action-btns { display: flex; align-items: center; gap: 5px; }
 
 .prompt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clean-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); cursor: pointer; user-select: none; }
