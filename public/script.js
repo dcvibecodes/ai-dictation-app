@@ -170,17 +170,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'settings') loadSettingsUI();
   });
 });
-// ── Theme ──────────────────────────────────────────────
-const themeToggle = document.getElementById('themeToggle');
-setTheme(localStorage.getItem('theme') || 'dark');
-themeToggle.onclick = () => setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
-
-function setTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  document.getElementById('themeIconSun').style.display = theme === 'light' ? 'block' : 'none';
-  document.getElementById('themeIconMoon').style.display = theme === 'dark' ? 'block' : 'none';
-  localStorage.setItem('theme', theme);
+// ── Theme (follows system preference) ──────────────────
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  cachedBarColor = null;
+}
+applyTheme(getSystemTheme());
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+  applyTheme(e.matches ? 'light' : 'dark');
+});
 
 // ── Auto-resize ───────────────────────────────────────
 function autoResize(el) {
@@ -250,11 +251,6 @@ function getBarColor() {
   }
   return cachedBarColor;
 }
-const _origSetTheme = setTheme;
-setTheme = function(theme) {
-  _origSetTheme(theme);
-  cachedBarColor = null;
-};
 
 function visualize() {
   analyser.fftSize = 256;
