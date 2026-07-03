@@ -8,6 +8,7 @@ function createPNG(size) {
   const samples = 4;
   const bg = 10;
   const fg = 245;
+  const bgRadius = size * 0.1875;
 
   // Keep the mark inside a generous safe area so Windows taskbar scaling
   // does not make the PWA icon look larger or lower than nearby icons.
@@ -22,6 +23,16 @@ function createPNG(size) {
   const stickTop = size * 0.645;
   const stickBot = size * 0.725;
   const baseW = size * 0.085;
+
+  function isBgPoint(x, y) {
+    const r = bgRadius;
+    if (x >= r && x <= w - r) return true;
+    if (y >= r && y <= h - r) return true;
+    const cxCorner = x < r ? r : w - r;
+    const cyCorner = y < r ? r : h - r;
+    const dx = x - cxCorner, dy = y - cyCorner;
+    return dx * dx + dy * dy <= r * r;
+  }
 
   function isMicPoint(x, y) {
     // Mic body (rounded rect = rect + two semicircles)
@@ -52,19 +63,24 @@ function createPNG(size) {
     raw[ro] = 0;
     for (let x = 0; x < w; x++) {
       const px = ro + 1 + x * 4;
-      let coverage = 0;
+      let bgCoverage = 0;
+      let micCoverage = 0;
       for (let sy = 0; sy < samples; sy++) {
         for (let sx = 0; sx < samples; sx++) {
-          if (isMicPoint(x + (sx + 0.5) / samples, y + (sy + 0.5) / samples)) coverage++;
+          const sampleX = x + (sx + 0.5) / samples;
+          const sampleY = y + (sy + 0.5) / samples;
+          if (isBgPoint(sampleX, sampleY)) bgCoverage++;
+          if (isMicPoint(sampleX, sampleY)) micCoverage++;
         }
       }
-      const t = coverage / (samples * samples);
+      const bgT = bgCoverage / (samples * samples);
+      const t = bgCoverage ? micCoverage / bgCoverage : 0;
       const channel = Math.round(bg + (fg - bg) * t);
 
       raw[px] = channel;
       raw[px + 1] = channel;
       raw[px + 2] = channel;
-      raw[px + 3] = 255;
+      raw[px + 3] = Math.round(255 * bgT);
     }
   }
 
