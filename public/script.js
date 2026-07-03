@@ -93,8 +93,7 @@ function visualize() {
     analyser.getByteFrequencyData(data);
     ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
 
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const barColor = isDark ? '#4a9eff' : '#2563eb';
+    const barColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1a1a1a';
     const barWidth = 3;
     const gap = 2;
     const bars = Math.floor(waveformCanvas.width / (barWidth + gap));

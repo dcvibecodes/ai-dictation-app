@@ -5,8 +5,9 @@
   --text: #e4e4e4;
   --text-muted: #777;
   --text-faint: #4a4a4a;
-  --accent: #4a9eff;
-  --accent-glow: rgba(74,158,255,0.15);
+  --accent: #f5f5f5;
+  --accent-contrast: #0a0a0a;
+  --accent-glow: rgba(255,255,255,0.14);
   --border: #262626;
   --input-bg: #0f0f0f;
   --danger: #ef4444;
@@ -19,8 +20,9 @@
     --text: #1a1a1a;
     --text-muted: #666;
     --text-faint: #aaa;
-    --accent: #2563eb;
-    --accent-glow: rgba(37,99,235,0.1);
+    --accent: #111111;
+    --accent-contrast: #ffffff;
+    --accent-glow: rgba(0,0,0,0.1);
     --border: #e2e2e2;
     --input-bg: #fff;
     --danger: #dc2626;
@@ -106,7 +108,7 @@ body {
 .auth-card button {
   padding: 9px 20px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border: none;
   border-radius: 6px;
   font-size: 0.8rem;

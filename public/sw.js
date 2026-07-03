@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dictation-v4';
+const CACHE_NAME = 'dictation-v5';
 const STATIC_ASSETS = [
   '/',
   '/styles.css',
@@ -36,8 +36,9 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Network-first for HTML, cache-first for assets
-  if (e.request.headers.get('accept')?.includes('text/html')) {
+  // Network-first keeps installed PWAs visually current, with cache fallback offline.
+  if (e.request.headers.get('accept')?.includes('text/html') ||
+      STATIC_ASSETS.includes(url.pathname)) {
     e.respondWith(
       fetch(e.request).then(res => {
         const clone = res.clone();
