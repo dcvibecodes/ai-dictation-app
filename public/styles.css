@@ -1,4 +1,4 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root[data-theme="dark"] {
   --bg: #0a0a0a; --bg-surface: #141414; --border: #2e2e2e; --border-subtle: #1e1e1e;
@@ -66,7 +66,6 @@ header {
 .recorder-row {
   display: flex; align-items: center; gap: 10px;
 }
-.drag-handle { display: none; }
 
 .record-btn {
   width: 42px; height: 42px; border-radius: 50%;
@@ -268,12 +267,11 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     display: grid;
     grid-template-columns: minmax(64px, 1fr) auto minmax(64px, 1fr);
     grid-template-areas:
-      "handle handle handle"
       "wave wave wave"
       "timer record actions";
     align-items: center;
-    gap: 8px 12px;
-    padding: 5px 12px 14px;
+    gap: 11px 12px;
+    padding: 12px 12px 14px;
     border: 1px solid var(--border-subtle);
     border-radius: 22px;
     background: color-mix(in srgb, var(--bg) 82%, transparent);
@@ -281,20 +279,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     backdrop-filter: blur(22px) saturate(1.2);
     touch-action: none;
   }
-
-  .drag-handle {
-    display: block;
-    grid-area: handle;
-    width: 36px;
-    height: 5px;
-    border-radius: 3px;
-    background: var(--text-faint);
-    opacity: 0.4;
-    margin: 2px auto 0;
-    cursor: grab;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .drag-handle:active { cursor: grabbing; opacity: 0.6; }
 
   .record-btn {
     grid-area: record;

@@ -617,9 +617,9 @@ window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
 // ── Draggable recorder bar (mobile) ────────────────────
-const dragHandle = document.getElementById('dragHandle');
-if (dragHandle && window.matchMedia('(max-width: 600px)').matches) {
-  let isDragging = false, startY = 0, startBottom = 0;
+if (recorderRow && window.matchMedia('(max-width: 600px)').matches) {
+  let isTracking = false, isDragging = false, startY = 0, startBottom = 0;
+  const DRAG_THRESHOLD = 8;
   const RECORDER_MIN_BOTTOM = 0;
   const RECORDER_MAX_BOTTOM = () => window.innerHeight - 80;
 
@@ -632,36 +632,77 @@ if (dragHandle && window.matchMedia('(max-width: 600px)').matches) {
     }
   }
 
-  function onDragStart(clientY) {
-    isDragging = true;
-    startY = clientY;
-    const cs = getComputedStyle(recorderRow);
+  // Touch handlers — track from anywhere, only drag after threshold
+  recorderRow.addEventListener('touchstart', e => {
+    isTracking = true;
+    isDragging = false;
+    startY = e.touches[0].clientY;
     startBottom = window.innerHeight - recorderRow.getBoundingClientRect().bottom;
     recorderRow.style.transition = 'none';
-    document.body.style.userSelect = 'none';
-  }
-  function onDragMove(clientY) {
-    if (!isDragging) return;
-    const dy = clientY - startY;
-    let newBottom = startBottom - dy;
-    newBottom = Math.max(RECORDER_MIN_BOTTOM, Math.min(newBottom, RECORDER_MAX_BOTTOM()));
-    recorderRow.style.bottom = newBottom + 'px';
-  }
-  function onDragEnd() {
-    if (!isDragging) return;
-    isDragging = false;
-    recorderRow.style.transition = '';
-    document.body.style.userSelect = '';
-    const finalBottom = parseFloat(recorderRow.style.bottom);
-    if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
-  }
+  }, { passive: true });
 
-  dragHandle.addEventListener('touchstart', e => { onDragStart(e.touches[0].clientY); }, { passive: true });
-  dragHandle.addEventListener('touchmove', e => { onDragMove(e.touches[0].clientY); }, { passive: true });
-  dragHandle.addEventListener('touchend', onDragEnd);
-  dragHandle.addEventListener('mousedown', e => { onDragStart(e.clientY); e.preventDefault(); });
-  document.addEventListener('mousemove', e => onDragMove(e.clientY));
-  document.addEventListener('mouseup', onDragEnd);
+  recorderRow.addEventListener('touchmove', e => {
+    if (!isTracking) return;
+    const dy = e.touches[0].clientY - startY;
+    if (!isDragging && Math.abs(dy) > DRAG_THRESHOLD) {
+      isDragging = true;
+      document.body.style.userSelect = 'none';
+    }
+    if (isDragging) {
+      e.preventDefault();
+      let newBottom = startBottom - dy;
+      newBottom = Math.max(RECORDER_MIN_BOTTOM, Math.min(newBottom, RECORDER_MAX_BOTTOM()));
+      recorderRow.style.bottom = newBottom + 'px';
+    }
+  }, { passive: false });
+
+  recorderRow.addEventListener('touchend', () => {
+    if (!isTracking) return;
+    isTracking = false;
+    if (isDragging) {
+      isDragging = false;
+      recorderRow.style.transition = '';
+      document.body.style.userSelect = '';
+      const finalBottom = parseFloat(recorderRow.style.bottom);
+      if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
+      // Suppress click if we dragged
+      recorderRow.addEventListener('click', function suppress(e) { e.preventDefault(); e.stopPropagation(); recorderRow.removeEventListener('click', suppress, true); }, true);
+    }
+  });
+
+  // Mouse handlers (for desktop testing)
+  recorderRow.addEventListener('mousedown', e => {
+    isTracking = true;
+    isDragging = false;
+    startY = e.clientY;
+    startBottom = window.innerHeight - recorderRow.getBoundingClientRect().bottom;
+    recorderRow.style.transition = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!isTracking) return;
+    const dy = e.clientY - startY;
+    if (!isDragging && Math.abs(dy) > DRAG_THRESHOLD) {
+      isDragging = true;
+      document.body.style.userSelect = 'none';
+    }
+    if (isDragging) {
+      let newBottom = startBottom - dy;
+      newBottom = Math.max(RECORDER_MIN_BOTTOM, Math.min(newBottom, RECORDER_MAX_BOTTOM()));
+      recorderRow.style.bottom = newBottom + 'px';
+    }
+  });
+  document.addEventListener('mouseup', () => {
+    if (!isTracking) return;
+    isTracking = false;
+    if (isDragging) {
+      isDragging = false;
+      recorderRow.style.transition = '';
+      document.body.style.userSelect = '';
+      const finalBottom = parseFloat(recorderRow.style.bottom);
+      if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
+    }
+  });
 }
 
 // ── Init ───────────────────────────────────────────────
