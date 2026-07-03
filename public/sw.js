@@ -1,8 +1,15 @@
-const CACHE_NAME = 'dictation-v7';
+const CACHE_NAME = 'dictation-v8';
 const STATIC_ASSETS = [
   '/',
   '/styles.css',
-  '/script.js'
+  '/script.js',
+  '/login.html',
+  '/setup.html',
+  '/auth.css',
+  '/manifest.json',
+  '/favicon.svg',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
 self.addEventListener('install', e => {
@@ -33,6 +40,18 @@ self.addEventListener('fetch', e => {
       url.pathname.startsWith('/setup') ||
       url.pathname.startsWith('/logout') ||
       e.request.method !== 'GET') {
+    return;
+  }
+
+  // Cache-first for Google Fonts (stable, long-lived)
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    e.respondWith(
+      caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+        const clone = res.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
+        return res;
+      }))
+    );
     return;
   }
 

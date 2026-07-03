@@ -8,15 +8,17 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
-  <link rel="manifest" href="/manifest.json?v=7">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=7">
+  <link rel="manifest" href="/manifest.json?v=8">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=8">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
   <div class="app">
+
+    <div id="offlineBanner" class="offline-banner" style="display:none">You're offline — recording works but transcription requires a connection.</div>
 
     <header>
       <nav class="tab-nav">
@@ -45,6 +47,8 @@
         <span id="timer">00:00</span>
         <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
         <button id="clearBtn" class="btn btn-ghost btn-sm">Clear</button>
+        <button id="uploadAudioBtn" class="btn btn-ghost btn-sm">Upload</button>
+        <input type="file" id="fileInput" accept="audio/*" style="display:none">
       </div>
       <div class="sub-row">
         <span id="status" class="status" aria-live="polite">Ready</span>
@@ -156,6 +160,6 @@
 
     <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
   </div>
-  <script src="script.js?v=5"></script>
+  <script src="script.js?v=8"></script>
 </body>
 </html>

@@ -1,16 +1,19 @@
 require('dotenv').config();
 const express = require('express');
 const multer  = require('multer');
-const cors    = require('cors');
 const fs      = require('fs');
 const path    = require('path');
 const crypto  = require('crypto');
 const bcrypt  = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const OpenAI  = require('openai');
+const rateLimit = require('express-rate-limit');
 
 const app    = express();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 50 * 1024 * 1024 } // 50 MB max audio file
+});
 const PORT   = process.env.PORT || 3000;
 
 // --- Config ---
@@ -18,36 +21,52 @@ const DATA_DIR      = path.join(__dirname, 'data');
 const HASH_FILE     = path.join(DATA_DIR, 'owner.hash');
 const SECRET_FILE   = path.join(DATA_DIR, 'session.secret');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const PROMPTS_FILE  = path.join(__dirname, 'prompts.json');
+const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
+const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
 const BCRYPT_ROUNDS = 12;
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const MAX_CUSTOM_PROMPTS = 4;
+const AI_TIMEOUT_MS = 120_000; // 2 minutes
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
+// --- In-memory caches (read once at startup, re-read on write) ---
+let settingsCache = null;
+let promptsCache  = null;
+let sessionSecretCache = null;
+
 // --- Settings (API config) ---
 function loadSettings() {
-  if (!fs.existsSync(SETTINGS_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); }
-  catch { return {}; }
+  if (settingsCache) return settingsCache;
+  if (!fs.existsSync(SETTINGS_FILE)) { settingsCache = {}; return settingsCache; }
+  try { settingsCache = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); }
+  catch { settingsCache = {}; }
+  return settingsCache;
 }
 
 function saveSettings(settings) {
+  settingsCache = settings;
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
 }
 
 function getEffectiveSetting(key) {
   const settings = loadSettings();
-  // Settings UI values take priority over .env
-  return settings[key] || process.env[key] || '';
+  // Explicit settings (including empty string) take priority over .env
+  if (key in settings) return settings[key];
+  return process.env[key] || '';
 }
 
 // --- Auth ---
 function getSessionSecret() {
+  if (sessionSecretCache) return sessionSecretCache;
   if (!fs.existsSync(SECRET_FILE)) {
     const secret = crypto.randomBytes(64).toString('hex');
     fs.writeFileSync(SECRET_FILE, secret, 'utf8');
+    sessionSecretCache = secret;
+    return secret;
   }
-  return fs.readFileSync(SECRET_FILE, 'utf8').trim();
+  sessionSecretCache = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+  return sessionSecretCache;
 }
 
 function isOwnerSetup() { return fs.existsSync(HASH_FILE); }
@@ -65,7 +84,15 @@ function isAuthenticated(req) {
   const age = Date.now() - parseInt(timestamp, 10);
   if (isNaN(age) || age > SESSION_MAX_AGE || age < 0) return false;
   const expected = crypto.createHmac('sha256', getSessionSecret()).update(timestamp).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'));
+  // timingSafeEqual throws if buffer lengths differ; guard against malformed tokens
+  try {
+    const hmacBuf = Buffer.from(hmac, 'hex');
+    const expectedBuf = Buffer.from(expected, 'hex');
+    if (hmacBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(hmacBuf, expectedBuf);
+  } catch {
+    return false;
+  }
 }
 
 function createSessionToken() {
@@ -75,7 +102,7 @@ function createSessionToken() {
 }
 
 // --- Middleware ---
-app.use(cors());
+// Same-origin only; no CORS needed for a cookie-authenticated app
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(getSessionSecret()));
@@ -87,13 +114,22 @@ function requireOwner(req, res, next) {
   next();
 }
 
+// Rate limiter for auth endpoints (prevent brute-force)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,                   // 20 attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many attempts, please try again later.'
+});
+
 // --- Auth Routes ---
 app.get('/setup', (req, res) => {
   if (isOwnerSetup()) return res.redirect('/login');
   res.sendFile(path.join(__dirname, 'public', 'setup.html'));
 });
 
-app.post('/setup', async (req, res) => {
+app.post('/setup', authLimiter, async (req, res) => {
   if (isOwnerSetup()) return res.redirect('/login');
   const { password, confirm } = req.body;
   if (!password || password.length < 8) return res.redirect('/setup?error=short');
@@ -111,7 +147,7 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.post('/login', async (req, res) => {
+app.post('/login', authLimiter, async (req, res) => {
   if (!isOwnerSetup()) return res.redirect('/setup');
   const { password } = req.body;
   const hash = getOwnerHash();
@@ -162,11 +198,27 @@ app.post('/api/settings', requireOwner, (req, res) => {
 
 // --- Prompts API ---
 function loadPrompts() {
-  if (!fs.existsSync(PROMPTS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8')); }
-  catch { return []; }
+  if (promptsCache) return promptsCache;
+  // Migrate legacy prompts.json from root to data/ if present
+  if (!fs.existsSync(PROMPTS_FILE) && fs.existsSync(LEGACY_PROMPTS_FILE)) {
+    try {
+      const legacy = JSON.parse(fs.readFileSync(LEGACY_PROMPTS_FILE, 'utf8'));
+      fs.writeFileSync(PROMPTS_FILE, JSON.stringify(legacy, null, 2));
+      fs.unlinkSync(LEGACY_PROMPTS_FILE);
+      promptsCache = legacy;
+      return promptsCache;
+    } catch { promptsCache = []; return promptsCache; }
+  }
+  if (!fs.existsSync(PROMPTS_FILE)) { promptsCache = []; return promptsCache; }
+  try { promptsCache = JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8')); }
+  catch { promptsCache = []; }
+  return promptsCache;
 }
-function savePrompts(prompts) { fs.writeFileSync(PROMPTS_FILE, JSON.stringify(prompts, null, 2)); }
+
+function savePrompts(prompts) {
+  promptsCache = prompts;
+  fs.writeFileSync(PROMPTS_FILE, JSON.stringify(prompts, null, 2));
+}
 
 app.get('/prompts', requireOwner, (req, res) => { res.json(loadPrompts()); });
 
@@ -177,7 +229,7 @@ app.post('/prompts', requireOwner, (req, res) => {
   const idx = prompts.findIndex(p => p.id === id);
   if (idx >= 0) { prompts[idx] = { id, name, text }; }
   else {
-    if (prompts.length >= 4) return res.status(400).json({ error: 'Max 4 prompts' });
+    if (prompts.length >= MAX_CUSTOM_PROMPTS) return res.status(400).json({ error: `Max ${MAX_CUSTOM_PROMPTS} prompts` });
     prompts.push({ id, name, text });
   }
   savePrompts(prompts);
@@ -194,18 +246,31 @@ function getTranscriptionClient() {
   const key = getEffectiveSetting('TRANSCRIPTION_API_KEY');
   const baseURL = getEffectiveSetting('TRANSCRIPTION_BASE_URL');
   if (!key) throw new Error('Transcription API key not configured. Go to Settings tab.');
-  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined });
+  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS });
 }
 
 function getCleanupClient() {
   const key = getEffectiveSetting('CLEANUP_API_KEY');
   const baseURL = getEffectiveSetting('CLEANUP_BASE_URL');
   if (!key) throw new Error('Cleanup API key not configured. Go to Settings tab.');
-  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined });
+  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS });
 }
 
-app.post('/upload', requireOwner, upload.single('audio'), async (req, res) => {
+// Multer error handler — converts file size errors to clean JSON instead of crashing
+function uploadErrorHandler(err, req, res, next) {
+  if (err) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Audio file too large (max 50 MB). Try a shorter recording.' });
+    }
+    console.error('Upload middleware error:', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+  next();
+}
+
+app.post('/upload', requireOwner, upload.single('audio'), uploadErrorHandler, async (req, res) => {
   try {
+    if (!req.file) return res.status(400).json({ error: 'No audio file received' });
     const client = getTranscriptionClient();
     const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
     const audioPath = req.file.path;
@@ -220,7 +285,9 @@ app.post('/upload', requireOwner, upload.single('audio'), async (req, res) => {
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     console.error('Upload error:', error.message);
-    res.status(500).json({ error: error.message });
+    // Distinguish 413 (from reverse proxy) from other errors
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message });
   }
 });
 
@@ -245,7 +312,8 @@ app.post('/cleanup', requireOwner, async (req, res) => {
     res.json({ cleanedTranscript: cleanup.choices[0].message.content });
   } catch (error) {
     console.error('Cleanup error:', error.message);
-    res.status(500).json({ error: error.message });
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message });
   }
 });
 // --- Static files (AFTER all API routes) ---
