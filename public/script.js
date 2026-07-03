@@ -11,6 +11,7 @@ const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl    = document.getElementById('timer');
 const ctx        = waveformCanvas.getContext('2d');
+const recorderRow = document.querySelector('.recorder-row');
 const recoveryRow = document.getElementById('recoveryRow');
 const recoveryInfo = document.getElementById('recoveryInfo');
 const retryRecordingBtn = document.getElementById('retryRecordingBtn');
@@ -136,7 +137,7 @@ function setTheme(theme) {
 // ── Auto-resize ───────────────────────────────────────
 function autoResize(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(Math.max(el.scrollHeight, 130), 500) + 'px';
+  el.style.height = Math.min(Math.max(el.scrollHeight, 130), 400) + 'px';
 }
 document.querySelectorAll('#rawTranscript, #cleanTranscript').forEach(ta => ta.addEventListener('input', () => autoResize(ta)));
 
@@ -614,6 +615,54 @@ function updateOnlineStatus() {
 }
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
+
+// ── Draggable recorder bar (mobile) ────────────────────
+const dragHandle = document.getElementById('dragHandle');
+if (dragHandle && window.matchMedia('(max-width: 600px)').matches) {
+  let isDragging = false, startY = 0, startBottom = 0;
+  const RECORDER_MIN_BOTTOM = 0;
+  const RECORDER_MAX_BOTTOM = () => window.innerHeight - 80;
+
+  // Restore saved position
+  const savedBottom = localStorage.getItem('recorderBarBottom');
+  if (savedBottom !== null) {
+    const val = parseFloat(savedBottom);
+    if (!isNaN(val) && val >= RECORDER_MIN_BOTTOM && val <= RECORDER_MAX_BOTTOM()) {
+      recorderRow.style.bottom = val + 'px';
+    }
+  }
+
+  function onDragStart(clientY) {
+    isDragging = true;
+    startY = clientY;
+    const cs = getComputedStyle(recorderRow);
+    startBottom = window.innerHeight - recorderRow.getBoundingClientRect().bottom;
+    recorderRow.style.transition = 'none';
+    document.body.style.userSelect = 'none';
+  }
+  function onDragMove(clientY) {
+    if (!isDragging) return;
+    const dy = clientY - startY;
+    let newBottom = startBottom - dy;
+    newBottom = Math.max(RECORDER_MIN_BOTTOM, Math.min(newBottom, RECORDER_MAX_BOTTOM()));
+    recorderRow.style.bottom = newBottom + 'px';
+  }
+  function onDragEnd() {
+    if (!isDragging) return;
+    isDragging = false;
+    recorderRow.style.transition = '';
+    document.body.style.userSelect = '';
+    const finalBottom = parseFloat(recorderRow.style.bottom);
+    if (!isNaN(finalBottom)) localStorage.setItem('recorderBarBottom', finalBottom);
+  }
+
+  dragHandle.addEventListener('touchstart', e => { onDragStart(e.touches[0].clientY); }, { passive: true });
+  dragHandle.addEventListener('touchmove', e => { onDragMove(e.touches[0].clientY); }, { passive: true });
+  dragHandle.addEventListener('touchend', onDragEnd);
+  dragHandle.addEventListener('mousedown', e => { onDragStart(e.clientY); e.preventDefault(); });
+  document.addEventListener('mousemove', e => onDragMove(e.clientY));
+  document.addEventListener('mouseup', onDragEnd);
+}
 
 // ── Init ───────────────────────────────────────────────
 loadPrompts();
