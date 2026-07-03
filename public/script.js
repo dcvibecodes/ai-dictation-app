@@ -11,6 +11,72 @@ const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl    = document.getElementById('timer');
 const ctx        = waveformCanvas.getContext('2d');
+const recoveryRow = document.getElementById('recoveryRow');
+const recoveryInfo = document.getElementById('recoveryInfo');
+const retryRecordingBtn = document.getElementById('retryRecordingBtn');
+const downloadRecordingBtn = document.getElementById('downloadRecordingBtn');
+const clearRecordingBtn = document.getElementById('clearRecordingBtn');
+
+const AUDIO_DB = 'dictationAudioBackup';
+const AUDIO_STORE = 'recordings';
+const AUDIO_KEY = 'latest';
+
+function openAudioDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(AUDIO_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function withAudioStore(mode, fn) {
+  const db = await openAudioDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE, mode);
+    const store = tx.objectStore(AUDIO_STORE);
+    const result = fn(store);
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function saveAudioBackup(blob) {
+  const record = { id: AUDIO_KEY, blob, type: blob.type || 'audio/webm', size: blob.size, createdAt: Date.now(), seconds: secondsElapsed };
+  await withAudioStore('readwrite', store => store.put(record));
+  return record;
+}
+
+async function getAudioBackup() {
+  const db = await openAudioDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE, 'readonly');
+    const req = tx.objectStore(AUDIO_STORE).get(AUDIO_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function clearAudioBackup() {
+  await withAudioStore('readwrite', store => store.delete(AUDIO_KEY));
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 KB';
+  const mb = bytes / 1024 / 1024;
+  return mb >= 1 ? mb.toFixed(1) + ' MB' : Math.ceil(bytes / 1024) + ' KB';
+}
+
+async function updateRecoveryUI(record) {
+  try {
+    const backup = record === undefined ? await getAudioBackup() : record;
+    recoveryRow.style.display = backup ? '' : 'none';
+    if (backup) recoveryInfo.textContent = `Recording saved locally · ${formatBytes(backup.size)}`;
+  } catch {
+    recoveryRow.style.display = 'none';
+  }
+}
 
 // ── Tabs ───────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -123,10 +189,12 @@ document.getElementById('rawTranscript').addEventListener('input', () => { updat
 document.getElementById('cleanTranscript').addEventListener('input', () => updateWordCount('cleanTranscript', 'cleanWordCount'));
 
 // ── Clear ──────────────────────────────────────────────
-clearBtn.onclick = () => {
+clearBtn.onclick = async () => {
   ['rawTranscript', 'cleanTranscript'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.style.height = '130px'; });
   document.getElementById('rawWordCount').textContent = '0w';
   document.getElementById('cleanWordCount').textContent = '0w';
+  await clearAudioBackup();
+  updateRecoveryUI(null);
   updateSendCleanupBtn(); setStatus('Ready'); timerEl.textContent = '00:00';
 };
 
@@ -312,6 +380,56 @@ async function saveSettings() {
 }
 
 // ── Recording ──────────────────────────────────────────
+async function transcribeAudioBlob(audioBlob) {
+  toggleBtn.classList.add('processing');
+  toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
+  retryRecordingBtn.disabled = true;
+  setStatus('Transcribing…', 'processing');
+
+  try {
+    const fd = new FormData();
+    fd.append('audio', audioBlob, 'rec.webm');
+    const uRes = await fetch('/upload', { method: 'POST', body: fd });
+    if (uRes.status === 401) { window.location.href = '/login'; return; }
+    if (!uRes.ok) throw new Error(`Upload: ${uRes.status}`);
+    const uData = await uRes.json();
+    if (uData.error) throw new Error(uData.error);
+
+    const raw = uData.rawTranscript || '';
+    const rawEl = document.getElementById('rawTranscript');
+    rawEl.value = raw; autoResize(rawEl);
+    updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
+
+    if (cleanToggle.checked) {
+      setStatus('Cleaning…', 'processing');
+      const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }) });
+      if (cRes.status === 401) { window.location.href = '/login'; return; }
+      if (!cRes.ok) throw new Error(`Cleanup: ${cRes.status}`);
+      const cData = await cRes.json();
+      if (cData.error) throw new Error(cData.error);
+      const cleaned = cData.cleanedTranscript || '';
+      const cleanEl = document.getElementById('cleanTranscript');
+      cleanEl.value = cleaned; autoResize(cleanEl);
+      updateWordCount('cleanTranscript', 'cleanWordCount');
+      if (cleaned) { addToHistory(raw, cleaned); navigator.clipboard.writeText(cleaned); showToast('Cleaned transcript copied'); }
+    } else {
+      document.getElementById('cleanTranscript').value = '';
+      document.getElementById('cleanWordCount').textContent = '0w';
+      addToHistory(raw, raw); navigator.clipboard.writeText(raw); showToast('Raw transcript copied');
+    }
+
+    await clearAudioBackup();
+    updateRecoveryUI(null);
+    setStatus('Done ✓', 'done');
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'error');
+    updateRecoveryUI();
+  } finally {
+    retryRecordingBtn.disabled = false;
+    resetButton();
+  }
+}
+
 async function startRecording() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioContext = new AudioContext();
@@ -344,45 +462,15 @@ async function startRecording() {
       return;
     }
 
-    toggleBtn.classList.add('processing');
-    toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
-    setStatus('Transcribing…', 'processing');
-
+    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
     try {
-      const fd = new FormData();
-      fd.append('audio', new Blob(audioChunks, { type: 'audio/webm' }), 'rec.webm');
-      const uRes = await fetch('/upload', { method: 'POST', body: fd });
-      if (uRes.status === 401) { window.location.href = '/login'; return; }
-      if (!uRes.ok) throw new Error(`Upload: ${uRes.status}`);
-      const uData = await uRes.json();
-      if (uData.error) throw new Error(uData.error);
-
-      const raw = uData.rawTranscript || '';
-      const rawEl = document.getElementById('rawTranscript');
-      rawEl.value = raw; autoResize(rawEl);
-      updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
-
-      if (cleanToggle.checked) {
-        setStatus('Cleaning…', 'processing');
-        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }) });
-        if (cRes.status === 401) { window.location.href = '/login'; return; }
-        if (!cRes.ok) throw new Error(`Cleanup: ${cRes.status}`);
-        const cData = await cRes.json();
-        if (cData.error) throw new Error(cData.error);
-        const cleaned = cData.cleanedTranscript || '';
-        const cleanEl = document.getElementById('cleanTranscript');
-        cleanEl.value = cleaned; autoResize(cleanEl);
-        updateWordCount('cleanTranscript', 'cleanWordCount');
-        if (cleaned) { addToHistory(raw, cleaned); navigator.clipboard.writeText(cleaned); showToast('Cleaned transcript copied'); }
-      } else {
-        document.getElementById('cleanTranscript').value = '';
-        document.getElementById('cleanWordCount').textContent = '0w';
-        addToHistory(raw, raw); navigator.clipboard.writeText(raw); showToast('Raw transcript copied');
-      }
-      setStatus('Done ✓', 'done');
-    } catch (e) { setStatus('Error: ' + e.message, 'error'); }
-
-    resetButton();
+      const backup = await saveAudioBackup(audioBlob);
+      updateRecoveryUI(backup);
+    } catch {
+      updateRecoveryUI(null);
+      showToast('Could not save local backup');
+    }
+    await transcribeAudioBlob(audioBlob);
   };
   mediaRecorder.start();
 }
@@ -398,6 +486,26 @@ function stopRecording() { mediaRecorder.stop(); mediaRecorder.stream.getTracks(
 
 toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
 cancelBtn.onclick = cancelRecording;
+retryRecordingBtn.onclick = async () => {
+  const backup = await getAudioBackup();
+  if (!backup) { updateRecoveryUI(null); showToast('No saved recording'); return; }
+  await transcribeAudioBlob(backup.blob);
+};
+downloadRecordingBtn.onclick = async () => {
+  const backup = await getAudioBackup();
+  if (!backup) { updateRecoveryUI(null); showToast('No saved recording'); return; }
+  const url = URL.createObjectURL(backup.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `dictation-${new Date(backup.createdAt).toISOString().replace(/[:.]/g, '-')}.webm`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+clearRecordingBtn.onclick = async () => {
+  await clearAudioBackup();
+  updateRecoveryUI(null);
+  showToast('Recording cleared');
+};
 
 // ── Utilities ──────────────────────────────────────────
 function copyText(id) { const t = document.getElementById(id).value; if (t) { navigator.clipboard.writeText(t); showToast(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied'); } }
@@ -413,6 +521,7 @@ document.addEventListener('keydown', e => {
 // ── Init ───────────────────────────────────────────────
 loadPrompts();
 renderHistory();
+updateRecoveryUI();
 
 
 // ── Service Worker (PWA) ───────────────────────────────

@@ -117,6 +117,23 @@ header {
   color: var(--text-muted);
 }
 
+.recovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-surface);
+}
+.recovery-row span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.recovery-actions { display: flex; align-items: center; gap: 5px; }
+
 .prompt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clean-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); cursor: pointer; user-select: none; }
 .clean-toggle-label input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
@@ -303,6 +320,9 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }
+  .recovery-row { align-items: flex-start; flex-direction: column; }
+  .recovery-actions { width: 100%; }
+  .recovery-actions .btn { flex: 1; }
 
   .results { grid-template-columns: 1fr; gap: 14px; }
   .input,

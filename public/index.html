@@ -50,6 +50,14 @@
         <span id="status" class="status" aria-live="polite">Ready</span>
         <span class="shortcut-hint"><kbd>S</kbd> start/stop · <kbd>C</kbd> cancel</span>
       </div>
+      <div class="recovery-row" id="recoveryRow" style="display:none">
+        <span id="recoveryInfo">Recording saved locally</span>
+        <div class="recovery-actions">
+          <button class="btn btn-primary btn-sm" id="retryRecordingBtn">Retry</button>
+          <button class="btn btn-ghost btn-sm" id="downloadRecordingBtn">Download</button>
+          <button class="btn btn-ghost btn-sm btn-danger" id="clearRecordingBtn">Clear</button>
+        </div>
+      </div>
       <div class="prompt-row">
         <label class="clean-toggle-label"><input type="checkbox" id="cleanToggle" checked><span>Auto-clean</span></label>
         <div class="prompt-tabs" id="promptBarTabs" role="tablist"></div>

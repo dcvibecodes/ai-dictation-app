@@ -53,6 +53,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Dark/light theme** — toggleable, login page respects system preference
 - **Keyboard shortcuts** — `S` start/stop, `C` cancel, `Escape` close modals
 - **Auto-copy** — transcript copied to clipboard automatically
+- **Local backup** — recording saved to IndexedDB on stop; retry, download, or clear from the recovery strip if upload fails
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
 
 ---
