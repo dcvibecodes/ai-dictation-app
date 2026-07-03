@@ -323,13 +323,15 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
   }
 
   #cancelBtn,
-  #clearBtn {
+  #clearBtn,
+  #uploadAudioBtn {
     grid-area: actions;
     justify-self: end;
     min-height: 32px;
   }
 
   #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn { display: none; }
+  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn + #uploadAudioBtn { display: none; }
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }
