@@ -339,19 +339,32 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
 
   #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + .action-btns { display: none; }
 
-  /* Icon-only buttons on mobile */
-  .action-btns .btn-label {
-    display: none;
+  /* Clear as text button, Upload as icon — same height */
+  .action-btns {
+    gap: 5px;
   }
-  .action-btns .btn {
-    width: 32px;
-    height: 32px;
+  .action-btns .icon-btn-sm {
+    width: 28px;
+    height: 28px;
     padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
   }
-  .action-btns .btn-icon {
-    width: 15px;
-    height: 15px;
+  .action-btns .icon-btn-sm:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .action-btns .icon-btn-sm .btn-icon {
+    width: 14px;
+    height: 14px;
   }
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
