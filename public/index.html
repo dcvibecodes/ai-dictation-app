@@ -45,10 +45,12 @@
         </button>
         <canvas id="waveform" aria-hidden="true"></canvas>
         <span id="timer">00:00</span>
-        <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
-        <div class="action-btns">
-          <button id="clearBtn" class="btn btn-ghost btn-sm">Clear</button>
-          <button id="uploadAudioBtn" class="btn btn-ghost btn-sm">Upload</button>
+        <div class="cancel-action-area">
+          <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
+          <div class="action-btns">
+            <button id="clearBtn" class="btn btn-ghost btn-sm">Clear</button>
+            <button id="uploadAudioBtn" class="btn btn-ghost btn-sm">Upload</button>
+          </div>
         </div>
         <input type="file" id="fileInput" accept="audio/*" style="display:none">
       </div>

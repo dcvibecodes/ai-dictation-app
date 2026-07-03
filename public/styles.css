@@ -443,21 +443,15 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     letter-spacing: 0.4px;
   }
 
-  #cancelBtn {
-    grid-area: actions;
-    justify-self: end;
-    min-height: 32px;
-  }
-
-  .action-btns {
+  .cancel-action-area {
     grid-area: actions;
     justify-self: end;
     display: flex;
     gap: 6px;
     align-items: center;
+    min-height: 32px;
   }
-
-  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + .action-btns { display: none; }
+  .cancel-action-area #cancelBtn:not([style*="display:none"]) ~ .action-btns { display: none; }
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }

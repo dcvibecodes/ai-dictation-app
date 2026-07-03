@@ -33,14 +33,11 @@ function setStatusProcessing(t) {
   // Reuse the existing cancel button in the recorder row for aborting processing
   cancelBtn.style.display = '';
   cancelBtn.onclick = abortProcessing;
-  // Hide Clear/Upload during processing since there's nothing to clear yet
-  document.querySelector('.action-btns').style.display = 'none';
 }
 function clearProcessingUI() {
   setStatus('Ready');
   cancelBtn.style.display = 'none';
   cancelBtn.onclick = cancelRecording;
-  document.querySelector('.action-btns').style.display = '';
 }
 
 function abortProcessing() {
@@ -310,7 +307,7 @@ document.getElementById('cleanTranscript').addEventListener('input', () => updat
 
 // ── Clear ──────────────────────────────────────────────
 clearBtn.onclick = async () => {
-  if (processingAbortController) cancelProcessing();
+  if (processingAbortController) abortProcessing();
   if (isRecording) stopRecording();
   ['rawTranscript', 'cleanTranscript'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.style.height = '130px'; });
   document.getElementById('rawWordCount').textContent = '0w';
