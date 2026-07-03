@@ -30,26 +30,27 @@ const AUDIO_KEY = 'latest';
 function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
 function setStatusProcessing(t) {
   setStatus(t, 'processing');
-  // Add a Cancel button next to the status text if not already present
-  if (!document.querySelector('.processing-cancel-btn')) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-ghost btn-sm processing-cancel-btn';
-    btn.textContent = 'Cancel';
-    btn.onclick = cancelProcessing;
-    statusEl.parentNode.insertBefore(btn, statusEl.nextSibling);
-  }
+  // Reuse the existing cancel button in the recorder row for aborting processing
+  cancelBtn.style.display = '';
+  cancelBtn.onclick = abortProcessing;
+  // Hide Clear/Upload during processing since there's nothing to clear yet
+  document.querySelector('.action-btns').style.display = 'none';
 }
 function clearProcessingUI() {
   setStatus('Ready');
-  const btn = document.querySelector('.processing-cancel-btn');
-  if (btn) btn.remove();
+  cancelBtn.style.display = 'none';
+  cancelBtn.onclick = cancelRecording;
+  document.querySelector('.action-btns').style.display = '';
 }
 
-function cancelProcessing() {
+function abortProcessing() {
   if (processingAbortController) {
     processingAbortController.abort();
     processingAbortController = null;
   }
+  // Also clear the cancel button reference immediately
+  cancelBtn.style.display = 'none';
+  cancelBtn.onclick = cancelRecording;
 }
 
 // ── Utilities ──────────────────────────────────────────
@@ -286,7 +287,17 @@ function visualize() {
   }
   draw();
 }
-function clearWaveform() { ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height); }
+function clearWaveform() {
+  ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+  // Draw a subtle center line when idle
+  const y = waveformCanvas.height / 2;
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-subtle').trim() || '#1e1e1e';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(waveformCanvas.width, y);
+  ctx.stroke();
+}
 
 // ── Word Count ─────────────────────────────────────────
 function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).length; }
@@ -611,12 +622,13 @@ async function startRecording() {
       cancelAnimationFrame(animationId);
       stopTimer(); clearWaveform();
       toggleBtn.classList.remove('recording');
-      cancelBtn.style.display = 'none';
+      // Don't hide cancelBtn here — setStatusProcessing will show it for aborting processing
 
       if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
       if (cancelled) {
         cancelled = false; audioChunks = [];
+        cancelBtn.style.display = 'none';
         resetButton(); setStatus('Cancelled', 'error');
         setTimeout(() => setStatus('Ready'), 1200);
         return;
