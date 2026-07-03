@@ -95,6 +95,12 @@ body {
   transition: border-color 0.15s;
 }
 
+@media (max-width: 600px) {
+  .auth-card input[type="password"] {
+    font-size: 16px;
+  }
+}
+
 .auth-card input[type="password"]:focus {
   outline: none;
   border-color: var(--accent);

@@ -304,7 +304,13 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
   .shortcut-hint { display: none; }
 
   .results { grid-template-columns: 1fr; gap: 14px; }
-  textarea { min-height: 185px; font-size: 0.95rem; }
+  .input,
+  textarea,
+  .settings-group .input {
+    font-size: 16px;
+  }
+
+  textarea { min-height: 185px; }
 
   .prompt-row {
     gap: 8px;
