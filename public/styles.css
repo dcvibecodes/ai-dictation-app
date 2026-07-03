@@ -323,45 +323,33 @@ textarea { min-height: 200px; max-height: 600px; resize: none; overflow-y: hidde
     letter-spacing: 0.4px;
   }
 
-  #cancelBtn,
-  #clearBtn,
-  #uploadAudioBtn {
+  #cancelBtn {
     grid-area: actions;
     justify-self: end;
     min-height: 32px;
   }
 
-  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn { display: none; }
-  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + #clearBtn + #uploadAudioBtn { display: none; }
+  .action-btns {
+    grid-area: actions;
+    justify-self: end;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  #cancelBtn:not([style*="display:none"]):not([style*="display: none"]) + .action-btns { display: none; }
 
   /* Icon-only buttons on mobile */
-  #clearBtn .btn-label,
-  #uploadAudioBtn .btn-label {
+  .action-btns .btn-label {
     display: none;
   }
-  #clearBtn,
-  #uploadAudioBtn {
+  .action-btns .btn {
     width: 32px;
     height: 32px;
     padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     border-radius: 6px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.15s;
   }
-  #clearBtn:hover,
-  #uploadAudioBtn:hover {
-    background: var(--accent-dim);
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  #clearBtn .btn-icon,
-  #uploadAudioBtn .btn-icon {
+  .action-btns .btn-icon {
     width: 15px;
     height: 15px;
   }

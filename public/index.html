@@ -46,8 +46,10 @@
         <canvas id="waveform" aria-hidden="true"></canvas>
         <span id="timer">00:00</span>
         <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
-        <button id="clearBtn" class="btn btn-ghost btn-sm"><svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span class="btn-label">Clear</span></button>
-        <button id="uploadAudioBtn" class="btn btn-ghost btn-sm"><svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><span class="btn-label">Upload</span></button>
+        <div class="action-btns">
+          <button id="clearBtn" class="btn btn-ghost btn-sm"><svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span class="btn-label">Clear</span></button>
+          <button id="uploadAudioBtn" class="btn btn-ghost btn-sm"><svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><span class="btn-label">Upload</span></button>
+        </div>
         <input type="file" id="fileInput" accept="audio/*" style="display:none">
       </div>
       <div class="sub-row">
