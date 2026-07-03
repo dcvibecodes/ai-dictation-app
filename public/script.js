@@ -559,6 +559,7 @@ async function transcribeAudioBlob(audioBlob) {
       copiedLabel = 'Raw copied';
     }
 
+    processingAbortController = null;
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
