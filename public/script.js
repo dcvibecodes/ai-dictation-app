@@ -33,11 +33,14 @@ function setStatusProcessing(t) {
   // Reuse the existing cancel button in the recorder row for aborting processing
   cancelBtn.style.display = '';
   cancelBtn.onclick = abortProcessing;
+  // Hide Clear/Upload during processing since there's nothing to clear yet
+  document.querySelector('.action-btns').style.display = 'none';
 }
 function clearProcessingUI() {
   setStatus('Ready');
   cancelBtn.style.display = 'none';
   cancelBtn.onclick = cancelRecording;
+  document.querySelector('.action-btns').style.display = '';
 }
 
 function abortProcessing() {
@@ -284,19 +287,18 @@ function visualize() {
   }
   draw();
 }
-function drawIdleLine() {
-  const y = waveformCanvas.height / 2;
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#2e2e2e';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, y);
-  ctx.lineTo(waveformCanvas.width, y);
-  ctx.stroke();
-}
-
 function clearWaveform() {
   ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
   drawIdleLine();
+}
+
+function drawIdleLine() {
+  const color = getBarColor();
+  const midY = waveformCanvas.height / 2;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.15;
+  ctx.fillRect(0, midY - 0.5, waveformCanvas.width, 1);
+  ctx.globalAlpha = 1;
 }
 
 // ── Word Count ─────────────────────────────────────────
@@ -611,6 +613,7 @@ async function startRecording() {
     toggleBtn.classList.add('recording');
     toggleBtn.innerHTML = '<div class="stop-icon"></div>';
     cancelBtn.style.display = '';
+    document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
     setStatus('Recording…', 'active');
 
@@ -629,6 +632,7 @@ async function startRecording() {
       if (cancelled) {
         cancelled = false; audioChunks = [];
         cancelBtn.style.display = 'none';
+        document.querySelector('.action-btns').style.display = '';
         resetButton(); setStatus('Cancelled', 'error');
         setTimeout(() => setStatus('Ready'), 1200);
         return;

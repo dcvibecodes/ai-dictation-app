@@ -96,6 +96,7 @@ header {
 
 #waveform {
   flex: 1; height: 36px; min-width: 60px;
+  border-radius: 6px; background: transparent; border: none;
 }
 
 #timer {
@@ -272,7 +273,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .help-details[open] .help-summary::before { transform: rotate(90deg); }
 .help-summary:hover { background: var(--accent-dim); }
 .help-content {
-  padding: 8px 12px 14px;
+  padding: 4px 12px 12px;
   font-size: 0.76rem;
   color: var(--text-muted);
   line-height: 1.6;
@@ -329,10 +330,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .modal-close:hover { background: var(--accent-dim); color: var(--accent); }
 .modal-footer { display: flex; justify-content: flex-end; gap: 6px; }
 
-/* ── Processing cancel button (shows next to status text) ── */
-.processing-cancel-btn {
-  margin-left: auto;
-}
 /* ── Offline banner ── */
 .offline-banner {
   background: var(--danger-dim);
@@ -432,6 +429,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     width: 100%;
     height: 34px;
     min-width: 0;
+    background: transparent;
   }
 
   #timer {
@@ -443,15 +441,21 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     letter-spacing: 0.4px;
   }
 
-  .cancel-action-area {
+  #cancelBtn {
+    grid-area: actions;
+    justify-self: end;
+    min-height: 32px;
+  }
+
+  .action-btns {
     grid-area: actions;
     justify-self: end;
     display: flex;
     gap: 6px;
     align-items: center;
-    min-height: 32px;
   }
-  .cancel-action-area #cancelBtn:not([style*="display:none"]) ~ .action-btns { display: none; }
+
+  #fileInput { grid-area: 1 / 1; opacity: 0; pointer-events: none; }
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }
