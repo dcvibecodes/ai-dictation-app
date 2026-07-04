@@ -150,41 +150,48 @@ header {
 
 .prompt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .clean-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); cursor: pointer; user-select: none; }
-.clean-toggle-label input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  cursor: pointer;
-  flex-shrink: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1.5px solid var(--border);
-  border-radius: 3px;
-  background: var(--input-bg);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.12s;
+
+.toggle-switch {
   position: relative;
+  width: 26px;
+  height: 15px;
+  flex-shrink: 0;
 }
-.clean-toggle-label input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.clean-toggle-label input[type="checkbox"]:checked::after {
-  content: '';
-  display: block;
-  width: 5px;
-  height: 9px;
-  border: solid var(--accent-contrast);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
+.toggle-switch input {
   position: absolute;
-  top: 1px;
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
-.prompt-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
-.prompt-tab { padding: 3px 9px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 0.7rem; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
-.prompt-tab:hover { border-color: var(--accent); color: var(--accent); }
-.prompt-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 15px;
+  transition: background 0.2s;
+  cursor: pointer;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  background: var(--bg);
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+}
+.toggle-switch input:checked + .toggle-slider::after {
+  transform: translateX(11px);
+}
+.prompt-tabs { display: flex; gap: 2px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 2px; flex-wrap: wrap; }
+.prompt-tab { padding: 5px 12px; border: none; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 0.73rem; font-weight: 550; cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
+.prompt-tab:hover { color: var(--text); }
+.prompt-tab.active { background: var(--accent-dim); color: var(--accent); }
 
 /* ── Results ── */
 .results { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -203,6 +210,7 @@ header {
 textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto; }
 .input::placeholder, textarea::placeholder { color: var(--text-faint); }
 .input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.input-masked { -webkit-text-security: disc; text-security: disc; }
 .input-textarea { height: 200px; resize: vertical; overflow-y: auto; }
 .input-error { border-color: var(--danger) !important; box-shadow: 0 0 0 2px var(--danger-dim) !important; }
 
@@ -389,7 +397,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     background: color-mix(in srgb, var(--bg) 82%, transparent);
     box-shadow: 0 18px 60px rgba(0,0,0,0.28);
     backdrop-filter: blur(22px) saturate(1.2);
-    touch-action: none;
   }
 
   .record-btn {
@@ -470,7 +477,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     font-size: 16px;
   }
 
-  textarea { min-height: 185px; }
+  textarea { min-height: 185px; max-height: calc(100vh - 280px); }
 
   .prompt-row {
     gap: 8px;

@@ -159,6 +159,20 @@ app.post('/login', authLimiter, async (req, res) => {
   res.redirect('/');
 });
 
+app.post('/change-password', authLimiter, async (req, res) => {
+  if (!isOwnerSetup()) return res.status(400).json({ error: 'No password set yet.' });
+  const { currentPassword, newPassword, confirm } = req.body;
+  if (!currentPassword || !newPassword || !confirm) return res.status(400).json({ error: 'All fields are required.' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  if (newPassword !== confirm) return res.status(400).json({ error: 'New passwords do not match.' });
+
+  const hash = getOwnerHash();
+  if (!hash || !(await bcrypt.compare(currentPassword, hash))) return res.status(400).json({ error: 'Current password is incorrect.' });
+
+  fs.writeFileSync(HASH_FILE, await bcrypt.hash(newPassword, BCRYPT_ROUNDS), 'utf8');
+  res.json({ ok: true });
+});
+
 app.get('/logout', (req, res) => { res.clearCookie('session'); res.redirect('/login'); });
 
 // --- Protected main page ---

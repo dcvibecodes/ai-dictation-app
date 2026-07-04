@@ -21,6 +21,8 @@
       </svg>
       <h1>Dictation Tool</h1>
     </div>
+
+    <!-- Login -->
     <div class="auth-card">
       <h2>Login</h2>
       <p>Enter your password to access the dictation tool.</p>
@@ -29,14 +31,88 @@
         <input type="password" name="password" placeholder="Password" required autocomplete="current-password" autofocus>
         <button type="submit">Login</button>
       </form>
+      <button type="button" id="showChangePw" class="auth-link-btn" onclick="toggleChangePassword()">Change password</button>
+    </div>
+
+    <!-- Change Password -->
+    <div id="changePwCard" class="auth-card" style="display:none">
+      <h2>Change Password</h2>
+      <p>Enter your current password and a new one.</p>
+      <div id="changePwError" class="auth-error" style="display:none"></div>
+      <div id="changePwSuccess" class="auth-success" style="display:none"></div>
+      <form id="changePwForm" onsubmit="return submitChangePassword(event)">
+        <input type="password" id="currentPassword" placeholder="Current password" required autocomplete="current-password">
+        <input type="password" id="newPassword" placeholder="New password (min 8 chars)" required autocomplete="new-password">
+        <input type="password" id="confirmPassword" placeholder="Confirm new password" required autocomplete="new-password">
+        <button type="submit">Update Password</button>
+      </form>
+      <button type="button" class="auth-link-btn" onclick="toggleChangePassword()">Back to login</button>
     </div>
   </div>
   <script>
+    // Show login error if present in URL
     const params = new URLSearchParams(window.location.search);
     if (params.get('error') === '1') {
       const el = document.getElementById('errorMsg');
       el.style.display = 'block';
       el.textContent = 'Incorrect password. Try again.';
+    }
+
+    let changePwVisible = false;
+
+    function toggleChangePassword() {
+      changePwVisible = !changePwVisible;
+      document.querySelector('.auth-card').style.display = changePwVisible ? 'none' : '';
+      document.getElementById('changePwCard').style.display = changePwVisible ? '' : 'none';
+      // Reset state
+      document.getElementById('changePwError').style.display = 'none';
+      document.getElementById('changePwSuccess').style.display = 'none';
+      document.getElementById('changePwForm').reset();
+    }
+
+    async function submitChangePassword(e) {
+      e.preventDefault();
+      const currentPassword = document.getElementById('currentPassword').value;
+      const newPassword = document.getElementById('newPassword').value;
+      const confirm = document.getElementById('confirmPassword').value;
+      const errorEl = document.getElementById('changePwError');
+      const successEl = document.getElementById('changePwSuccess');
+
+      errorEl.style.display = 'none';
+      successEl.style.display = 'none';
+
+      if (newPassword.length < 8) {
+        errorEl.textContent = 'New password must be at least 8 characters.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (newPassword !== confirm) {
+        errorEl.textContent = 'New passwords do not match.';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      try {
+        const res = await fetch('/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword, newPassword, confirm })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error || 'Failed to change password.';
+          errorEl.style.display = 'block';
+          return;
+        }
+        successEl.textContent = 'Password updated successfully.';
+        successEl.style.display = 'block';
+        document.getElementById('changePwForm').reset();
+        // Auto-hide the success message after a moment
+        setTimeout(() => { successEl.style.display = 'none'; }, 4000);
+      } catch (err) {
+        errorEl.textContent = 'Network error. Try again.';
+        errorEl.style.display = 'block';
+      }
     }
   </script>
 </body>

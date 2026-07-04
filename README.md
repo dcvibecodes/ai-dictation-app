@@ -60,7 +60,10 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all error states, local storage, keyboard shortcuts, and offline usage
 - **Stronger button feedback** — visual glow ring on press for instant tap confirmation
-- **Draggable recorder bar (mobile)** — touch anywhere (except buttons) to reposition the bar; position persisted across sessions
+- **Change password on login** — reset your password from the login screen using your current password
+- **Toggle switch for auto-clean** — clean visual toggle instead of a checkbox
+- **Prompt tabs styled like nav tabs** — prompt selector matches the Dictate/History/Settings tab bar
+- **API key fields don't trigger password save prompts** — masked text inputs, not password fields
 - **Custom checkbox styling** — monochrome, visible in both themes without using accent colors
 - **Improved dark theme contrast** — recorder card border adjusted for clear visibility in dark mode
 
@@ -82,7 +85,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - Subsequent visits → `/login`
 - 7-day session cookie
 - All API routes protected
-- To reset password: delete `data/owner.hash` and restart
+- To change password: click "Change password" on the login screen
+- To reset if you've forgotten it: delete `data/owner.hash` and restart
 
 ---
 

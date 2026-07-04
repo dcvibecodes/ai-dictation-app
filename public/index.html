@@ -61,7 +61,13 @@
         </div>
       </div>
       <div class="prompt-row">
-        <label class="clean-toggle-label"><input type="checkbox" id="cleanToggle" checked><span>Auto-clean</span></label>
+        <label class="clean-toggle-label">
+          <span class="toggle-switch">
+            <input type="checkbox" id="cleanToggle" checked>
+            <span class="toggle-slider"></span>
+          </span>
+          <span>Auto-clean</span>
+        </label>
         <div class="prompt-tabs" id="promptBarTabs" role="tablist"></div>
       </div>
 
@@ -114,14 +120,14 @@
         <div class="settings-grid">
           <fieldset class="settings-group">
             <legend>Transcription</legend>
-            <label>API Key<input type="password" id="setTranscriptionKey" class="input" placeholder="sk-..." autocomplete="off"></label>
-            <label>Base URL <span class="optional">(optional)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.openai.com/v1"></label>
+            <label>API Key<input type="text" id="setTranscriptionKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
+            <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
             <label>Model<input type="text" id="setTranscriptionModel" class="input" placeholder="whisper-1"></label>
           </fieldset>
           <fieldset class="settings-group">
             <legend>Cleanup</legend>
-            <label>API Key<input type="password" id="setCleanupKey" class="input" placeholder="sk-..." autocomplete="off"></label>
-            <label>Base URL <span class="optional">(optional)</span><input type="text" id="setCleanupUrl" class="input" placeholder="https://api.openai.com/v1"></label>
+            <label>API Key<input type="text" id="setCleanupKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
+            <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setCleanupUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
             <label>Model<input type="text" id="setCleanupModel" class="input" placeholder="gpt-4.1-mini"></label>
           </fieldset>
         </div>
