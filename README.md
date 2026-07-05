@@ -44,7 +44,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Single transcript display** — one clean text area with no borders; shows cleaned or raw text depending on auto-clean toggle
-- **Tap to copy, long-press to select** — quick tap copies the entire transcript; hold to select individual words/sentences
+- **Tap to copy** — click/tap the transcript to copy the entire text to clipboard
 - **Pop-in animation** — transcript appears with a smooth fade-in when it arrives
 - **Show raw / Show cleaned toggle** — switch between raw and cleaned versions when both exist
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved

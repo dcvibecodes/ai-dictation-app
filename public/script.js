@@ -309,44 +309,13 @@ toggleRawBtn.addEventListener('click', () => {
   updateTranscriptDisplay();
 });
 
-// ── Tap / Long-press on transcript ──
-let pressTimer = null;
-let isLongPress = false;
-
-transcriptDisplay.addEventListener('pointerdown', (e) => {
-  // Ignore if text is selected (user might be selecting)
-  if (window.getSelection().toString().length > 0) return;
-  isLongPress = false;
-  pressTimer = setTimeout(() => {
-    isLongPress = true;
-    // Enable text selection
-    transcriptDisplay.classList.add('selectable');
-    // Remove after a while or on next interaction
-  }, 400);
-});
-
-transcriptDisplay.addEventListener('pointerup', (e) => {
-  clearTimeout(pressTimer);
-  if (!isLongPress) {
-    // Short tap = copy
-    const text = getDisplayText();
-    if (text.trim()) {
-      copyToClipboard(text);
-      setStatus('Copied ✓', 'done');
-      setTimeout(() => setStatus('Ready'), 1500);
-    }
-  }
-  // Long press keeps selectable class active
-});
-
-transcriptDisplay.addEventListener('pointercancel', () => {
-  clearTimeout(pressTimer);
-});
-
-// Remove selectable mode when clicking elsewhere
-document.addEventListener('pointerdown', (e) => {
-  if (e.target !== transcriptDisplay) {
-    transcriptDisplay.classList.remove('selectable');
+// ── Tap to copy transcript ──
+transcriptDisplay.addEventListener('click', () => {
+  const text = getDisplayText();
+  if (text.trim()) {
+    copyToClipboard(text);
+    setStatus('Copied ✓', 'done');
+    setTimeout(() => setStatus('Ready'), 1500);
   }
 });
 

@@ -268,22 +268,6 @@ header {
   word-wrap: break-word;
 }
 
-.transcript-display.selectable {
-  user-select: text;
-  -webkit-user-select: text;
-  cursor: text;
-}
-
-.transcript-display.selectable::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  opacity: 0.3;
-  pointer-events: none;
-}
-
 .transcript-placeholder {
   color: var(--text-faint);
   font-style: italic;
