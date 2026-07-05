@@ -43,14 +43,20 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
-- **Dictate tab** — record, transcribe, and clean up in one flow
+- **Single transcript display** — one clean text area with no borders; shows cleaned or raw text depending on auto-clean toggle
+- **Tap to copy, long-press to select** — quick tap copies the entire transcript; hold to select individual words/sentences
+- **Pop-in animation** — transcript appears with a smooth fade-in when it arrives
+- **Show raw / Show cleaned toggle** — switch between raw and cleaned versions when both exist
+- **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
+- **Tab icons** — mic, clock, and gear icons next to tab labels
+- **Pulsing recording indicator** — subtle red ring pulse animation on the mic button while recording
+- **Haptic feedback** — short vibration on recording start/stop (Android)
 - **Frequency bar waveform** — live audio visualization while recording
 - **Auto-clean toggle** — skip cleanup when you just want raw text
 - **Multiple cleanup prompts** — up to 4 custom prompts, switch instantly
-- **History tab** — persistent session history (localStorage, 20 entries)
-- **Settings tab** — API keys, models, base URLs, and prompt management
+- **History tab** — persistent session history (localStorage, 20 entries) with card-style items
+- **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Dark/light theme** — toggleable, login page respects system preference
 - **Keyboard shortcuts** — `S` start/stop, `C` cancel/clear/abort, `Escape` close modals
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
@@ -59,13 +65,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Smart recovery row** — only appears when transcription/upload fails, not on cleanup failure; raw transcript stays on screen
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all error states, local storage, keyboard shortcuts, and offline usage
-- **Stronger button feedback** — visual glow ring on press for instant tap confirmation
 - **Change password on login** — reset your password from the login screen using your current password
-- **Toggle switch for auto-clean** — clean visual toggle instead of a checkbox
-- **Prompt tabs styled like nav tabs** — prompt selector matches the Dictate/History/Settings tab bar
-- **API key fields don't trigger password save prompts** — masked text inputs, not password fields
-- **Custom checkbox styling** — monochrome, visible in both themes without using accent colors
-- **Improved dark theme contrast** — recorder card border adjusted for clear visibility in dark mode
+- **Smooth modal animations** — prompt editor opens with a scale + slide-up transition
 
 ---
 

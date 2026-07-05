@@ -22,18 +22,28 @@ const clearRecordingBtn = document.getElementById("clearRecordingBtn");
 const uploadAudioBtn = document.getElementById("uploadAudioBtn");
 const fileInput = document.getElementById("fileInput");
 
+// New transcript display elements
+const transcriptDisplay = document.getElementById('transcriptDisplay');
+const transcriptWordCount = document.getElementById('transcriptWordCount');
+const toggleRawBtn = document.getElementById('toggleRawBtn');
+const copyTranscriptBtn = document.getElementById('copyTranscriptBtn');
+const sendCleanupBtn = document.getElementById('sendCleanupBtn');
+
 const AUDIO_DB = 'dictationAudioBackup';
 const AUDIO_STORE = 'recordings';
 const AUDIO_KEY = 'latest';
 
-// ── Status helper (shows in the sub-row span, replaces bottom toast) ──
+// Transcript state
+let currentRaw = '';
+let currentCleaned = '';
+let showingRaw = false; // false = showing cleaned (or raw if no cleaned)
+
+// ── Status helper ──
 function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
 function setStatusProcessing(t) {
   setStatus(t, 'processing');
-  // Reuse the existing cancel button in the recorder row for aborting processing
   cancelBtn.style.display = '';
   cancelBtn.onclick = abortProcessing;
-  // Hide Clear/Upload during processing since there's nothing to clear yet
   document.querySelector('.action-btns').style.display = 'none';
 }
 function clearProcessingUI() {
@@ -48,26 +58,22 @@ function abortProcessing() {
     processingAbortController.abort();
     processingAbortController = null;
   }
-  // Also clear the cancel button reference immediately
   cancelBtn.style.display = 'none';
   cancelBtn.onclick = cancelRecording;
 }
 
-// ── Utilities ──────────────────────────────────────────
-// Escape HTML to prevent XSS when interpolating user/AI content into innerHTML
+// ── Utilities ──
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = String(str ?? '');
   return div.innerHTML;
 }
 
-// Safe clipboard write with fallback (won't throw on insecure contexts)
 async function copyToClipboard(text) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
     } else {
-      // Fallback for non-HTTPS / insecure contexts
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -160,7 +166,7 @@ function hideRecoveryRow() {
   recoveryRow.style.display = 'none';
 }
 
-// ── Tabs ───────────────────────────────────────────────
+// ── Tabs ──
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -170,43 +176,69 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'settings') loadSettingsUI();
   });
 });
-// ── Theme (follows system preference) ──────────────────
+
+// ── Theme ──
 function getSystemTheme() {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
+
+function getStoredTheme() {
+  return localStorage.getItem('dictationTheme') || null;
+}
+
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
 }
-applyTheme(getSystemTheme());
-window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
-  applyTheme(e.matches ? 'light' : 'dark');
+
+function setTheme(theme) {
+  applyTheme(theme);
+  localStorage.setItem('dictationTheme', theme);
   cachedBarColor = null;
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  setTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// Init theme: stored > system > default (dark)
+const storedTheme = getStoredTheme();
+if (storedTheme) {
+  applyTheme(storedTheme);
+} else {
+  applyTheme(getSystemTheme());
+}
+
+document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+  // Only follow system if user hasn't set a manual override
+  if (!getStoredTheme()) {
+    applyTheme(e.matches ? 'light' : 'dark');
+    cachedBarColor = null;
+  }
 });
 
-// ── Auto-resize ───────────────────────────────────────
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(Math.max(el.scrollHeight, 130), 400) + 'px';
-}
-document.querySelectorAll('#rawTranscript, #cleanTranscript').forEach(ta => ta.addEventListener('input', () => autoResize(ta)));
-
-// ── Canvas ─────────────────────────────────────────────
+// ── Canvas ──
 function resizeCanvas() { waveformCanvas.width = waveformCanvas.offsetWidth; waveformCanvas.height = waveformCanvas.offsetHeight; }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
-// ── Clean toggle ──────────────────────────────────────
+// ── Clean toggle ──
 const cleanToggle = document.getElementById('cleanToggle');
-const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 cleanToggle.checked = localStorage.getItem('cleanTranscript') !== 'false';
-cleanToggle.addEventListener('change', () => { localStorage.setItem('cleanTranscript', cleanToggle.checked); updateSendCleanupBtn(); });
+cleanToggle.addEventListener('change', () => {
+  localStorage.setItem('cleanTranscript', cleanToggle.checked);
+  updateTranscriptDisplay();
+  updateSendCleanupBtn();
+});
 
 function updateSendCleanupBtn() {
-  sendCleanupBtn.style.display = (!cleanToggle.checked && document.getElementById('rawTranscript').value.trim()) ? '' : 'none';
+  sendCleanupBtn.style.display = (!cleanToggle.checked && currentRaw.trim()) ? '' : 'none';
 }
 
 async function sendRawForCleanup() {
-  const raw = document.getElementById('rawTranscript').value.trim();
+  const raw = currentRaw;
   if (!raw) return;
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
   setStatusProcessing('Cleaning up…');
@@ -218,11 +250,9 @@ async function sendRawForCleanup() {
     if (!res.ok) throw new Error(`Failed: ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    const el = document.getElementById('cleanTranscript');
-    el.value = data.cleanedTranscript || '';
-    autoResize(el);
-    updateWordCount('cleanTranscript', 'cleanWordCount');
-    await copyToClipboard(el.value);
+    currentCleaned = data.cleanedTranscript || '';
+    updateTranscriptDisplay();
+    await copyToClipboard(currentCleaned);
     setStatus('Copied ✓', 'done');
     setTimeout(() => setStatus('Ready'), 2000);
   } catch (e) {
@@ -239,11 +269,106 @@ async function sendRawForCleanup() {
   sendCleanupBtn.disabled = false; sendCleanupBtn.textContent = 'Clean up';
 }
 
-// ── Status / Timer ────────────────────────────────────
+// ── Transcript Display ──
+function getDisplayText() {
+  if (showingRaw) return currentRaw;
+  if (cleanToggle.checked && currentCleaned) return currentCleaned;
+  return currentRaw;
+}
+
+function updateTranscriptDisplay(animate = false) {
+  const text = getDisplayText();
+  if (text.trim()) {
+    transcriptDisplay.textContent = text;
+    transcriptDisplay.classList.remove('transcript-placeholder');
+    if (animate) {
+      transcriptDisplay.classList.remove('pop-in');
+      // Force reflow to restart animation
+      void transcriptDisplay.offsetWidth;
+      transcriptDisplay.classList.add('pop-in');
+    }
+    transcriptWordCount.textContent = countWords(text) + 'w';
+  } else {
+    transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
+    transcriptWordCount.textContent = '0w';
+  }
+
+  // Show/hide toggle raw button — show whenever both versions exist
+  if (currentRaw && currentCleaned) {
+    toggleRawBtn.style.display = '';
+    toggleRawBtn.textContent = showingRaw ? 'Show cleaned' : 'Show raw';
+  } else {
+    toggleRawBtn.style.display = 'none';
+    showingRaw = false;
+  }
+
+  updateSendCleanupBtn();
+}
+
+toggleRawBtn.addEventListener('click', () => {
+  showingRaw = !showingRaw;
+  updateTranscriptDisplay();
+});
+
+// ── Tap / Long-press on transcript ──
+let pressTimer = null;
+let isLongPress = false;
+
+transcriptDisplay.addEventListener('pointerdown', (e) => {
+  // Ignore if text is selected (user might be selecting)
+  if (window.getSelection().toString().length > 0) return;
+  isLongPress = false;
+  pressTimer = setTimeout(() => {
+    isLongPress = true;
+    // Enable text selection
+    transcriptDisplay.classList.add('selectable');
+    // Remove after a while or on next interaction
+  }, 400);
+});
+
+transcriptDisplay.addEventListener('pointerup', (e) => {
+  clearTimeout(pressTimer);
+  if (!isLongPress) {
+    // Short tap = copy
+    const text = getDisplayText();
+    if (text.trim()) {
+      copyToClipboard(text);
+      setStatus('Copied ✓', 'done');
+      setTimeout(() => setStatus('Ready'), 1500);
+    }
+  }
+  // Long press keeps selectable class active
+});
+
+transcriptDisplay.addEventListener('pointercancel', () => {
+  clearTimeout(pressTimer);
+});
+
+// Remove selectable mode when clicking elsewhere
+document.addEventListener('pointerdown', (e) => {
+  if (e.target !== transcriptDisplay) {
+    transcriptDisplay.classList.remove('selectable');
+  }
+});
+
+// ── Clean up button ──
+sendCleanupBtn.addEventListener('click', sendRawForCleanup);
+
+// ── Copy button ──
+copyTranscriptBtn.addEventListener('click', async () => {
+  const text = getDisplayText();
+  if (text.trim()) {
+    await copyToClipboard(text);
+    setStatus('Copied ✓', 'done');
+    setTimeout(() => setStatus('Ready'), 1500);
+  }
+});
+
+// ── Status / Timer ──
 function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(() => { secondsElapsed++; timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0'); }, 1000); }
 function stopTimer() { clearInterval(timerInterval); }
 
-// ── Waveform ───────────────────────────────────────────
+// ── Waveform ──
 let cachedBarColor = null;
 function getBarColor() {
   if (!cachedBarColor) {
@@ -297,27 +422,26 @@ function drawIdleLine() {
   ctx.globalAlpha = 1;
 }
 
-// ── Word Count ─────────────────────────────────────────
+// ── Word Count ──
 function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).length; }
-function updateWordCount(id, cid) { document.getElementById(cid).textContent = countWords(document.getElementById(id).value) + 'w'; }
-document.getElementById('rawTranscript').addEventListener('input', () => { updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn(); });
-document.getElementById('cleanTranscript').addEventListener('input', () => updateWordCount('cleanTranscript', 'cleanWordCount'));
 
-// ── Clear ──────────────────────────────────────────────
+// ── Clear ──
 clearBtn.onclick = async () => {
   if (processingAbortController) abortProcessing();
   if (isRecording) stopRecording();
-  ['rawTranscript', 'cleanTranscript'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.style.height = '130px'; });
-  document.getElementById('rawWordCount').textContent = '0w';
-  document.getElementById('cleanWordCount').textContent = '0w';
+  currentRaw = '';
+  currentCleaned = '';
+  showingRaw = false;
+  updateTranscriptDisplay();
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
   clearProcessingUI();
-  updateSendCleanupBtn(); setStatus('Ready'); timerEl.textContent = '00:00';
+  setStatus('Ready');
+  timerEl.textContent = '00:00';
 };
 
-// ── Prompts ────────────────────────────────────────────
+// ── Prompts ──
 const DEFAULT_PROMPT_TEXT = `# ROLE
 You are a POST-PROCESSING ENGINE. You are not a conversational assistant. You are a text correction tool.
 
@@ -428,7 +552,7 @@ async function deletePrompt(id) {
   await loadPrompts();
 }
 
-// ── History ────────────────────────────────────────────
+// ── History ──
 function saveHistory() { localStorage.setItem('dictationHistory', JSON.stringify(history.slice(0, 20))); }
 function addToHistory(raw, cleaned) { history.unshift({ raw, cleaned, timestamp: new Date().toLocaleString() }); saveHistory(); renderHistory(); }
 
@@ -443,16 +567,16 @@ function restoreHistory(i) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelector('[data-tab="record"]').classList.add('active');
   document.getElementById('panel-record').classList.add('active');
-  const r = document.getElementById('rawTranscript'), c = document.getElementById('cleanTranscript');
-  r.value = history[i].raw; c.value = history[i].cleaned;
-  autoResize(r); autoResize(c);
-  updateWordCount('rawTranscript', 'rawWordCount'); updateWordCount('cleanTranscript', 'cleanWordCount');
+  currentRaw = history[i].raw;
+  currentCleaned = history[i].cleaned;
+  showingRaw = false;
+  updateTranscriptDisplay(true);
 }
 async function copyHistoryItem(i) { await copyToClipboard(history[i].cleaned); }
 function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); }
 function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
 
-// ── Settings ───────────────────────────────────────────
+// ── Settings ──
 let settingsLocked = true;
 
 async function loadSettingsUI() {
@@ -502,15 +626,13 @@ async function saveSettings() {
   if (res.ok) { loadSettingsUI(); }
 }
 
-// ── Recording ──────────────────────────────────────────
+// ── Recording ──
 async function transcribeAudioBlob(audioBlob) {
   toggleBtn.classList.add('processing');
   toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
   retryRecordingBtn.disabled = true;
   setStatusProcessing('Transcribing…');
 
-  const rawEl = document.getElementById('rawTranscript');
-  const cleanEl = document.getElementById('cleanTranscript');
   const abortController = new AbortController();
   processingAbortController = abortController;
 
@@ -528,8 +650,7 @@ async function transcribeAudioBlob(audioBlob) {
     if (uData.error) throw new Error(uData.error);
 
     const raw = uData.rawTranscript || '';
-    rawEl.value = raw; autoResize(rawEl);
-    updateWordCount('rawTranscript', 'rawWordCount'); updateSendCleanupBtn();
+    currentRaw = raw;
 
     let copiedLabel = '';
     if (cleanToggle.checked && raw.trim()) {
@@ -537,6 +658,8 @@ async function transcribeAudioBlob(audioBlob) {
       const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
       if (cRes.status === 401) { window.location.href = '/login'; return; }
       if (!cRes.ok) {
+        currentCleaned = '';
+        updateTranscriptDisplay(true);
         addToHistory(raw, raw);
         await copyToClipboard(raw);
         await clearAudioBackup();
@@ -549,12 +672,14 @@ async function transcribeAudioBlob(audioBlob) {
       const cData = await cRes.json();
       if (cData.error) throw new Error(cData.error);
       const cleaned = cData.cleanedTranscript || '';
-      cleanEl.value = cleaned; autoResize(cleanEl);
-      updateWordCount('cleanTranscript', 'cleanWordCount');
+      currentCleaned = cleaned;
+      showingRaw = false;
+      updateTranscriptDisplay(true);
       if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
     } else {
-      cleanEl.value = '';
-      document.getElementById('cleanWordCount').textContent = '0w';
+      currentCleaned = '';
+      showingRaw = false;
+      updateTranscriptDisplay(true);
       addToHistory(raw, raw); await copyToClipboard(raw);
       copiedLabel = 'Raw copied';
     }
@@ -564,13 +689,12 @@ async function transcribeAudioBlob(audioBlob) {
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     setStatus(copiedLabel, 'done');
-    // Delay clearing processing UI so "Copied ✓" is visible
     setTimeout(() => {
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
     }, 2000);
-    return; // Don't fall through to finally which would clear immediately
+    return;
   } catch (e) {
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
@@ -588,9 +712,8 @@ async function transcribeAudioBlob(audioBlob) {
       }, 3000);
       showRecoveryRow();
     }
-    return; // Don't fall through to finally
+    return;
   }
-  // Only reached on early returns (401 redirects)
   processingAbortController = null;
   clearProcessingUI();
   retryRecordingBtn.disabled = false;
@@ -607,6 +730,9 @@ async function startRecording() {
     visualize();
     startTimer();
 
+    // Haptic feedback on start
+    if (navigator.vibrate) navigator.vibrate(10);
+
     toggleBtn.classList.add('recording');
     toggleBtn.innerHTML = '<div class="stop-icon"></div>';
     cancelBtn.style.display = '';
@@ -622,7 +748,6 @@ async function startRecording() {
       cancelAnimationFrame(animationId);
       stopTimer(); clearWaveform();
       toggleBtn.classList.remove('recording');
-      // Don't hide cancelBtn here — setStatusProcessing will show it for aborting processing
 
       if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
@@ -659,8 +784,16 @@ function resetButton() {
   toggleBtn.innerHTML = '<svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>';
 }
 
-function cancelRecording() { cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); }
-function stopRecording() { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); }
+function cancelRecording() {
+  // Haptic feedback on stop
+  if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+  cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
+}
+function stopRecording() {
+  // Haptic feedback on stop
+  if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+  mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
+}
 
 toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
 cancelBtn.onclick = cancelRecording;
@@ -685,7 +818,7 @@ clearRecordingBtn.onclick = async () => {
   hideRecoveryRow();
 };
 
-// ── Utilities ──────────────────────────────────────────
+// ── Upload ──
 if (uploadAudioBtn) {
   uploadAudioBtn.onclick = () => fileInput.click();
 }
@@ -701,15 +834,7 @@ if (fileInput) {
   };
 }
 
-async function copyText(id) {
-  const t = document.getElementById(id).value;
-  if (t) {
-    await copyToClipboard(t);
-    setStatus(id === 'rawTranscript' ? 'Raw copied' : 'Cleaned copied', 'done');
-    setTimeout(() => setStatus('Ready'), 1500);
-  }
-}
-
+// ── Keyboard shortcuts ──
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
@@ -721,7 +846,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleBtn.click(); }
 });
 
-// ── Offline indicator ──────────────────────────────────
+// ── Offline indicator ──
 function updateOnlineStatus() {
   const banner = document.getElementById('offlineBanner');
   if (!banner) return;
@@ -730,14 +855,15 @@ function updateOnlineStatus() {
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
-// ── Init ───────────────────────────────────────────────
+// ── Init ──
 loadPrompts();
 renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
 drawIdleLine();
+updateTranscriptDisplay();
 
-// ── Service Worker (PWA) ───────────────────────────────
+// ── Service Worker (PWA) ──
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
