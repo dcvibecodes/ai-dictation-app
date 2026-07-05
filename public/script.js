@@ -172,6 +172,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    document.body.classList.toggle('record-active', btn.dataset.tab === 'record');
     if (btn.dataset.tab === 'settings') loadSettingsUI();
   });
 });
@@ -525,6 +526,7 @@ function restoreHistory(i) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelector('[data-tab="record"]').classList.add('active');
   document.getElementById('panel-record').classList.add('active');
+  document.body.classList.add('record-active');
   currentRaw = history[i].raw;
   currentCleaned = history[i].cleaned;
   showingRaw = false;
@@ -814,6 +816,7 @@ window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
 // ── Init ──
+document.body.classList.add('record-active');
 loadPrompts();
 renderHistory();
 hideRecoveryRow();
