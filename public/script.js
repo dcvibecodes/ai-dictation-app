@@ -26,7 +26,6 @@ const fileInput = document.getElementById("fileInput");
 const transcriptDisplay = document.getElementById('transcriptDisplay');
 const transcriptWordCount = document.getElementById('transcriptWordCount');
 const toggleRawBtn = document.getElementById('toggleRawBtn');
-const copyTranscriptBtn = document.getElementById('copyTranscriptBtn');
 const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 
 const AUDIO_DB = 'dictationAudioBackup';
@@ -272,7 +271,7 @@ async function sendRawForCleanup() {
 // ── Transcript Display ──
 function getDisplayText() {
   if (showingRaw) return currentRaw;
-  if (cleanToggle.checked && currentCleaned) return currentCleaned;
+  if (currentCleaned) return currentCleaned;
   return currentRaw;
 }
 
@@ -353,16 +352,6 @@ document.addEventListener('pointerdown', (e) => {
 
 // ── Clean up button ──
 sendCleanupBtn.addEventListener('click', sendRawForCleanup);
-
-// ── Copy button ──
-copyTranscriptBtn.addEventListener('click', async () => {
-  const text = getDisplayText();
-  if (text.trim()) {
-    await copyToClipboard(text);
-    setStatus('Copied ✓', 'done');
-    setTimeout(() => setStatus('Ready'), 1500);
-  }
-});
 
 // ── Status / Timer ──
 function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(() => { secondsElapsed++; timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0'); }, 1000); }
