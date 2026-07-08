@@ -32,14 +32,39 @@ header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 24px;
 }
-.header-actions { display: flex; gap: 5px; }
+.header-actions { display: flex; gap: 5px; align-items: center; }
 
-.tab-nav { display: flex; gap: 2px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 3px; }
+.shortcuts-btn {
+  border: none; background: transparent;
+  color: var(--text-faint); font-size: 0.62rem; font-weight: 500;
+  font-family: inherit; cursor: pointer;
+  padding: 4px 6px; border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.shortcuts-btn:hover { color: var(--text-muted); background: var(--accent-dim); }
+
+.shortcuts-popover {
+  position: fixed; top: 50px; right: 20px; z-index: 90;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+  display: none;
+}
+.shortcuts-popover.open { display: block; }
+.shortcuts-list { display: flex; flex-direction: column; gap: 6px; }
+.shortcut-item { display: flex; align-items: center; gap: 10px; font-size: 0.7rem; color: var(--text-muted); }
+.shortcut-item kbd {
+  display: inline-block; min-width: 22px; text-align: center;
+  padding: 2px 5px; background: var(--kbd-bg); border: 1px solid var(--kbd-border);
+  border-radius: 3px; font-family: inherit; font-size: 0.64rem; font-weight: 600; color: var(--text);
+}
+
+.tab-nav { display: flex; gap: 2px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 2px; }
 .tab-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 12px; border: none; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border: none; border-radius: 5px;
   background: transparent; color: var(--text-muted);
-  font-size: 0.73rem; font-weight: 550; cursor: pointer;
+  font-size: 0.68rem; font-weight: 550; cursor: pointer;
   font-family: inherit; transition: all 0.15s; white-space: nowrap;
 }
 .tab-btn:hover { color: var(--text); }
@@ -47,7 +72,7 @@ header {
 .tab-btn svg { flex-shrink: 0; }
 
 .icon-btn {
-  width: 30px; height: 30px; border-radius: 6px;
+  width: 26px; height: 26px; border-radius: 5px;
   border: 1px solid var(--border); background: transparent;
   display: flex; align-items: center; justify-content: center;
   color: var(--text-muted); cursor: pointer;
@@ -85,7 +110,7 @@ header {
    RECORDER
    ══════════════════════════════════ */
 .recorder-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 
 .record-btn {
@@ -135,8 +160,11 @@ header {
 }
 
 .sub-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: none;
 }
+
+/* Desktop: status shows as a line below controls in the recorder row */
+.recorder-row .status { width: 100%; order: 10; }
 
 .status { font-size: 0.72rem; color: var(--text-faint); font-weight: 500; transition: opacity 0.2s; }
 .status.active { color: var(--accent); }
@@ -178,8 +206,27 @@ header {
 .recovery-actions { display: flex; align-items: center; gap: 5px; }
 .action-btns { display: flex; align-items: center; gap: 5px; }
 
-.prompt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prompt-row { display: flex; align-items: center; justify-content: space-between; min-height: 28px; }
+.toggles-group { display: flex; align-items: center; gap: 10px; }
 .clean-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); cursor: pointer; user-select: none; }
+
+.prompt-dropdown {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  height: 22px;
+  appearance: auto;
+  transition: color 0.15s;
+}
+.prompt-dropdown:focus { color: var(--accent); }
+.prompt-dropdown:hover { color: var(--accent); }
 
 .toggle-switch {
   position: relative;
@@ -218,11 +265,6 @@ header {
 .toggle-switch input:checked + .toggle-slider::after {
   transform: translateX(11px);
 }
-.prompt-tabs { display: flex; gap: 2px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 2px; flex-wrap: wrap; }
-.prompt-tab { padding: 5px 12px; border: none; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 0.73rem; font-weight: 550; cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
-.prompt-tab:hover { color: var(--text); }
-.prompt-tab.active { background: var(--accent-dim); color: var(--accent); }
-
 /* ══════════════════════════════════
    TRANSCRIPT DISPLAY
    ══════════════════════════════════ */
@@ -237,6 +279,7 @@ header {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 24px;
 }
 
 .transcript-header .word-count {
@@ -472,7 +515,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 @media (max-width: 600px) {
   body {
     min-height: 100svh;
-    padding: max(22px, calc(env(safe-area-inset-top) + 12px)) 14px calc(152px + env(safe-area-inset-bottom));
+    padding: max(22px, calc(env(safe-area-inset-top) + 12px)) 14px calc(130px + env(safe-area-inset-bottom));
   }
 
   body.record-active {
@@ -520,49 +563,60 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   .recorder-row {
     position: fixed;
-    left: 50%;
-    right: auto;
-    bottom: calc(14px + env(safe-area-inset-bottom));
+    left: 0;
+    right: 0;
+    bottom: 0;
     z-index: 60;
-    width: min(430px, calc(100vw - 24px));
-    transform: translateX(-50%);
+    width: 100%;
+    transform: none;
     display: grid;
     grid-template-columns: minmax(64px, 1fr) auto minmax(64px, 1fr);
     grid-template-areas:
       "wave wave wave"
-      "timer record actions";
+      "timer record actions"
+      "status status status";
     align-items: center;
-    gap: 11px 12px;
-    padding: 12px 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    box-shadow: 0 18px 60px rgba(0,0,0,0.28);
-    backdrop-filter: blur(22px) saturate(1.2);
+    gap: 8px 12px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: var(--bg);
+    box-shadow: none;
+    backdrop-filter: none;
   }
+
+  .recorder-row #status {
+    grid-area: status;
+    display: block;
+    text-align: center;
+    font-size: 0.66rem;
+  }
+
+  .sub-row { display: none; }
 
   .record-btn {
     grid-area: record;
-    width: 72px;
-    height: 72px;
+    width: 62px;
+    height: 62px;
     border-width: 1px;
     justify-self: center;
     background: var(--text);
     border-color: color-mix(in srgb, var(--text) 78%, var(--border));
     color: var(--bg);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 0 0 7px var(--bg);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.2), inset 0 0 0 6px var(--bg);
   }
 
   .record-btn:hover { background: var(--text); border-color: var(--text); }
   .record-btn:active {
     transform: scale(0.88);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.24), inset 0 0 0 7px var(--bg), 0 0 0 4px var(--accent-glow);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.2), inset 0 0 0 6px var(--bg), 0 0 0 4px var(--accent-glow);
   }
   .record-btn.recording {
     background: var(--danger);
     border-color: var(--danger);
     color: #fff;
-    box-shadow: 0 10px 30px rgba(239,68,68,0.24), inset 0 0 0 7px var(--bg);
+    box-shadow: 0 6px 20px rgba(239,68,68,0.2), inset 0 0 0 6px var(--bg);
   }
   .record-btn.recording:hover { background: var(--danger); }
   .record-btn.processing {
@@ -570,8 +624,8 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     border-color: var(--warning);
     color: #111;
   }
-  .record-btn .mic-icon { width: 25px; height: 25px; }
-  .stop-icon { width: 18px; height: 18px; border-radius: 4px; background: currentColor; }
+  .record-btn .mic-icon { width: 22px; height: 22px; }
+  .stop-icon { width: 16px; height: 16px; border-radius: 3px; background: currentColor; }
 
   #waveform {
     grid-area: wave;
@@ -606,8 +660,9 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   #fileInput { grid-area: 1 / 1; opacity: 0; pointer-events: none; }
 
-  .sub-row { flex-wrap: wrap; gap: 6px; }
+  .sub-row { display: none; }
   .shortcut-hint { display: none; }
+  .shortcuts-btn { display: none; }
   .mini-link-btn { display: none; }
   .recovery-row { align-items: flex-start; flex-direction: column; }
   .recovery-actions { width: 100%; }
@@ -621,15 +676,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   .prompt-row {
     gap: 8px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    margin-right: -14px;
-    padding-right: 14px;
-    scrollbar-width: none;
   }
-  .prompt-row::-webkit-scrollbar { display: none; }
-  .clean-toggle-label,
-  .prompt-tab { flex: 0 0 auto; }
 
   .settings-grid { grid-template-columns: 1fr; }
 
@@ -652,7 +699,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     font-size: 0.92rem;
     line-height: 1.65;
     min-height: 60px;
-    padding-bottom: 140px;
+    padding-bottom: 120px;
   }
 
   #panel-record.active .transcript-header {
@@ -663,6 +710,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 @media (max-width: 380px) {
   .tab-btn { padding: 4px 8px; font-size: 0.66rem; }
   .btn-sm { padding: 3px 7px; font-size: 0.66rem; }
-  .record-btn { width: 66px; height: 66px; }
+  .record-btn { width: 56px; height: 56px; }
   .recorder-row { grid-template-columns: minmax(54px, 1fr) auto minmax(54px, 1fr); }
 }

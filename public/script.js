@@ -61,7 +61,16 @@ function getAccumulatedTranscript() { return localStorage.getItem('accumulatedTr
 function setAccumulatedTranscript(t) { localStorage.setItem('accumulatedTranscript', t); }
 
 function appendToTranscript(newText) {
-  const existing = getAccumulatedTranscript();
+  let existing = getAccumulatedTranscript();
+  // Seed accumulated transcript with current display text if empty
+  // (handles case where user recorded with append off, then turned it on)
+  if (!existing) {
+    const onScreen = currentCleaned || currentRaw;
+    if (onScreen && onScreen !== newText) {
+      existing = onScreen;
+      setAccumulatedTranscript(existing);
+    }
+  }
   const updated = existing ? existing + '\n\n' + newText : newText;
   setAccumulatedTranscript(updated);
   return updated;
@@ -261,6 +270,8 @@ cleanToggle.addEventListener('change', () => {
   localStorage.setItem('cleanTranscript', cleanToggle.checked);
   updateTranscriptDisplay();
   updateSendCleanupBtn();
+  const sel = document.getElementById('promptBarSelect');
+  if (sel) sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
 });
 
 function updateSendCleanupBtn() {
@@ -574,11 +585,24 @@ function getAllPrompts() { return [{ id: 'default', name: 'Default', text: getDe
 function getActivePrompt() { return getAllPrompts().find(p => p.id === activePromptId) || getAllPrompts()[0]; }
 
 function renderPromptBar() {
-  document.getElementById('promptBarTabs').innerHTML = getAllPrompts().map(p =>
-    `<button class="prompt-tab ${p.id === activePromptId ? 'active' : ''}" onclick="selectPrompt('${escapeHtml(p.id)}')">${escapeHtml(p.name)}</button>`
-  ).join('');
+  const sel = document.getElementById('promptBarSelect');
+  if (sel) {
+    const all = getAllPrompts();
+    sel.innerHTML = all.map(p =>
+      `<option value="${escapeHtml(p.id)}" ${p.id === activePromptId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+    ).join('');
+    sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
+  }
 }
 function selectPrompt(id) { activePromptId = id; localStorage.setItem('activePromptId', id); renderPromptBar(); }
+
+// Prompt dropdown change handler
+const promptBarSelect = document.getElementById('promptBarSelect');
+if (promptBarSelect) {
+  promptBarSelect.addEventListener('change', (e) => {
+    selectPrompt(e.target.value);
+  });
+}
 
 function renderPromptsList() {
   document.getElementById('addPromptBtn').style.display = prompts.length < MAX_CUSTOM_PROMPTS ? '' : 'none';
@@ -1010,7 +1034,11 @@ if (fileInput) {
 
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
+  // Close shortcuts popover on Esc
+  if (e.key === 'Escape') {
+    if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); return; }
+    if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
+  }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
   if (e.key === 'c' && !e.ctrlKey && !e.metaKey) {
     if (processingAbortController) { abortProcessing(); }
@@ -1018,7 +1046,29 @@ document.addEventListener('keydown', e => {
     else { clearBtn.click(); }
   }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleBtn.click(); }
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && isRecording) { e.preventDefault(); stopRecording(); }
   if (e.key === 'p' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
+  // Toggle append mode
+  if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (appendToggle) { appendToggle.checked = !appendToggle.checked; appendToggle.dispatchEvent(new Event('change')); }
+  }
+  // Toggle auto-clean
+  if (e.key === 't' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    cleanToggle.checked = !cleanToggle.checked; cleanToggle.dispatchEvent(new Event('change'));
+  }
+  // New recording (clear + start)
+  if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (!isRecording && !processingAbortController) { clearBtn.click(); startRecording(); }
+  }
+  // Switch prompts 1-4
+  if (['1','2','3','4'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+    const all = getAllPrompts();
+    const idx = parseInt(e.key) - 1;
+    if (idx < all.length) { selectPrompt(all[idx].id); }
+  }
 });
 
 // ── Offline indicator ──
@@ -1029,6 +1079,21 @@ function updateOnlineStatus() {
 }
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
+
+// ── Shortcuts popover ──
+const shortcutsBtn = document.getElementById('shortcutsBtn');
+const shortcutsPopover = document.getElementById('shortcutsPopover');
+if (shortcutsBtn && shortcutsPopover) {
+  shortcutsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    shortcutsPopover.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!shortcutsPopover.contains(e.target) && e.target !== shortcutsBtn) {
+      shortcutsPopover.classList.remove('open');
+    }
+  });
+}
 
 // ── Init ──
 document.body.classList.add('record-active');
