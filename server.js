@@ -182,6 +182,13 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// --- Mini widget view ---
+app.get('/mini', (req, res) => {
+  if (!isOwnerSetup()) return res.redirect('/setup');
+  if (!req.isOwner) return res.redirect('/login');
+  res.sendFile(path.join(__dirname, 'public', 'mini.html'));
+});
+
 // --- Settings API ---
 app.get('/api/settings', requireOwner, (req, res) => {
   const s = loadSettings();
@@ -330,10 +337,65 @@ app.post('/cleanup', requireOwner, async (req, res) => {
     res.status(status).json({ error: error.message });
   }
 });
+
+// --- Streaming Cleanup (SSE) ---
+app.post('/cleanup-stream', requireOwner, async (req, res) => {
+  try {
+    const { rawTranscript, prompt } = req.body;
+    if (!rawTranscript) return res.status(400).json({ error: 'No transcript' });
+
+    const client = getCleanupClient();
+    const model = getEffectiveSetting('CLEANUP_MODEL') || 'gpt-4.1-mini';
+    const activePrompt = prompt || 'Clean up dictated text.';
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // nginx proxy buffering off
+    res.flushHeaders();
+
+    const stream = await client.chat.completions.create({
+      model,
+      temperature: 0,
+      stream: true,
+      messages: [
+        { role: 'system', content: activePrompt },
+        { role: 'user', content: `<transcript>${rawTranscript}</transcript>` }
+      ]
+    });
+
+    let aborted = false;
+    req.on('close', () => { aborted = true; });
+
+    for await (const chunk of stream) {
+      if (aborted) break;
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (content) {
+        res.write(`data: ${JSON.stringify({ text: content })}\n\n`);
+      }
+    }
+
+    if (!aborted) {
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    }
+    res.end();
+  } catch (error) {
+    console.error('Streaming cleanup error:', error.message);
+    // If headers already sent, send error as SSE event
+    if (res.headersSent) {
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      res.end();
+    } else {
+      const status = error.status || 500;
+      res.status(status).json({ error: error.message });
+    }
+  }
+});
 // --- Static files (AFTER all API routes) ---
 app.use((req, res, next) => {
   // Public paths that don't need auth
-  const publicPaths = ['/login.html', '/setup.html', '/auth.css', '/manifest.json', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/sw.js'];
+  const publicPaths = ['/login.html', '/setup.html', '/auth.css', '/manifest.json', '/manifest-mini.json', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/sw.js'];
   if (publicPaths.includes(req.path)) return express.static(path.join(__dirname, 'public'))(req, res, next);
   if (!req.isOwner) return res.status(401).send('Unauthorized');
   express.static(path.join(__dirname, 'public'))(req, res, next);

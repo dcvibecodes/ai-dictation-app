@@ -37,6 +37,36 @@ let currentRaw = '';
 let currentCleaned = '';
 let showingRaw = false; // false = showing cleaned (or raw if no cleaned)
 
+// ── Append Mode ──
+const appendToggle = document.getElementById('appendToggle');
+if (appendToggle) {
+  appendToggle.checked = localStorage.getItem('appendMode') === 'true';
+  appendToggle.addEventListener('change', () => {
+    localStorage.setItem('appendMode', appendToggle.checked);
+    // Load accumulated transcript when enabling
+    if (appendToggle.checked) {
+      const saved = localStorage.getItem('accumulatedTranscript') || '';
+      if (saved && !getDisplayText().trim()) {
+        currentCleaned = saved;
+        currentRaw = '';
+        showingRaw = false;
+        updateTranscriptDisplay();
+      }
+    }
+  });
+}
+
+function isAppendMode() { return appendToggle ? appendToggle.checked : localStorage.getItem('appendMode') === 'true'; }
+function getAccumulatedTranscript() { return localStorage.getItem('accumulatedTranscript') || ''; }
+function setAccumulatedTranscript(t) { localStorage.setItem('accumulatedTranscript', t); }
+
+function appendToTranscript(newText) {
+  const existing = getAccumulatedTranscript();
+  const updated = existing ? existing + '\n\n' + newText : newText;
+  setAccumulatedTranscript(updated);
+  return updated;
+}
+
 // ── Status helper ──
 function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
 function setStatusProcessing(t) {
@@ -242,20 +272,93 @@ async function sendRawForCleanup() {
   if (!raw) return;
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
   setStatusProcessing('Cleaning up…');
+
+  let procSeconds = 0;
+  const procTimer = setInterval(() => {
+    procSeconds++;
+    statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
+  }, 1000);
+
   try {
     const abortController = new AbortController();
     processingAbortController = abortController;
-    const res = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) throw new Error(`Failed: ${res.status}`);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    currentCleaned = data.cleanedTranscript || '';
+
+    // Try streaming first
+    let cleaned = '';
+    let streamSuccess = false;
+    try {
+      const sRes = await fetch('/cleanup-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }),
+        signal: abortController.signal
+      });
+      if (sRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+      if (!sRes.ok) throw new Error('stream-fail');
+
+      transcriptDisplay.classList.add('streaming');
+      transcriptDisplay.textContent = '';
+      transcriptDisplay.classList.remove('transcript-placeholder');
+
+      const reader = sRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamDone = false;
+
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const json = JSON.parse(line.slice(6));
+            if (json.error) throw new Error(json.error);
+            if (json.done) { streamDone = true; break; }
+            if (json.text) {
+              cleaned += json.text;
+              transcriptDisplay.textContent = cleaned;
+              transcriptWordCount.textContent = countWords(cleaned) + 'w';
+            }
+          } catch (parseErr) { continue; }
+        }
+      }
+      transcriptDisplay.classList.remove('streaming');
+      streamSuccess = true;
+    } catch (streamErr) {
+      transcriptDisplay.classList.remove('streaming');
+      if (streamErr.name === 'AbortError') throw streamErr;
+      cleaned = '';
+    }
+
+    // Fallback to non-streaming
+    if (!streamSuccess || !cleaned) {
+      const res = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
+      if (res.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      cleaned = data.cleanedTranscript || '';
+    }
+
+    currentCleaned = cleaned;
+
+    // Append mode
+    if (isAppendMode() && cleaned) {
+      const accumulated = appendToTranscript(cleaned);
+      currentCleaned = accumulated;
+    }
+
     updateTranscriptDisplay();
-    await copyToClipboard(currentCleaned);
+    const textToCopy = isAppendMode() ? getAccumulatedTranscript() : cleaned;
+    await copyToClipboard(textToCopy);
+    clearInterval(procTimer);
     setStatus('Copied ✓', 'done');
     setTimeout(() => setStatus('Ready'), 2000);
   } catch (e) {
+    clearInterval(procTimer);
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
       setTimeout(() => setStatus('Ready'), 1500);
@@ -271,6 +374,11 @@ async function sendRawForCleanup() {
 
 // ── Transcript Display ──
 function getDisplayText() {
+  // In append mode, show the full accumulated transcript
+  if (isAppendMode()) {
+    const accumulated = getAccumulatedTranscript();
+    if (accumulated) return accumulated;
+  }
   if (showingRaw) return currentRaw;
   if (currentCleaned) return currentCleaned;
   return currentRaw;
@@ -391,6 +499,10 @@ clearBtn.onclick = async () => {
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
+  // Clear accumulated transcript when in append mode
+  if (isAppendMode()) {
+    setAccumulatedTranscript('');
+  }
   updateTranscriptDisplay();
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
@@ -591,16 +703,24 @@ async function transcribeAudioBlob(audioBlob) {
   toggleBtn.classList.add('processing');
   toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
   retryRecordingBtn.disabled = true;
-  setStatusProcessing('Transcribing…');
 
   const abortController = new AbortController();
   processingAbortController = abortController;
+
+  // Elapsed time counter during processing
+  let procSeconds = 0;
+  const procTimer = setInterval(() => {
+    procSeconds++;
+    statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
+  }, 1000);
+
+  setStatusProcessing('Transcribing…');
 
   try {
     const fd = new FormData();
     fd.append('audio', audioBlob, 'rec.webm');
     const uRes = await fetch('/upload', { method: 'POST', body: fd, signal: abortController.signal });
-    if (uRes.status === 401) { window.location.href = '/login'; return; }
+    if (uRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
     if (uRes.status === 413) {
       const errData = await uRes.json().catch(() => ({}));
       throw new Error(errData.error || 'Audio file too large for the server. Try a shorter recording or check your reverse proxy (nginx) client_max_body_size setting.');
@@ -615,39 +735,132 @@ async function transcribeAudioBlob(audioBlob) {
     let copiedLabel = '';
     if (cleanToggle.checked && raw.trim()) {
       setStatusProcessing('Cleaning up…');
-      const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-      if (cRes.status === 401) { window.location.href = '/login'; return; }
-      if (!cRes.ok) {
-        currentCleaned = '';
-        updateTranscriptDisplay(true);
-        addToHistory(raw, raw);
-        await copyToClipboard(raw);
-        await clearAudioBackup();
-        await clearInMemoryAudioBackup();
-        hideRecoveryRow();
-        setStatus('Cleanup failed — use Clean up to retry', 'error');
-        setTimeout(() => setStatus('Ready'), 3000);
-        return;
+
+      // Try streaming cleanup first
+      let cleaned = '';
+      let streamSuccess = false;
+      try {
+        const sRes = await fetch('/cleanup-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }),
+          signal: abortController.signal
+        });
+        if (sRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+        if (!sRes.ok) throw new Error('stream-fail');
+
+        // Show streaming state
+        transcriptDisplay.classList.add('streaming');
+        transcriptDisplay.textContent = '';
+        transcriptDisplay.classList.remove('transcript-placeholder');
+
+        const reader = sRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamDone = false;
+
+        while (!streamDone) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const json = JSON.parse(line.slice(6));
+              if (json.error) throw new Error(json.error);
+              if (json.done) { streamDone = true; break; }
+              if (json.text) {
+                cleaned += json.text;
+                transcriptDisplay.textContent = cleaned;
+                transcriptWordCount.textContent = countWords(cleaned) + 'w';
+              }
+            } catch (parseErr) {
+              // If it's a real error (not a JSON parse issue), re-throw
+              if (parseErr.message && parseErr.message !== 'stream-fail' && !parseErr.message.includes('JSON')) throw parseErr;
+              // Otherwise skip malformed SSE lines
+              continue;
+            }
+          }
+        }
+
+        transcriptDisplay.classList.remove('streaming');
+        streamSuccess = true;
+      } catch (streamErr) {
+        transcriptDisplay.classList.remove('streaming');
+        if (streamErr.name === 'AbortError') throw streamErr;
+        // Fallback to non-streaming
+        cleaned = '';
       }
-      const cData = await cRes.json();
-      if (cData.error) throw new Error(cData.error);
-      const cleaned = cData.cleanedTranscript || '';
+
+      // Fallback: non-streaming cleanup
+      if (!streamSuccess || !cleaned) {
+        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
+        if (cRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+        if (!cRes.ok) {
+          currentCleaned = '';
+          updateTranscriptDisplay(true);
+          addToHistory(raw, raw);
+          // Append mode: append raw
+          if (isAppendMode()) {
+            const accumulated = appendToTranscript(raw);
+            await copyToClipboard(accumulated);
+          } else {
+            await copyToClipboard(raw);
+          }
+          await clearAudioBackup();
+          await clearInMemoryAudioBackup();
+          hideRecoveryRow();
+          clearInterval(procTimer);
+          setStatus('Cleanup failed — use Clean up to retry', 'error');
+          setTimeout(() => setStatus('Ready'), 3000);
+          return;
+        }
+        const cData = await cRes.json();
+        if (cData.error) throw new Error(cData.error);
+        cleaned = cData.cleanedTranscript || '';
+      }
+
       currentCleaned = cleaned;
       showingRaw = false;
-      updateTranscriptDisplay(true);
-      if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+
+      // Append mode handling
+      if (isAppendMode() && cleaned) {
+        const accumulated = appendToTranscript(cleaned);
+        currentCleaned = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, cleaned);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+      }
     } else {
       currentCleaned = '';
       showingRaw = false;
-      updateTranscriptDisplay(true);
-      addToHistory(raw, raw); await copyToClipboard(raw);
-      copiedLabel = 'Raw copied';
+
+      // Append mode handling for raw
+      if (isAppendMode() && raw.trim()) {
+        const accumulated = appendToTranscript(raw);
+        currentRaw = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw); await copyToClipboard(raw);
+        copiedLabel = 'Raw copied';
+      }
     }
 
     processingAbortController = null;
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
+    clearInterval(procTimer);
     setStatus(copiedLabel, 'done');
     setTimeout(() => {
       clearProcessingUI();
@@ -656,6 +869,7 @@ async function transcribeAudioBlob(audioBlob) {
     }, 2000);
     return;
   } catch (e) {
+    clearInterval(procTimer);
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
       setTimeout(() => {
@@ -823,6 +1037,14 @@ renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
 drawIdleLine();
+// Restore accumulated transcript if append mode is active
+if (isAppendMode()) {
+  const saved = getAccumulatedTranscript();
+  if (saved) {
+    currentCleaned = saved;
+    currentRaw = '';
+  }
+}
 updateTranscriptDisplay();
 
 // ── Service Worker (PWA) ──

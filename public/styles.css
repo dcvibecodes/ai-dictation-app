@@ -283,6 +283,20 @@ header {
   animation: transcript-pop 0.3s ease-out;
 }
 
+/* Streaming cursor indicator */
+.transcript-display.streaming::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--warning);
+  margin-left: 2px;
+  border-radius: 1px;
+  vertical-align: text-bottom;
+  animation: blink-cursor 0.6s step-end infinite;
+}
+@keyframes blink-cursor { 50% { opacity: 0; } }
+
 /* ── Inputs ── */
 .input, textarea {
   width: 100%; background: var(--input-bg); color: var(--text);
@@ -594,6 +608,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   .sub-row { flex-wrap: wrap; gap: 6px; }
   .shortcut-hint { display: none; }
+  .mini-link-btn { display: none; }
   .recovery-row { align-items: flex-start; flex-direction: column; }
   .recovery-actions { width: 100%; }
   .recovery-actions .btn { flex: 1; }

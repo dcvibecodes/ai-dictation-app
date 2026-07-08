@@ -8,12 +8,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
-  <link rel="manifest" href="/manifest.json?v=10">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=10">
+  <link rel="manifest" href="/manifest.json?v=11">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=11">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
   <div class="app">
@@ -40,6 +40,9 @@
           <svg class="theme-icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
           <svg class="theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
         </button>
+        <a href="/mini" class="icon-btn mini-link-btn" title="Mini widget" aria-label="Open mini widget" target="_blank">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        </a>
         <a href="/logout" class="icon-btn" title="Logout" aria-label="Logout">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </a>
@@ -80,6 +83,13 @@
             <span class="toggle-slider"></span>
           </span>
           <span>Auto-clean</span>
+        </label>
+        <label class="clean-toggle-label">
+          <span class="toggle-switch">
+            <input type="checkbox" id="appendToggle">
+            <span class="toggle-slider"></span>
+          </span>
+          <span>Append</span>
         </label>
         <div class="prompt-tabs" id="promptBarTabs" role="tablist"></div>
       </div>
@@ -242,11 +252,15 @@
               </tr>
               <tr>
                 <td>Settings & preferences</td>
-                <td>API keys are stored on the server in the <code>data/settings.json</code> file. Your theme selection, auto-clean toggle, active prompt, and recorder bar position are stored in localStorage under their respective keys.</td>
+                <td>API keys are stored on the server in the <code>data/settings.json</code> file. Your theme selection, auto-clean toggle, append mode, active prompt, and recorder bar position are stored in localStorage under their respective keys.</td>
+              </tr>
+              <tr>
+                <td>Accumulated transcript</td>
+                <td>When Append mode is enabled, the combined transcript is stored in localStorage under <code>accumulatedTranscript</code>. It persists across reloads and is shared between the main view and the mini widget.</td>
               </tr>
               <tr>
                 <td>Clearing data</td>
-                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript and any audio backup. Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
+                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript, any audio backup, and the accumulated transcript (if in append mode). Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
               </tr>
             </table>
           </div>
@@ -260,6 +274,45 @@
               <li><strong>Transcription will fail</strong> until you're back online. The recovery bar will appear with a copy of your recording.</li>
               <li>When you reconnect, tap <strong>Retry</strong> to send the saved recording for transcription.</li>
               <li>An orange banner at the top shows your connectivity status.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Append mode</summary>
+          <div class="help-content">
+            <p>Enable the <strong>Append</strong> toggle on the record tab to accumulate multiple dictation segments into one growing transcript.</p>
+            <ul class="help-list">
+              <li>Each new recording is transcribed and cleaned <strong>individually</strong> (only the new segment uses API credits), then appended to the accumulated text.</li>
+              <li>Tap the transcript to copy the <strong>entire accumulated text</strong> to your clipboard.</li>
+              <li>The accumulated transcript is stored in localStorage and survives page reloads.</li>
+              <li>Click <strong>Clear</strong> to reset the entire accumulated transcript.</li>
+              <li>Turning off Append switches back to single-segment view. The accumulated text is still saved and reappears when you toggle Append back on.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Mini widget</summary>
+          <div class="help-content">
+            <p>The <strong>Mini widget</strong> (<code>/mini</code>) is a compact view with just the record button, status, and copy — designed for a small window you keep visible alongside other apps.</p>
+            <ul class="help-list">
+              <li>Open it from the monitor icon in the header (desktop only) or navigate to <code>/mini</code> directly.</li>
+              <li>Install it as a separate PWA from your browser's address bar (look for the install icon).</li>
+              <li>Resize the window to a small square and pin it in the corner of your screen.</li>
+              <li>It shares the same session and settings as the main app — no separate login needed.</li>
+              <li>It respects the Append mode toggle — if enabled, segments accumulate across both views.</li>
+              <li>Keyboard shortcuts <kbd>S</kbd> (record) and <kbd>P</kbd> (copy) work in the mini view.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Streaming cleanup</summary>
+          <div class="help-content">
+            <p>When your cleanup API supports streaming (most OpenAI-compatible providers do), the cleaned text appears <strong>progressively</strong> as it's generated — you don't have to wait for the full response.</p>
+            <ul class="help-list">
+              <li>A blinking cursor appears in the transcript area while streaming is in progress.</li>
+              <li>The elapsed processing time is shown in the status bar during transcription and cleanup.</li>
+              <li>If streaming fails, the app automatically falls back to the standard (non-streaming) cleanup.</li>
+              <li>You can cancel mid-stream — any partial text received so far is kept on screen.</li>
             </ul>
           </div>
         </details>
@@ -284,6 +337,6 @@
     </div>
 
   </div>
-  <script src="script.js?v=10"></script>
+  <script src="script.js?v=11"></script>
 </body>
 </html>

@@ -1,10 +1,12 @@
-const CACHE_NAME = 'dictation-v8';
+const CACHE_NAME = 'dictation-v9';
 const STATIC_ASSETS = [
   '/',
+  '/mini',
   '/styles.css',
   '/script.js',
   '/login.html',
   '/setup.html',
+  '/mini.html',
   '/auth.css',
   '/manifest.json',
   '/favicon.svg',
@@ -39,6 +41,7 @@ self.addEventListener('fetch', e => {
       url.pathname.startsWith('/login') ||
       url.pathname.startsWith('/setup') ||
       url.pathname.startsWith('/logout') ||
+      url.pathname.startsWith('/cleanup-stream') ||
       e.request.method !== 'GET') {
     return;
   }
