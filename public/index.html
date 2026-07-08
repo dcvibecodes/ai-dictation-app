@@ -166,8 +166,8 @@
           <summary class="help-summary">How recording works</summary>
           <div class="help-content">
             <ol class="help-list">
-              <li><strong>Tap the mic button</strong> (or press <kbd>S</kbd>) to start recording. The button turns red and shows a waveform while recording.</li>
-              <li><strong>Tap it again</strong> to stop. The audio is automatically saved to local storage as a backup.</li>
+              <li><strong>Press Enter</strong> (or tap the mic button) to start recording. The button turns red and shows a waveform.</li>
+              <li><strong>Press Enter again</strong> to stop. The audio is automatically saved to local storage as a backup.</li>
               <li><strong>Transcription</strong> begins immediately — the audio is sent to the server, which forwards it to the configured transcription API (e.g. Whisper).</li>
               <li><strong>Auto-cleanup</strong> (if enabled) sends the raw transcript to a second API for grammar fixing, punctuation, and formatting.</li>
               <li>The cleaned result is automatically <strong>copied to your clipboard</strong> and saved to history.</li>
@@ -175,26 +175,125 @@
           </div>
         </details>
         <details class="help-details">
+          <summary class="help-summary">Append mode</summary>
+          <div class="help-content">
+            <p>Enable the <strong>Append</strong> toggle on the record tab to accumulate multiple dictation segments into one growing transcript.</p>
+            <ul class="help-list">
+              <li>Each new recording is transcribed and cleaned <strong>individually</strong> (only the new segment uses API credits), then appended to the accumulated text.</li>
+              <li>Tap the transcript to copy the <strong>entire accumulated text</strong> to your clipboard.</li>
+              <li>The accumulated transcript starts fresh on each page load — no stale text carries over from previous sessions.</li>
+              <li>If you toggle Append on mid-session, whatever's currently on screen is captured as the starting point.</li>
+              <li>Click <strong>Clear</strong> to reset the entire accumulated transcript.</li>
+              <li>Turning off Append switches back to single-segment view. The accumulated text is still saved and reappears when you toggle Append back on.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Custom prompts</summary>
+          <div class="help-content">
+            <p>You can configure up to <strong>4 custom cleanup prompts</strong> in addition to the built-in Default prompt. Manage them from the <strong>Cleanup Prompts</strong> section in the Settings tab.</p>
+            <ul class="help-list">
+              <li>Each prompt is a system message sent to the cleanup model — use it to control formatting, tone, or style.</li>
+              <li>Select the active prompt from the dropdown on the Dictate tab (visible when Auto-clean is on).</li>
+              <li>Switch prompts instantly using keyboard shortcuts <kbd>1</kbd> through <kbd>5</kbd> (by position: 1 = Default, 2–5 = custom).</li>
+              <li>You can edit the Default prompt — click <strong>Edit</strong> next to it. Use <strong>Restore</strong> to revert to the built-in version.</li>
+              <li>Prompts are stored on the server and persist across devices.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Streaming cleanup</summary>
+          <div class="help-content">
+            <p>When your cleanup API supports streaming (most OpenAI-compatible providers do), the cleaned text appears <strong>progressively</strong> as it's generated — you don't have to wait for the full response.</p>
+            <ul class="help-list">
+              <li>A blinking cursor appears in the transcript area while streaming is in progress.</li>
+              <li>The elapsed processing time is shown in the status bar during transcription and cleanup.</li>
+              <li>If streaming fails, the app automatically falls back to the standard (non-streaming) cleanup.</li>
+              <li>You can cancel mid-stream — any partial text received so far is kept on screen.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
           <summary class="help-summary">Uploading audio files</summary>
           <div class="help-content">
-            <p>Click the <strong>Upload</strong> button next to Clear to select an audio file from disk. Supported formats include <strong>MP3, WAV, OGG, WebM, M4A, FLAC, AAC</strong> — any audio format your browser supports. The maximum file size is <strong>50 MB</strong>. Larger files will show an error message.</p>
+            <p>Click the <strong>Upload</strong> button (or press <kbd>U</kbd>) to select an audio file from disk. Supported formats include <strong>MP3, WAV, OGG, WebM, M4A, FLAC, AAC</strong> — any audio format your browser supports. The maximum file size is <strong>50 MB</strong>. Larger files will show an error message.</p>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Mini widget</summary>
+          <div class="help-content">
+            <p>The <strong>Mini widget</strong> (<code>/mini</code>) is a compact view with just the record button, status, and copy — designed for a small window you keep visible alongside other apps.</p>
+            <ul class="help-list">
+              <li>Open it from the monitor icon in the header (desktop only) or navigate to <code>/mini</code> directly.</li>
+              <li>Install it as a separate PWA from your browser's address bar (look for the install icon).</li>
+              <li>Resize the window to a small square and pin it in the corner of your screen.</li>
+              <li>It shares the same session and settings as the main app — no separate login needed.</li>
+              <li>It respects the Append mode toggle — if enabled, segments accumulate across both views.</li>
+              <li>Keyboard shortcuts <kbd>Enter</kbd> (record), <kbd>P</kbd> (copy), and <kbd>C</kbd> (cancel) work in the mini view.</li>
+            </ul>
           </div>
         </details>
         <details class="help-details">
           <summary class="help-summary">Keyboard shortcuts</summary>
           <div class="help-content">
             <ul class="help-list">
-              <li><kbd>S</kbd> — Start / Stop recording</li>
-              <li><kbd>Enter</kbd> — Stop recording (while recording)</li>
+              <li><kbd>Enter</kbd> — Start / Stop recording</li>
               <li><kbd>C</kbd> — Cancel recording / abort processing / clear text</li>
+              <li><kbd>Z</kbd> — Undo clear (restore last cleared transcript)</li>
               <li><kbd>P</kbd> — Copy transcript to clipboard</li>
+              <li><kbd>K</kbd> — Clean up (when auto-clean is off)</li>
+              <li><kbd>R</kbd> — Toggle raw / cleaned view</li>
               <li><kbd>N</kbd> — New recording (clear + start)</li>
+              <li><kbd>U</kbd> — Upload audio file</li>
               <li><kbd>A</kbd> — Toggle append mode</li>
               <li><kbd>T</kbd> — Toggle auto-clean</li>
-              <li><kbd>1–4</kbd> — Switch cleanup prompt by position</li>
+              <li><kbd>1–5</kbd> — Switch cleanup prompt by position</li>
+              <li><kbd>L</kbd> — Toggle light/dark theme</li>
+              <li><kbd>D</kbd> — Dictate tab</li>
+              <li><kbd>H</kbd> — History tab</li>
+              <li><kbd>S</kbd> — Settings tab</li>
               <li><kbd>Esc</kbd> — Close modal or popover</li>
             </ul>
             <p>Shortcuts are disabled when typing in input fields. On desktop, click <strong>Shortcuts</strong> in the header for a quick reference.</p>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Offline usage</summary>
+          <div class="help-content">
+            <p>This app works as a <strong>Progressive Web App (PWA)</strong>. When you're offline:</p>
+            <ul class="help-list">
+              <li>You can still <strong>record audio</strong> — the mic works without a connection.</li>
+              <li><strong>Transcription will fail</strong> until you're back online. The recovery bar will appear with a copy of your recording.</li>
+              <li>When you reconnect, tap <strong>Retry</strong> to send the saved recording for transcription.</li>
+              <li>An orange banner at the top shows your connectivity status.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Local storage & data</summary>
+          <div class="help-content">
+            <table class="help-table">
+              <tr>
+                <td>Recording backup</td>
+                <td>Audio recordings are stored in your browser's <strong>IndexedDB</strong> (database: <code>dictationAudioBackup</code>). If IndexedDB is unavailable (private browsing), the audio is kept in memory as a fallback. Backups are automatically deleted after successful transcription.</td>
+              </tr>
+              <tr>
+                <td>Session history</td>
+                <td>Your last 20 transcriptions are saved in <strong>localStorage</strong> under <code>dictationHistory</code>. The raw and cleaned text are stored here — not the audio. Use Clear All in the History tab to delete them.</td>
+              </tr>
+              <tr>
+                <td>Settings & preferences</td>
+                <td>API keys are stored on the server in the <code>data/settings.json</code> file. Your theme selection, auto-clean toggle, append mode, and active prompt are stored in localStorage.</td>
+              </tr>
+              <tr>
+                <td>Accumulated transcript</td>
+                <td>When Append mode is enabled, the combined transcript is stored in localStorage under <code>accumulatedTranscript</code>. It is cleared on page load to start each session fresh.</td>
+              </tr>
+              <tr>
+                <td>Clearing data</td>
+                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript, any audio backup, and the accumulated transcript (if in append mode). Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
+              </tr>
+            </table>
           </div>
         </details>
         <details class="help-details">
@@ -219,11 +318,11 @@
               </tr>
               <tr>
                 <td class="help-err">Cleanup API key not configured</td>
-                <td>Go to Settings > API Configuration and enter your cleanup API key if you want auto-cleanup. You can also type in the cleanup API key or disable auto-cleanup using the checkbox.</td>
+                <td>Go to Settings > API Configuration and enter your cleanup API key if you want auto-cleanup. You can also disable auto-cleanup using the toggle.</td>
               </tr>
               <tr>
                 <td class="help-err">Cleanup failed</td>
-                <td>The raw transcript was successfully transcribed and copied to your clipboard, but the cleanup step failed. Click the <strong>Clean up</strong> button to retry the cleanup on its own.</td>
+                <td>The raw transcript was successfully transcribed and copied to your clipboard, but the cleanup step failed. Press <kbd>K</kbd> or click <strong>Clean up</strong> to retry.</td>
               </tr>
               <tr>
                 <td class="help-err">Transcription failed</td>
@@ -242,84 +341,6 @@
                 <td>Your session has expired. You'll be redirected to the login page. Log in again to continue.</td>
               </tr>
             </table>
-          </div>
-        </details>
-        <details class="help-details">
-          <summary class="help-summary">Local storage & data</summary>
-          <div class="help-content">
-            <table class="help-table">
-              <tr>
-                <td>Recording backup</td>
-                <td>Audio recordings are stored in your browser's <strong>IndexedDB</strong> (database: <code>dictationAudioBackup</code>). If IndexedDB is unavailable (private browsing), the audio is kept in memory as a fallback. Backups are automatically deleted after successful transcription.</td>
-              </tr>
-              <tr>
-                <td>Session history</td>
-                <td>Your last 20 transcriptions are saved in <strong>localStorage</strong> under <code>dictationHistory</code>. The raw and cleaned text are stored here — not the audio. Use Clear All in the History tab to delete them.</td>
-              </tr>
-              <tr>
-                <td>Settings & preferences</td>
-                <td>API keys are stored on the server in the <code>data/settings.json</code> file. Your theme selection, auto-clean toggle, append mode, active prompt, and recorder bar position are stored in localStorage under their respective keys.</td>
-              </tr>
-              <tr>
-                <td>Accumulated transcript</td>
-                <td>When Append mode is enabled, the combined transcript is stored in localStorage under <code>accumulatedTranscript</code>. It persists across reloads and is shared between the main view and the mini widget.</td>
-              </tr>
-              <tr>
-                <td>Clearing data</td>
-                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript, any audio backup, and the accumulated transcript (if in append mode). Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
-              </tr>
-            </table>
-          </div>
-        </details>
-        <details class="help-details">
-          <summary class="help-summary">Offline usage</summary>
-          <div class="help-content">
-            <p>This app works as a <strong>Progressive Web App (PWA)</strong>. When you're offline:</p>
-            <ul class="help-list">
-              <li>You can still <strong>record audio</strong> — the mic works without a connection.</li>
-              <li><strong>Transcription will fail</strong> until you're back online. The recovery bar will appear with a copy of your recording.</li>
-              <li>When you reconnect, tap <strong>Retry</strong> to send the saved recording for transcription.</li>
-              <li>An orange banner at the top shows your connectivity status.</li>
-            </ul>
-          </div>
-        </details>
-        <details class="help-details">
-          <summary class="help-summary">Append mode</summary>
-          <div class="help-content">
-            <p>Enable the <strong>Append</strong> toggle on the record tab to accumulate multiple dictation segments into one growing transcript.</p>
-            <ul class="help-list">
-              <li>Each new recording is transcribed and cleaned <strong>individually</strong> (only the new segment uses API credits), then appended to the accumulated text.</li>
-              <li>Tap the transcript to copy the <strong>entire accumulated text</strong> to your clipboard.</li>
-              <li>The accumulated transcript is stored in localStorage and survives page reloads.</li>
-              <li>Click <strong>Clear</strong> to reset the entire accumulated transcript.</li>
-              <li>Turning off Append switches back to single-segment view. The accumulated text is still saved and reappears when you toggle Append back on.</li>
-            </ul>
-          </div>
-        </details>
-        <details class="help-details">
-          <summary class="help-summary">Mini widget</summary>
-          <div class="help-content">
-            <p>The <strong>Mini widget</strong> (<code>/mini</code>) is a compact view with just the record button, status, and copy — designed for a small window you keep visible alongside other apps.</p>
-            <ul class="help-list">
-              <li>Open it from the monitor icon in the header (desktop only) or navigate to <code>/mini</code> directly.</li>
-              <li>Install it as a separate PWA from your browser's address bar (look for the install icon).</li>
-              <li>Resize the window to a small square and pin it in the corner of your screen.</li>
-              <li>It shares the same session and settings as the main app — no separate login needed.</li>
-              <li>It respects the Append mode toggle — if enabled, segments accumulate across both views.</li>
-              <li>Keyboard shortcuts <kbd>S</kbd> (record) and <kbd>P</kbd> (copy) work in the mini view.</li>
-            </ul>
-          </div>
-        </details>
-        <details class="help-details">
-          <summary class="help-summary">Streaming cleanup</summary>
-          <div class="help-content">
-            <p>When your cleanup API supports streaming (most OpenAI-compatible providers do), the cleaned text appears <strong>progressively</strong> as it's generated — you don't have to wait for the full response.</p>
-            <ul class="help-list">
-              <li>A blinking cursor appears in the transcript area while streaming is in progress.</li>
-              <li>The elapsed processing time is shown in the status bar during transcription and cleanup.</li>
-              <li>If streaming fails, the app automatically falls back to the standard (non-streaming) cleanup.</li>
-              <li>You can cancel mid-stream — any partial text received so far is kept on screen.</li>
-            </ul>
           </div>
         </details>
       </div>
@@ -347,14 +368,21 @@
   <!-- Shortcuts popover -->
   <div class="shortcuts-popover" id="shortcutsPopover">
     <div class="shortcuts-list">
-      <div class="shortcut-item"><kbd>S</kbd><span>Start / Stop recording</span></div>
-      <div class="shortcut-item"><kbd>Enter</kbd><span>Stop recording</span></div>
+      <div class="shortcut-item"><kbd>Enter</kbd><span>Start / Stop recording</span></div>
       <div class="shortcut-item"><kbd>C</kbd><span>Cancel / Clear</span></div>
+      <div class="shortcut-item"><kbd>Z</kbd><span>Undo clear</span></div>
       <div class="shortcut-item"><kbd>P</kbd><span>Copy transcript</span></div>
+      <div class="shortcut-item"><kbd>K</kbd><span>Clean up (when auto-clean off)</span></div>
+      <div class="shortcut-item"><kbd>R</kbd><span>Toggle raw / cleaned view</span></div>
       <div class="shortcut-item"><kbd>N</kbd><span>New recording (clear + start)</span></div>
+      <div class="shortcut-item"><kbd>U</kbd><span>Upload audio file</span></div>
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
-      <div class="shortcut-item"><kbd>1–4</kbd><span>Switch prompt</span></div>
+      <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
+      <div class="shortcut-item"><kbd>L</kbd><span>Toggle light/dark theme</span></div>
+      <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
+      <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
+      <div class="shortcut-item"><kbd>S</kbd><span>Settings tab</span></div>
       <div class="shortcut-item"><kbd>Esc</kbd><span>Close modal / popover</span></div>
     </div>
   </div>

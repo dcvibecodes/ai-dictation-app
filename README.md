@@ -1,6 +1,18 @@
 # Dictation Tool
 
-A password-protected dictation PWA that records your voice, transcribes it, and cleans up the transcript using AI. No `.env` file required — configure everything from the UI. Installable as a standalone app on any device.
+AI-powered voice-to-text for people who can't install software on their computer.
+
+If your work machine blocks app installs, doesn't have a Copilot+ PC with fluid dictation, or you're stuck with the basic Windows speech-to-text that can't clean up filler words or fix grammar — this is for you. Host it on your own VPS, open it in your browser, and install it as a PWA. No admin rights, no IT approval, no app store. Just a URL.
+
+Works anywhere your workplace allows internet access to your domain.
+
+---
+
+## What It Is
+
+A password-protected web app that records your voice, transcribes it using any Whisper-compatible API, and cleans up the transcript with an LLM. The result is auto-copied to your clipboard — ready to paste into whatever app you're actually working in.
+
+Self-hosted. Single-user. No data leaves your server except the API calls you configure.
 
 ---
 
@@ -44,35 +56,33 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
-- **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits
+- **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits; starts fresh each session
 - **Mini widget** — compact `/mini` route with just record, status, and copy; installable as a separate PWA for an always-visible dictation trigger
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
 - **Tap to copy** — click/tap the transcript to copy the entire text to clipboard
-- **Pop-in animation** — transcript appears with a smooth fade-in when it arrives
-- **Show raw / Show cleaned toggle** — switch between raw and cleaned versions when both exist
+- **Show raw / Show cleaned toggle** — switch between raw and cleaned versions (shortcut: R)
+- **Manual cleanup** — when auto-clean is off, press K to clean up the raw transcript on demand
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
-- **Tab icons** — mic, clock, and gear icons next to tab labels
 - **Pulsing recording indicator** — subtle red ring pulse animation on the mic button while recording
 - **Haptic feedback** — short vibration on recording start/stop (Android)
 - **Frequency bar waveform** — live audio visualization while recording
 - **Auto-clean toggle** — skip cleanup when you just want raw text
 - **Prompt dropdown** — select cleanup prompt from a dropdown; only visible when auto-clean is enabled
-- **Multiple cleanup prompts** — up to 4 custom prompts, switch instantly via dropdown or keyboard (1–4)
+- **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5)
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Keyboard shortcuts** — S, Enter, C, P, N, A, T, 1–4, Esc (see full list below)
+- **Extensive keyboard shortcuts** — Enter, C, Z, P, K, R, N, U, A, T, L, 1–5, D, H, S, Esc
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
-- **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB
+- **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
 - **Change password on login** — reset your password from the login screen using your current password
-- **Smooth modal animations** — prompt editor opens with a scale + slide-up transition
-- **Mobile-optimized recorder** — flat bottom bar (no floating card), status shown below record button, compact layout
+- **Mobile-optimized recorder** — flat bottom bar, status shown below record button, compact layout
 
 ---
 
@@ -95,7 +105,7 @@ The `/mini` route provides a minimal dictation interface designed for a small al
 - Respects append mode — segments accumulate across both views
 - Installable as a separate PWA (has its own manifest)
 - Open from the monitor icon in the header or navigate to `/mini` directly
-- Keyboard shortcuts S, P, C work in the mini view
+- Keyboard shortcuts Enter, P, C work in the mini view
 
 ---
 
@@ -114,14 +124,21 @@ The `/mini` route provides a minimal dictation interface designed for a small al
 
 | Key | Action |
 |---|---|
-| `S` | Start/stop recording |
-| `Enter` | Stop recording (while recording) |
+| `Enter` | Start / Stop recording |
 | `C` | Cancel recording / abort processing / clear text |
+| `Z` | Undo clear (restore last cleared transcript) |
 | `P` | Copy transcript to clipboard |
+| `K` | Clean up (when auto-clean is off) |
+| `R` | Toggle raw / cleaned view |
 | `N` | New recording (clear + start) |
+| `U` | Upload audio file |
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
-| `1–4` | Switch cleanup prompt by position |
+| `1–5` | Switch cleanup prompt by position |
+| `L` | Toggle light/dark theme |
+| `D` | Dictate tab |
+| `H` | History tab |
+| `S` | Settings tab |
 | `Escape` | Close modal or popover |
 
 Shortcuts are disabled when typing in input fields.
@@ -204,5 +221,5 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - API keys stored in `data/settings.json` (gitignored)
 - `data/` directory auto-created on first run, fully gitignored
 - PWA works offline for the UI shell; recording requires network for AI APIs
-- Append mode accumulates text in localStorage, shared between main and mini views
+- Append mode starts fresh each page load — no stale text from previous sessions
 - Only the latest segment is sent for cleanup — previous segments are never re-processed

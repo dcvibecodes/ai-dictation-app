@@ -13,7 +13,6 @@ const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl    = document.getElementById('timer');
 const ctx        = waveformCanvas.getContext('2d');
-const recorderRow = document.querySelector('.recorder-row');
 const recoveryRow = document.getElementById('recoveryRow');
 const recoveryInfo = document.getElementById('recoveryInfo');
 const retryRecordingBtn = document.getElementById('retryRecordingBtn');
@@ -43,14 +42,11 @@ if (appendToggle) {
   appendToggle.checked = localStorage.getItem('appendMode') === 'true';
   appendToggle.addEventListener('change', () => {
     localStorage.setItem('appendMode', appendToggle.checked);
-    // Load accumulated transcript when enabling
+    // When enabling append, seed accumulated transcript with current display text
     if (appendToggle.checked) {
-      const saved = localStorage.getItem('accumulatedTranscript') || '';
-      if (saved && !getDisplayText().trim()) {
-        currentCleaned = saved;
-        currentRaw = '';
-        showingRaw = false;
-        updateTranscriptDisplay();
+      const onScreen = getDisplayText();
+      if (onScreen.trim() && !getAccumulatedTranscript()) {
+        setAccumulatedTranscript(onScreen);
       }
     }
   });
@@ -61,16 +57,7 @@ function getAccumulatedTranscript() { return localStorage.getItem('accumulatedTr
 function setAccumulatedTranscript(t) { localStorage.setItem('accumulatedTranscript', t); }
 
 function appendToTranscript(newText) {
-  let existing = getAccumulatedTranscript();
-  // Seed accumulated transcript with current display text if empty
-  // (handles case where user recorded with append off, then turned it on)
-  if (!existing) {
-    const onScreen = currentCleaned || currentRaw;
-    if (onScreen && onScreen !== newText) {
-      existing = onScreen;
-      setAccumulatedTranscript(existing);
-    }
-  }
+  const existing = getAccumulatedTranscript();
   const updated = existing ? existing + '\n\n' + newText : newText;
   setAccumulatedTranscript(updated);
   return updated;
@@ -356,14 +343,9 @@ async function sendRawForCleanup() {
 
     currentCleaned = cleaned;
 
-    // Append mode
-    if (isAppendMode() && cleaned) {
-      const accumulated = appendToTranscript(cleaned);
-      currentCleaned = accumulated;
-    }
-
+    // Manual cleanup is re-processing existing text, not a new segment — don't append
     updateTranscriptDisplay();
-    const textToCopy = isAppendMode() ? getAccumulatedTranscript() : cleaned;
+    const textToCopy = isAppendMode() ? getAccumulatedTranscript() || cleaned : cleaned;
     await copyToClipboard(textToCopy);
     clearInterval(procTimer);
     setStatus('Copied ✓', 'done');
@@ -430,12 +412,19 @@ toggleRawBtn.addEventListener('click', () => {
 });
 
 // ── Tap to copy transcript ──
-transcriptDisplay.addEventListener('click', () => {
+transcriptDisplay.addEventListener('click', (e) => {
   const text = getDisplayText();
   if (text.trim()) {
     copyToClipboard(text);
     setStatus('Copied ✓', 'done');
     setTimeout(() => setStatus('Ready'), 1500);
+    // Fade out and back in
+    transcriptDisplay.style.transition = 'opacity 0.15s ease-out';
+    transcriptDisplay.style.opacity = '0.15';
+    setTimeout(() => {
+      transcriptDisplay.style.transition = 'opacity 0.25s ease-in';
+      transcriptDisplay.style.opacity = '1';
+    }, 150);
   }
 });
 
@@ -503,10 +492,18 @@ function drawIdleLine() {
 // ── Word Count ──
 function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).length; }
 
+// ── Undo state ──
+let undoState = null; // { raw, cleaned, accumulated }
+
 // ── Clear ──
 clearBtn.onclick = async () => {
   if (processingAbortController) abortProcessing();
   if (isRecording) stopRecording();
+  // Save state for undo before clearing
+  const displayText = getDisplayText();
+  if (displayText.trim()) {
+    undoState = { raw: currentRaw, cleaned: currentCleaned, accumulated: getAccumulatedTranscript() };
+  }
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
@@ -519,9 +516,21 @@ clearBtn.onclick = async () => {
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
   clearProcessingUI();
-  setStatus('Ready');
+  setStatus('Cleared — press Z to undo');
   timerEl.textContent = '00:00';
 };
+
+function undoClear() {
+  if (!undoState) return;
+  currentRaw = undoState.raw;
+  currentCleaned = undoState.cleaned;
+  if (undoState.accumulated) setAccumulatedTranscript(undoState.accumulated);
+  showingRaw = false;
+  undoState = null;
+  updateTranscriptDisplay();
+  setStatus('Restored', 'done');
+  setTimeout(() => setStatus('Ready'), 1500);
+}
 
 // ── Prompts ──
 const DEFAULT_PROMPT_TEXT = `# ROLE
@@ -985,11 +994,13 @@ function resetButton() {
 function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+  isRecording = false;
   cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+  isRecording = false;
   mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
@@ -1040,13 +1051,18 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
   }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // Start/stop recording
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    toggleBtn.click();
+  }
+  // Cancel / clear
   if (e.key === 'c' && !e.ctrlKey && !e.metaKey) {
     if (processingAbortController) { abortProcessing(); }
     else if (isRecording) { cancelRecording(); }
     else { clearBtn.click(); }
   }
-  if (e.key === 's' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleBtn.click(); }
-  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && isRecording) { e.preventDefault(); stopRecording(); }
+  // Copy transcript
   if (e.key === 'p' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
   // Toggle append mode
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
@@ -1063,11 +1079,49 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     if (!isRecording && !processingAbortController) { clearBtn.click(); startRecording(); }
   }
-  // Switch prompts 1-4
-  if (['1','2','3','4'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+  // Upload audio file
+  if (e.key === 'u' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (fileInput) fileInput.click();
+  }
+  // Manual cleanup
+  if (e.key === 'k' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (currentRaw.trim() && !cleanToggle.checked) sendRawForCleanup();
+  }
+  // Toggle raw/cleaned view
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
+  }
+  // Theme toggle (light/dark)
+  if (e.key === 'l' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    toggleTheme();
+  }
+  // Tab navigation
+  if (e.key === 'd' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    document.querySelector('[data-tab="record"]').click();
+  }
+  if (e.key === 'h' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    document.querySelector('[data-tab="history"]').click();
+  }
+  if (e.key === 's' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    document.querySelector('[data-tab="settings"]').click();
+  }
+  // Switch prompts 1-5
+  if (['1','2','3','4','5'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
     const all = getAllPrompts();
     const idx = parseInt(e.key) - 1;
     if (idx < all.length) { selectPrompt(all[idx].id); }
+  }
+  // Undo clear
+  if (e.key === 'z' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    undoClear();
   }
 });
 
@@ -1102,14 +1156,9 @@ renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
 drawIdleLine();
-// Restore accumulated transcript if append mode is active
-if (isAppendMode()) {
-  const saved = getAccumulatedTranscript();
-  if (saved) {
-    currentCleaned = saved;
-    currentRaw = '';
-  }
-}
+// Clear accumulated transcript on fresh page load (new session)
+// Append mode toggle state is preserved, but text starts fresh each session
+setAccumulatedTranscript('');
 updateTranscriptDisplay();
 
 // ── Service Worker (PWA) ──
