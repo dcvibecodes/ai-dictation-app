@@ -804,6 +804,7 @@ document.addEventListener('keydown', e => {
     else { clearBtn.click(); }
   }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleBtn.click(); }
+  if (e.key === 'p' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
 });
 
 // ── Offline indicator ──
