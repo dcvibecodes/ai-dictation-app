@@ -257,8 +257,6 @@ cleanToggle.addEventListener('change', () => {
   localStorage.setItem('cleanTranscript', cleanToggle.checked);
   updateTranscriptDisplay();
   updateSendCleanupBtn();
-  const sel = document.getElementById('promptBarSelect');
-  if (sel) sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
 });
 
 function updateSendCleanupBtn() {
@@ -600,7 +598,6 @@ function renderPromptBar() {
     sel.innerHTML = all.map(p =>
       `<option value="${escapeHtml(p.id)}" ${p.id === activePromptId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
     ).join('');
-    sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
   }
 }
 function selectPrompt(id) { activePromptId = id; localStorage.setItem('activePromptId', id); renderPromptBar(); }
