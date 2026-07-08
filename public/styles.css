@@ -521,10 +521,11 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 @media (max-width: 600px) {
   body {
     min-height: 100svh;
-    padding: max(22px, calc(env(safe-area-inset-top) + 12px)) 14px calc(130px + env(safe-area-inset-bottom));
+    padding: max(22px, calc(env(safe-area-inset-top) + 12px)) 14px calc(120px + env(safe-area-inset-bottom, 0px));
   }
 
   body.record-active {
+    height: 100vh;
     height: 100dvh;
     overflow: hidden;
   }
@@ -583,7 +584,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
       "status status status";
     align-items: center;
     gap: 8px 12px;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 16px calc(8px + env(safe-area-inset-bottom, 0px));
     border: none;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 0;
