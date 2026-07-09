@@ -528,6 +528,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
+    padding-bottom: 0;
   }
 
   body.record-active .app {
