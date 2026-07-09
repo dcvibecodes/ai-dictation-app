@@ -64,6 +64,7 @@
           <button id="uploadAudioBtn" class="btn btn-ghost btn-sm">Upload</button>
         </div>
         <input type="file" id="fileInput" accept="audio/*" style="display:none">
+        <span id="status" class="status" aria-live="polite">Ready</span>
       </div>
       <div class="recovery-row" id="recoveryRow" style="display:none">
         <span id="recoveryInfo">Saved temporarily · will be removed once transcription succeeds</span>
@@ -102,7 +103,6 @@
             <button class="btn btn-ghost btn-sm" id="sendCleanupBtn" style="display:none">Clean up</button>
           </div>
         </div>
-        <span id="status" class="status" aria-live="polite">Ready</span>
         <div id="transcriptDisplay" class="transcript-display" tabindex="0" role="textbox" aria-label="Transcript">
           <span class="transcript-placeholder">Your transcript will appear here…</span>
         </div>
