@@ -82,7 +82,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
 - **Change password on login** — reset your password from the login screen using your current password
-- **Mobile-optimized recorder** — flat bottom bar, status shown below record button, compact layout
+- **Mobile-optimized recorder** — flat bottom bar, compact layout
+- **Inline status display** — processing status shown in the transcript area, visible on both mobile and desktop
 
 ---
 
