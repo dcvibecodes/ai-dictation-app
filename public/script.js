@@ -1148,6 +1148,8 @@ if (shortcutsBtn && shortcutsPopover) {
 
 // ── Init ──
 document.body.classList.add('record-active');
+// Force layout recalculation (fixes iOS PWA fixed-position rendering bug on first load)
+void document.body.offsetHeight;
 loadPrompts();
 renderHistory();
 hideRecoveryRow();
