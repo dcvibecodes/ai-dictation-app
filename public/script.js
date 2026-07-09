@@ -517,11 +517,19 @@ clearBtn.onclick = async () => {
   hideRecoveryRow();
   clearProcessingUI();
   setStatus('Cleared — press Z to undo');
+  setTimeout(() => {
+    if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
+  }, 3000);
   timerEl.textContent = '00:00';
 };
 
 function undoClear() {
-  if (!undoState) return;
+  if (!undoState) {
+    // No undo available — show brief feedback
+    setStatus('Nothing to undo');
+    setTimeout(() => setStatus('Ready'), 1500);
+    return;
+  }
   currentRaw = undoState.raw;
   currentCleaned = undoState.cleaned;
   if (undoState.accumulated) setAccumulatedTranscript(undoState.accumulated);
@@ -529,7 +537,7 @@ function undoClear() {
   undoState = null;
   updateTranscriptDisplay();
   setStatus('Restored', 'done');
-  setTimeout(() => setStatus('Ready'), 1500);
+  setTimeout(() => setStatus('Ready'), 2000);
 }
 
 // ── Prompts ──
@@ -895,28 +903,25 @@ async function transcribeAudioBlob(audioBlob) {
     hideRecoveryRow();
     clearInterval(procTimer);
     setStatus(copiedLabel, 'done');
-    setTimeout(() => {
-      clearProcessingUI();
-      retryRecordingBtn.disabled = false;
-      resetButton();
-    }, 2000);
+    clearProcessingUI();
+    retryRecordingBtn.disabled = false;
+    resetButton();
+    setTimeout(() => setStatus('Ready'), 2000);
     return;
   } catch (e) {
     clearInterval(procTimer);
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
-      setTimeout(() => {
-        clearProcessingUI();
-        retryRecordingBtn.disabled = false;
-        resetButton();
-      }, 1500);
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+      setTimeout(() => setStatus('Ready'), 1500);
     } else {
       setStatus('Error: ' + e.message, 'error');
-      setTimeout(() => {
-        clearProcessingUI();
-        retryRecordingBtn.disabled = false;
-        resetButton();
-      }, 3000);
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+      setTimeout(() => setStatus('Ready'), 3000);
       showRecoveryRow();
     }
     return;
@@ -1160,6 +1165,20 @@ drawIdleLine();
 // Append mode toggle state is preserved, but text starts fresh each session
 setAccumulatedTranscript('');
 updateTranscriptDisplay();
+
+// ── iOS PWA fix: force layout recalculation for env(safe-area-inset-bottom) ──
+// On iOS standalone PWA, env() values may not resolve until after first paint.
+// Toggling a property forces WebKit to recompute the layout.
+if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) {
+  requestAnimationFrame(() => {
+    const recRow = document.getElementById('recorderRow');
+    if (recRow) {
+      recRow.style.display = 'none';
+      void recRow.offsetHeight; // force reflow
+      recRow.style.display = '';
+    }
+  });
+}
 
 // ── Service Worker (PWA) ──
 if ('serviceWorker' in navigator) {

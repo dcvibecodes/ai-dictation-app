@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dictation-v9';
+const CACHE_NAME = 'dictation-v10';
 const STATIC_ASSETS = [
   '/',
   '/mini',
