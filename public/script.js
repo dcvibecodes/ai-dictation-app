@@ -1047,25 +1047,22 @@ if (fileInput) {
 
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', e => {
-  // Close shortcuts popover on Esc
-  if (e.key === 'Escape') {
-    if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); return; }
-    if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
-  }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // Escape: cancel / abort / clear / close popover or modal
+  if (e.key === 'Escape') {
+    if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); e.preventDefault(); return; }
+    if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); e.preventDefault(); return; }
+    if (processingAbortController) { e.preventDefault(); abortProcessing(); return; }
+    if (isRecording) { e.preventDefault(); cancelRecording(); return; }
+    if (getDisplayText().trim()) { e.preventDefault(); clearBtn.click(); return; }
+  }
   // Start/stop recording
   if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     toggleBtn.click();
   }
-  // Cancel / clear
-  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) {
-    if (processingAbortController) { abortProcessing(); }
-    else if (isRecording) { cancelRecording(); }
-    else { clearBtn.click(); }
-  }
   // Copy transcript
-  if (e.key === 'p' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
+  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
   // Toggle append mode
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();

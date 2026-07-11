@@ -73,7 +73,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Extensive keyboard shortcuts** — Enter, C, Z, P, K, R, N, U, A, T, L, 1–5, D, H, S, Esc
+- **Extensive keyboard shortcuts** — Enter, Esc, Z, C, K, R, N, U, A, T, L, 1–5, D, H, S
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
@@ -112,9 +112,9 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | Key | Action |
 |---|---|
 | `Enter` | Start / Stop recording |
-| `C` | Cancel recording / abort processing / clear text |
+| `Esc` | Cancel recording / abort processing / clear text / close modal |
 | `Z` | Undo clear (restore last cleared transcript) |
-| `P` | Copy transcript to clipboard |
+| `C` | Copy transcript to clipboard |
 | `K` | Clean up (when auto-clean is off) |
 | `R` | Toggle raw / cleaned view |
 | `N` | New recording (clear + start) |
@@ -126,7 +126,6 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |
-| `Escape` | Close modal or popover |
 
 Shortcuts are disabled when typing in input fields.
 
