@@ -182,6 +182,13 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// --- Mini widget view ---
+app.get('/mini', (req, res) => {
+  if (!isOwnerSetup()) return res.redirect('/setup');
+  if (!req.isOwner) return res.redirect('/login');
+  res.sendFile(path.join(__dirname, 'public', 'mini.html'));
+});
+
 // --- Settings API ---
 app.get('/api/settings', requireOwner, (req, res) => {
   const s = loadSettings();
@@ -388,7 +395,7 @@ app.post('/cleanup-stream', requireOwner, async (req, res) => {
 // --- Static files (AFTER all API routes) ---
 app.use((req, res, next) => {
   // Public paths that don't need auth
-  const publicPaths = ['/login.html', '/setup.html', '/auth.css', '/manifest.json', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/sw.js'];
+  const publicPaths = ['/login.html', '/setup.html', '/auth.css', '/manifest.json', '/manifest-mini.json', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/sw.js'];
   if (publicPaths.includes(req.path)) return express.static(path.join(__dirname, 'public'))(req, res, next);
   if (!req.isOwner) return res.status(401).send('Unauthorized');
   express.static(path.join(__dirname, 'public'))(req, res, next);

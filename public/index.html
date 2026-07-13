@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
+  <script>(function(){var t=localStorage.getItem('dictationTheme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
   <link rel="manifest" href="/manifest.json?v=12">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=12">
   <link rel="apple-touch-icon" href="/icon-192.png">
@@ -41,6 +42,9 @@
           <svg class="theme-icon-sun" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
           <svg class="theme-icon-moon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
         </button>
+        <a href="/mini" class="icon-btn mini-link-btn" title="Mini widget" aria-label="Open mini widget" target="_blank">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        </a>
         <a href="/logout" class="icon-btn" title="Logout" aria-label="Logout">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </a>
@@ -217,13 +221,27 @@
           </div>
         </details>
         <details class="help-details">
+          <summary class="help-summary">Mini widget</summary>
+          <div class="help-content">
+            <p>The <strong>Mini widget</strong> (<code>/mini</code>) is a compact view with just the record button, status, and copy — designed for a small window you keep visible alongside other apps.</p>
+            <ul class="help-list">
+              <li>Open it from the monitor icon in the header (desktop only) or navigate to <code>/mini</code> directly.</li>
+              <li>Install it as a separate PWA from your browser's address bar (look for the install icon).</li>
+              <li>Resize the window to a small square and pin it in the corner of your screen.</li>
+              <li>It shares the same session and settings as the main app — no separate login needed.</li>
+              <li>It respects the Append mode toggle — if enabled, segments accumulate across both views.</li>
+              <li>Keyboard shortcuts <kbd>Enter</kbd> (record), <kbd>P</kbd> (copy), and <kbd>C</kbd> (cancel) work in the mini view.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
           <summary class="help-summary">Keyboard shortcuts</summary>
           <div class="help-content">
             <ul class="help-list">
               <li><kbd>Enter</kbd> — Start / Stop recording</li>
-              <li><kbd>Esc</kbd> — Cancel recording / abort processing / clear text / close modal</li>
+              <li><kbd>C</kbd> — Cancel recording / abort processing / clear text</li>
               <li><kbd>Z</kbd> — Undo clear (restore last cleared transcript)</li>
-              <li><kbd>C</kbd> — Copy transcript to clipboard</li>
+              <li><kbd>P</kbd> — Copy transcript to clipboard</li>
               <li><kbd>K</kbd> — Clean up (when auto-clean is off)</li>
               <li><kbd>R</kbd> — Toggle raw / cleaned view</li>
               <li><kbd>N</kbd> — New recording (clear + start)</li>
@@ -235,6 +253,7 @@
               <li><kbd>D</kbd> — Dictate tab</li>
               <li><kbd>H</kbd> — History tab</li>
               <li><kbd>S</kbd> — Settings tab</li>
+              <li><kbd>Esc</kbd> — Close modal or popover</li>
             </ul>
             <p>Shortcuts are disabled when typing in input fields. On desktop, click <strong>Shortcuts</strong> in the header for a quick reference.</p>
           </div>
@@ -351,9 +370,9 @@
   <div class="shortcuts-popover" id="shortcutsPopover">
     <div class="shortcuts-list">
       <div class="shortcut-item"><kbd>Enter</kbd><span>Start / Stop recording</span></div>
-      <div class="shortcut-item"><kbd>Esc</kbd><span>Cancel / Clear / Close modal</span></div>
+      <div class="shortcut-item"><kbd>C</kbd><span>Cancel / Clear</span></div>
       <div class="shortcut-item"><kbd>Z</kbd><span>Undo clear</span></div>
-      <div class="shortcut-item"><kbd>C</kbd><span>Copy transcript</span></div>
+      <div class="shortcut-item"><kbd>P</kbd><span>Copy transcript</span></div>
       <div class="shortcut-item"><kbd>K</kbd><span>Clean up (when auto-clean off)</span></div>
       <div class="shortcut-item"><kbd>R</kbd><span>Toggle raw / cleaned view</span></div>
       <div class="shortcut-item"><kbd>N</kbd><span>New recording (clear + start)</span></div>
@@ -365,6 +384,7 @@
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
       <div class="shortcut-item"><kbd>S</kbd><span>Settings tab</span></div>
+      <div class="shortcut-item"><kbd>Esc</kbd><span>Close modal / popover</span></div>
     </div>
   </div>
 

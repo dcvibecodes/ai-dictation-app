@@ -57,6 +57,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits; starts fresh each session
+- **Mini widget** — compact `/mini` route with just record, status, and copy; installable as a separate PWA for an always-visible dictation trigger
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
@@ -73,7 +74,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Extensive keyboard shortcuts** — Enter, Esc, Z, C, K, R, N, U, A, T, L, 1–5, D, H, S
+- **Extensive keyboard shortcuts** — Enter, C, Z, P, K, R, N, U, A, T, L, 1–5, D, H, S, Esc
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
@@ -96,6 +97,19 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 ---
 
+## Mini Widget
+
+The `/mini` route provides a minimal dictation interface designed for a small always-visible window:
+
+- Just the record button, status, and copy button
+- Shares session and settings with the main app
+- Respects append mode — segments accumulate across both views
+- Installable as a separate PWA (has its own manifest)
+- Open from the monitor icon in the header or navigate to `/mini` directly
+- Keyboard shortcuts Enter, P, C work in the mini view
+
+---
+
 ## Authentication
 
 - First visit → `/setup` to create a password (min 8 characters)
@@ -112,9 +126,9 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | Key | Action |
 |---|---|
 | `Enter` | Start / Stop recording |
-| `Esc` | Cancel recording / abort processing / clear text / close modal |
+| `C` | Cancel recording / abort processing / clear text |
 | `Z` | Undo clear (restore last cleared transcript) |
-| `C` | Copy transcript to clipboard |
+| `P` | Copy transcript to clipboard |
 | `K` | Clean up (when auto-clean is off) |
 | `R` | Toggle raw / cleaned view |
 | `N` | New recording (clear + start) |
@@ -126,6 +140,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |
+| `Escape` | Close modal or popover |
 
 Shortcuts are disabled when typing in input fields.
 
@@ -137,6 +152,7 @@ Shortcuts are disabled when typing in input fields.
 dictation-app/
 ├── public/
 │   ├── index.html         # Main app (3 tabs)
+│   ├── mini.html          # Mini widget view
 │   ├── login.html         # Login page
 │   ├── setup.html         # First-time setup
 │   ├── auth.css           # Auth page styles
@@ -144,6 +160,7 @@ dictation-app/
 │   ├── styles.css         # Main styles
 │   ├── sw.js              # Service worker (PWA)
 │   ├── manifest.json      # PWA manifest (main)
+│   ├── manifest-mini.json # PWA manifest (mini widget)
 │   ├── favicon.svg        # App icon
 │   ├── icon-192.png       # PWA icon
 │   └── icon-512.png       # PWA icon
