@@ -257,12 +257,10 @@ cleanToggle.addEventListener('change', () => {
   localStorage.setItem('cleanTranscript', cleanToggle.checked);
   updateTranscriptDisplay();
   updateSendCleanupBtn();
-  const sel = document.getElementById('promptBarSelect');
-  if (sel) sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
 });
 
 function updateSendCleanupBtn() {
-  sendCleanupBtn.style.display = (!cleanToggle.checked && currentRaw.trim()) ? '' : 'none';
+  sendCleanupBtn.style.display = currentRaw.trim() ? '' : 'none';
 }
 
 async function sendRawForCleanup() {
@@ -608,7 +606,6 @@ function renderPromptBar() {
     sel.innerHTML = all.map(p =>
       `<option value="${escapeHtml(p.id)}" ${p.id === activePromptId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
     ).join('');
-    sel.style.visibility = cleanToggle.checked ? 'visible' : 'hidden';
   }
 }
 function selectPrompt(id) { activePromptId = id; localStorage.setItem('activePromptId', id); renderPromptBar(); }
@@ -1050,25 +1047,22 @@ if (fileInput) {
 
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', e => {
-  // Close shortcuts popover on Esc
-  if (e.key === 'Escape') {
-    if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); return; }
-    if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
-  }
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
   // Start/stop recording
   if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     toggleBtn.click();
   }
-  // Cancel / clear
-  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) {
+  // Cancel / clear (Escape)
+  if (e.key === 'Escape') {
+    if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); return; }
+    if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
     if (processingAbortController) { abortProcessing(); }
     else if (isRecording) { cancelRecording(); }
     else { clearBtn.click(); }
   }
   // Copy transcript
-  if (e.key === 'p' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
+  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
   // Toggle append mode
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
@@ -1092,7 +1086,7 @@ document.addEventListener('keydown', e => {
   // Manual cleanup
   if (e.key === 'k' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (currentRaw.trim() && !cleanToggle.checked) sendRawForCleanup();
+    if (currentRaw.trim()) sendRawForCleanup();
   }
   // Toggle raw/cleaned view
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {

@@ -57,24 +57,23 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits; starts fresh each session
-- **Mini widget** — compact `/mini` route with just record, status, and copy; installable as a separate PWA for an always-visible dictation trigger
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
 - **Tap to copy** — click/tap the transcript to copy the entire text to clipboard
 - **Show raw / Show cleaned toggle** — switch between raw and cleaned versions (shortcut: R)
-- **Manual cleanup** — when auto-clean is off, press K to clean up the raw transcript on demand
+- **Manual cleanup** — press K or click Clean up to (re-)process the transcript with the selected prompt at any time
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
 - **Pulsing recording indicator** — subtle red ring pulse animation on the mic button while recording
 - **Haptic feedback** — short vibration on recording start/stop (Android)
 - **Frequency bar waveform** — live audio visualization while recording
 - **Auto-clean toggle** — skip cleanup when you just want raw text
-- **Prompt dropdown** — select cleanup prompt from a dropdown; only visible when auto-clean is enabled
-- **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5)
+- **Prompt dropdown** — select cleanup prompt from a dropdown; always visible on the Dictate tab
+- **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5); re-clean with a different prompt anytime
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Extensive keyboard shortcuts** — Enter, C, Z, P, K, R, N, U, A, T, L, 1–5, D, H, S, Esc
+- **Extensive keyboard shortcuts** — Enter, Esc, C, Z, K, R, N, U, A, T, L, 1–5, D, H, S
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
@@ -95,18 +94,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | History | View/restore/copy past transcriptions |
 | Settings | API config + cleanup prompt management + help |
 
----
 
-## Mini Widget
-
-The `/mini` route provides a minimal dictation interface designed for a small always-visible window:
-
-- Just the record button, status, and copy button
-- Shares session and settings with the main app
-- Respects append mode — segments accumulate across both views
-- Installable as a separate PWA (has its own manifest)
-- Open from the monitor icon in the header or navigate to `/mini` directly
-- Keyboard shortcuts Enter, P, C work in the mini view
 
 ---
 
@@ -126,10 +114,10 @@ The `/mini` route provides a minimal dictation interface designed for a small al
 | Key | Action |
 |---|---|
 | `Enter` | Start / Stop recording |
-| `C` | Cancel recording / abort processing / clear text |
+| `Escape` | Cancel recording / abort processing / clear text (also closes modals/popovers) |
+| `C` | Copy transcript to clipboard |
 | `Z` | Undo clear (restore last cleared transcript) |
-| `P` | Copy transcript to clipboard |
-| `K` | Clean up (when auto-clean is off) |
+| `K` | Clean up (re-process transcript with selected prompt) |
 | `R` | Toggle raw / cleaned view |
 | `N` | New recording (clear + start) |
 | `U` | Upload audio file |
@@ -140,7 +128,6 @@ The `/mini` route provides a minimal dictation interface designed for a small al
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |
-| `Escape` | Close modal or popover |
 
 Shortcuts are disabled when typing in input fields.
 
@@ -152,15 +139,13 @@ Shortcuts are disabled when typing in input fields.
 dictation-app/
 ├── public/
 │   ├── index.html         # Main app (3 tabs)
-│   ├── mini.html          # Mini widget view
 │   ├── login.html         # Login page
 │   ├── setup.html         # First-time setup
 │   ├── auth.css           # Auth page styles
 │   ├── script.js          # Frontend logic
 │   ├── styles.css         # Main styles
 │   ├── sw.js              # Service worker (PWA)
-│   ├── manifest.json      # PWA manifest (main)
-│   ├── manifest-mini.json # PWA manifest (mini widget)
+│   ├── manifest.json      # PWA manifest
 │   ├── favicon.svg        # App icon
 │   ├── icon-192.png       # PWA icon
 │   └── icon-512.png       # PWA icon

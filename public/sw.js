@@ -1,12 +1,10 @@
-const CACHE_NAME = 'dictation-v10';
+const CACHE_NAME = 'dictation-v11';
 const STATIC_ASSETS = [
   '/',
-  '/mini',
   '/styles.css',
   '/script.js',
   '/login.html',
   '/setup.html',
-  '/mini.html',
   '/auth.css',
   '/manifest.json',
   '/favicon.svg',
