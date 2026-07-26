@@ -1087,23 +1087,40 @@ function stopRecording() {
   mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
+// Safari/iOS MediaRecorder.pause()/resume() is broken: the functions exist but
+// resume() never delivers audio again, and AudioContext.resume() is unreliable.
+// On those engines we mute the mic track instead — the recorder keeps running
+// but captures silence (which transcription APIs ignore), and the waveform
+// flattens naturally because a muted track outputs zeros.
+const pauseViaMute = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  || /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
 function togglePause() {
-  if (!isRecording || !mediaRecorder || typeof mediaRecorder.pause !== 'function') return;
+  if (!isRecording || !mediaRecorder) return;
   if (navigator.vibrate) navigator.vibrate(10);
   if (isPaused) {
-    mediaRecorder.resume();
-    if (audioContext) audioContext.resume().catch(() => {});
+    if (pauseViaMute) {
+      mediaRecorder.stream.getAudioTracks().forEach(t => { t.enabled = true; });
+    } else {
+      mediaRecorder.resume();
+      if (audioContext) audioContext.resume().catch(() => {});
+    }
     resumeTimer();
     isPaused = false;
     pauseBtn.textContent = 'Pause';
     setStatus('Recording…', 'active');
   } else {
-    mediaRecorder.pause();
-    if (audioContext) audioContext.suspend().catch(() => {});
+    if (pauseViaMute) {
+      mediaRecorder.stream.getAudioTracks().forEach(t => { t.enabled = false; });
+    } else {
+      mediaRecorder.pause();
+      if (audioContext) audioContext.suspend().catch(() => {});
+    }
     pauseTimer();
     isPaused = true;
     pauseBtn.textContent = 'Resume';
-    setStatus('Paused — press P to resume', 'active');
+    setStatus(navigator.maxTouchPoints > 0 ? 'Paused' : 'Paused — press P to resume', 'active');
   }
 }
 
