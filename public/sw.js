@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dictation-v11';
+const CACHE_NAME = 'dictation-v13';
 const STATIC_ASSETS = [
   '/',
   '/styles.css',

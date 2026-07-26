@@ -9,12 +9,12 @@
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
   <script>(function(){var t=localStorage.getItem('dictationTheme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
-  <link rel="manifest" href="/manifest.json?v=12">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=12">
+  <link rel="manifest" href="/manifest.json?v=13">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=13">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
   <div class="app">
@@ -57,7 +57,10 @@
         </button>
         <canvas id="waveform" aria-hidden="true"></canvas>
         <span id="timer">00:00</span>
-        <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
+        <div class="rec-btns">
+          <button id="pauseBtn" class="btn btn-ghost btn-sm" style="display:none">Pause</button>
+          <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
+        </div>
         <div class="action-btns">
           <button id="clearBtn" class="btn btn-ghost btn-sm">Clear</button>
           <button id="uploadAudioBtn" class="btn btn-ghost btn-sm">Upload</button>
@@ -97,6 +100,7 @@
         <div class="transcript-header">
           <span class="word-count" id="transcriptWordCount">0w</span>
           <div class="transcript-actions">
+            <button class="btn btn-ghost btn-sm" id="editTranscriptBtn" style="display:none">Edit</button>
             <button class="btn btn-ghost btn-sm" id="toggleRawBtn" style="display:none">Show raw</button>
             <button class="btn btn-ghost btn-sm" id="sendCleanupBtn" style="display:none">Clean up</button>
           </div>
@@ -135,6 +139,8 @@
             <label>API Key<input type="text" id="setTranscriptionKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
             <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
             <label>Model<input type="text" id="setTranscriptionModel" class="input" placeholder="whisper-1"></label>
+            <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
+            <label>Vocabulary hint <span class="optional">(optional — names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
           </fieldset>
           <fieldset class="settings-group">
             <legend>Cleanup</legend>
@@ -225,8 +231,10 @@
           <div class="help-content">
             <ul class="help-list">
               <li><kbd>Enter</kbd> — Start / Stop recording</li>
-              <li><kbd>Esc</kbd> — Cancel recording / abort processing / clear text (also closes modals and popovers)</li>
+              <li><kbd>Esc</kbd> — Cancel recording / abort processing / clear text (also closes modals and popovers, exits transcript editing)</li>
+              <li><kbd>P</kbd> — Pause / Resume recording</li>
               <li><kbd>C</kbd> — Copy transcript to clipboard</li>
+              <li><kbd>E</kbd> — Edit transcript (fix words before copying); press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> or <kbd>Esc</kbd> to finish (same as Done)</li>
               <li><kbd>Z</kbd> — Undo clear (restore last cleared transcript)</li>
               <li><kbd>K</kbd> — Clean up (re-process transcript with selected prompt)</li>
               <li><kbd>R</kbd> — Toggle raw / cleaned view</li>
@@ -356,7 +364,10 @@
     <div class="shortcuts-list">
       <div class="shortcut-item"><kbd>Enter</kbd><span>Start / Stop recording</span></div>
       <div class="shortcut-item"><kbd>Esc</kbd><span>Cancel / Clear</span></div>
+      <div class="shortcut-item"><kbd>P</kbd><span>Pause / Resume recording</span></div>
       <div class="shortcut-item"><kbd>C</kbd><span>Copy transcript</span></div>
+      <div class="shortcut-item"><kbd>E</kbd><span>Edit transcript</span></div>
+      <div class="shortcut-item"><kbd>Ctrl+Enter</kbd><span>Finish editing (same as Done)</span></div>
       <div class="shortcut-item"><kbd>Z</kbd><span>Undo clear</span></div>
       <div class="shortcut-item"><kbd>K</kbd><span>Clean up</span></div>
       <div class="shortcut-item"><kbd>R</kbd><span>Toggle raw / cleaned view</span></div>
@@ -372,6 +383,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=12"></script>
+  <script src="script.js?v=13"></script>
 </body>
 </html>

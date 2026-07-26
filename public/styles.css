@@ -208,6 +208,7 @@ header {
 }
 .recovery-actions { display: flex; align-items: center; gap: 5px; }
 .action-btns { display: flex; align-items: center; gap: 5px; }
+.rec-btns { display: flex; align-items: center; gap: 5px; }
 
 .prompt-row { display: flex; align-items: center; justify-content: space-between; min-height: 28px; }
 .toggles-group { display: flex; align-items: center; gap: 10px; }
@@ -318,6 +319,15 @@ header {
   color: var(--text-faint);
   font-style: italic;
   font-size: 0.9rem;
+}
+
+/* Editing state — transcript becomes an editable text box */
+.transcript-display.editing {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  outline: 1.5px solid var(--accent);
+  outline-offset: 6px;
 }
 
 /* Pop-in animation */
@@ -644,9 +654,15 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     letter-spacing: 0.4px;
   }
 
-  #cancelBtn {
+  .rec-btns {
     grid-area: actions;
     justify-self: end;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .rec-btns .btn {
     min-height: 32px;
   }
 

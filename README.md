@@ -64,6 +64,11 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Show raw / Show cleaned toggle** — switch between raw and cleaned versions (shortcut: R)
 - **Manual cleanup** — press K or click Clean up to (re-)process the transcript with the selected prompt at any time
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
+- **Pause/resume recording** — pause mid-dictation (button or P); timer and waveform freeze; resume where you left off
+- **Editable transcript** — click Edit (or press E) to fix words directly in the transcript before copying; plain-text paste, live word count, syncs with append mode
+- **Language setting** — pin the transcription language (e.g. `en`) instead of auto-detect for better accuracy and speed
+- **Vocabulary hint** — bias the transcription model toward your names, jargon, and uncommon words
+- **Correct audio format handling** — recordings are labeled with their actual format (WebM on Chrome, M4A on Safari/iOS) so transcription APIs accept them
 - **Pulsing recording indicator** — subtle red ring pulse animation on the mic button while recording
 - **Haptic feedback** — short vibration on recording start/stop (Android)
 - **Frequency bar waveform** — live audio visualization while recording
@@ -73,7 +78,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Extensive keyboard shortcuts** — Enter, Esc, C, Z, K, R, N, U, A, T, L, 1–5, D, H, S
+- **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, N, U, A, T, L, 1–5, D, H, S
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
@@ -114,8 +119,11 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | Key | Action |
 |---|---|
 | `Enter` | Start / Stop recording |
-| `Escape` | Cancel recording / abort processing / clear text (also closes modals/popovers) |
+| `Escape` | Cancel recording / abort processing / clear text (also closes modals/popovers, exits transcript editing) |
+| `P` | Pause / Resume recording |
 | `C` | Copy transcript to clipboard |
+| `E` | Edit transcript (fix words before copying) |
+| `Ctrl/Cmd + Enter` | Finish editing transcript (same as Done) |
 | `Z` | Undo clear (restore last cleared transcript) |
 | `K` | Clean up (re-process transcript with selected prompt) |
 | `R` | Toggle raw / cleaned view |
@@ -172,6 +180,8 @@ Configure from the Settings tab. Works with any provider that uses the same API 
 | Transcription API Key | Mistral key, OpenAI key, etc. |
 | Transcription Base URL | `https://api.mistral.ai/v1` (required for non-OpenAI) |
 | Transcription Model | `whisper-1`, `voxtral-mini-latest` |
+| Transcription Language | Optional — e.g. `en`; blank = auto-detect |
+| Vocabulary Hint | Optional — names/jargon to bias spelling, e.g. `Acme, Jira, WebM` |
 | Cleanup API Key | Your provider's key |
 | Cleanup Base URL | Provider URL (blank = OpenAI) |
 | Cleanup Model | `gpt-4.1-mini`, `mistral-large-latest` |

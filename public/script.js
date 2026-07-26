@@ -1,6 +1,7 @@
 let mediaRecorder, audioChunks = [], audioContext, analyser, source, animationId;
 let timerInterval, secondsElapsed = 0;
 let isRecording = false;
+let isPaused = false;
 let cancelled = false;
 let history = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
 let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
@@ -8,6 +9,7 @@ let processingAbortController = null; // for cancelling in-flight transcribe/cle
 
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
+const pauseBtn   = document.getElementById('pauseBtn');
 const clearBtn   = document.getElementById('clearBtn');
 const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
@@ -26,6 +28,7 @@ const transcriptDisplay = document.getElementById('transcriptDisplay');
 const transcriptWordCount = document.getElementById('transcriptWordCount');
 const toggleRawBtn = document.getElementById('toggleRawBtn');
 const sendCleanupBtn = document.getElementById('sendCleanupBtn');
+const editTranscriptBtn = document.getElementById('editTranscriptBtn');
 
 const AUDIO_DB = 'dictationAudioBackup';
 const AUDIO_STORE = 'recordings';
@@ -35,6 +38,7 @@ const AUDIO_KEY = 'latest';
 let currentRaw = '';
 let currentCleaned = '';
 let showingRaw = false; // false = showing cleaned (or raw if no cleaned)
+let isEditingTranscript = false; // true while transcript contentEditable is active
 
 // ── Append Mode ──
 const appendToggle = document.getElementById('appendToggle');
@@ -162,6 +166,17 @@ function formatBytes(bytes) {
   return mb >= 1 ? mb.toFixed(1) + ' MB' : Math.ceil(bytes / 1024) + ' KB';
 }
 
+// Map a recorded/uploaded MIME type to a file extension the transcription APIs accept.
+// Chrome records audio/webm; Safari records audio/mp4 — labeling mp4 as webm breaks some APIs.
+function audioExtension(mime) {
+  if (!mime) return 'webm';
+  if (mime.includes('mp4') || mime.includes('aac') || mime.includes('x-m4a')) return 'm4a';
+  if (mime.includes('ogg')) return 'ogg';
+  if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3';
+  if (mime.includes('wav')) return 'wav';
+  return 'webm';
+}
+
 async function getBestAudioBackup() {
   try {
     const dbRecord = await getAudioBackup();
@@ -266,6 +281,7 @@ function updateSendCleanupBtn() {
 async function sendRawForCleanup() {
   const raw = currentRaw;
   if (!raw) return;
+  if (isEditingTranscript) setTranscriptEditing(false);
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
   setStatusProcessing('Cleaning up…');
 
@@ -376,10 +392,16 @@ function getDisplayText() {
 }
 
 function updateTranscriptDisplay(animate = false) {
+  // Any programmatic re-render ends transcript editing
+  isEditingTranscript = false;
+  transcriptDisplay.contentEditable = 'false';
+  transcriptDisplay.classList.remove('editing');
+  editTranscriptBtn.textContent = 'Edit';
   const text = getDisplayText();
   if (text.trim()) {
     transcriptDisplay.textContent = text;
     transcriptDisplay.classList.remove('transcript-placeholder');
+    editTranscriptBtn.style.display = '';
     if (animate) {
       transcriptDisplay.classList.remove('pop-in');
       // Force reflow to restart animation
@@ -390,6 +412,7 @@ function updateTranscriptDisplay(animate = false) {
   } else {
     transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
     transcriptWordCount.textContent = '0w';
+    editTranscriptBtn.style.display = 'none';
   }
 
   // Show/hide toggle raw button — show whenever both versions exist
@@ -409,8 +432,51 @@ toggleRawBtn.addEventListener('click', () => {
   updateTranscriptDisplay();
 });
 
+// ── Editable transcript ──
+function setTranscriptEditing(on) {
+  if (on && !getDisplayText().trim()) return; // nothing to edit
+  if (!on) { updateTranscriptDisplay(); return; } // re-render restores placeholder if emptied
+  isEditingTranscript = true;
+  transcriptDisplay.contentEditable = 'true';
+  transcriptDisplay.classList.add('editing');
+  editTranscriptBtn.textContent = 'Done';
+  transcriptDisplay.focus();
+  // Place caret at end of text
+  const sel = window.getSelection();
+  sel.selectAllChildren(transcriptDisplay);
+  sel.collapseToEnd();
+}
+
+editTranscriptBtn.addEventListener('click', () => setTranscriptEditing(!isEditingTranscript));
+
+// While editing: sync edits back to the underlying state + live word count
+transcriptDisplay.addEventListener('input', () => {
+  if (!isEditingTranscript) return;
+  const text = transcriptDisplay.innerText;
+  transcriptWordCount.textContent = countWords(text) + 'w';
+  if (isAppendMode()) {
+    setAccumulatedTranscript(text);
+    if (currentCleaned) currentCleaned = text;
+  } else if (showingRaw) {
+    currentRaw = text;
+  } else if (currentCleaned) {
+    currentCleaned = text;
+  } else {
+    currentRaw = text;
+  }
+});
+
+// Plain-text paste only — no rich formatting bleed
+transcriptDisplay.addEventListener('paste', (e) => {
+  if (!isEditingTranscript) return;
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  document.execCommand('insertText', false, text);
+});
+
 // ── Tap to copy transcript ──
 transcriptDisplay.addEventListener('click', (e) => {
+  if (isEditingTranscript) return; // clicks place the caret while editing
   const text = getDisplayText();
   if (text.trim()) {
     copyToClipboard(text);
@@ -430,8 +496,11 @@ transcriptDisplay.addEventListener('click', (e) => {
 sendCleanupBtn.addEventListener('click', sendRawForCleanup);
 
 // ── Status / Timer ──
-function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(() => { secondsElapsed++; timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0'); }, 1000); }
+function timerTick() { secondsElapsed++; timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0'); }
+function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(timerTick, 1000); }
 function stopTimer() { clearInterval(timerInterval); }
+function pauseTimer() { clearInterval(timerInterval); }
+function resumeTimer() { timerInterval = setInterval(timerTick, 1000); }
 
 // ── Waveform ──
 let cachedBarColor = null;
@@ -698,6 +767,8 @@ async function loadSettingsUI() {
     document.getElementById('setTranscriptionKey').placeholder = s.transcriptionKey || 'sk-...';
     document.getElementById('setTranscriptionUrl').value = s.transcriptionUrl;
     document.getElementById('setTranscriptionModel').value = s.transcriptionModel;
+    document.getElementById('setTranscriptionLanguage').value = s.transcriptionLanguage || '';
+    document.getElementById('setTranscriptionHint').value = s.transcriptionHint || '';
     document.getElementById('setCleanupKey').value = '';
     document.getElementById('setCleanupKey').placeholder = s.cleanupKey || 'sk-...';
     document.getElementById('setCleanupUrl').value = s.cleanupUrl;
@@ -727,6 +798,8 @@ async function saveSettings() {
     transcriptionKey: document.getElementById('setTranscriptionKey').value.trim(),
     transcriptionUrl: document.getElementById('setTranscriptionUrl').value.trim(),
     transcriptionModel: document.getElementById('setTranscriptionModel').value.trim(),
+    transcriptionLanguage: document.getElementById('setTranscriptionLanguage').value.trim(),
+    transcriptionHint: document.getElementById('setTranscriptionHint').value.trim(),
     cleanupKey: document.getElementById('setCleanupKey').value.trim(),
     cleanupUrl: document.getElementById('setCleanupUrl').value.trim(),
     cleanupModel: document.getElementById('setCleanupModel').value.trim()
@@ -738,6 +811,7 @@ async function saveSettings() {
 
 // ── Recording ──
 async function transcribeAudioBlob(audioBlob) {
+  if (isEditingTranscript) setTranscriptEditing(false);
   toggleBtn.classList.add('processing');
   toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
   retryRecordingBtn.disabled = true;
@@ -756,7 +830,7 @@ async function transcribeAudioBlob(audioBlob) {
 
   try {
     const fd = new FormData();
-    fd.append('audio', audioBlob, 'rec.webm');
+    fd.append('audio', audioBlob, 'rec.' + audioExtension(audioBlob.type));
     const uRes = await fetch('/upload', { method: 'POST', body: fd, signal: abortController.signal });
     if (uRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
     if (uRes.status === 413) {
@@ -944,6 +1018,9 @@ async function startRecording() {
 
     toggleBtn.classList.add('recording');
     toggleBtn.innerHTML = '<div class="stop-icon"></div>';
+    isPaused = false;
+    pauseBtn.style.display = '';
+    pauseBtn.textContent = 'Pause';
     cancelBtn.style.display = '';
     document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
@@ -957,6 +1034,8 @@ async function startRecording() {
       cancelAnimationFrame(animationId);
       stopTimer(); clearWaveform();
       toggleBtn.classList.remove('recording');
+      isPaused = false;
+      pauseBtn.style.display = 'none';
 
       if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
@@ -969,7 +1048,7 @@ async function startRecording() {
         return;
       }
 
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
       try {
         await saveAudioBackup(audioBlob);
         inMemoryAudioBlob = null;
@@ -989,6 +1068,8 @@ async function startRecording() {
 
 function resetButton() {
   isRecording = false;
+  isPaused = false;
+  pauseBtn.style.display = 'none';
   toggleBtn.classList.remove('recording', 'processing');
   toggleBtn.innerHTML = '<svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>';
 }
@@ -1006,7 +1087,28 @@ function stopRecording() {
   mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
+function togglePause() {
+  if (!isRecording || !mediaRecorder || typeof mediaRecorder.pause !== 'function') return;
+  if (navigator.vibrate) navigator.vibrate(10);
+  if (isPaused) {
+    mediaRecorder.resume();
+    if (audioContext) audioContext.resume().catch(() => {});
+    resumeTimer();
+    isPaused = false;
+    pauseBtn.textContent = 'Pause';
+    setStatus('Recording…', 'active');
+  } else {
+    mediaRecorder.pause();
+    if (audioContext) audioContext.suspend().catch(() => {});
+    pauseTimer();
+    isPaused = true;
+    pauseBtn.textContent = 'Resume';
+    setStatus('Paused — press P to resume', 'active');
+  }
+}
+
 toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
+pauseBtn.onclick = togglePause;
 cancelBtn.onclick = cancelRecording;
 retryRecordingBtn.onclick = async () => {
   const backup = await getBestAudioBackup();
@@ -1019,7 +1121,7 @@ downloadRecordingBtn.onclick = async () => {
   const url = URL.createObjectURL(backup.blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `dictation-${new Date(backup.createdAt).toISOString().replace(/[:.]/g, '-')}.webm`;
+  a.download = `dictation-${new Date(backup.createdAt).toISOString().replace(/[:.]/g, '-')}.${audioExtension(backup.blob && backup.blob.type)}`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
@@ -1048,21 +1150,40 @@ if (fileInput) {
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', e => {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  // While editing the transcript, keystrokes must type normally — only let
+  // Escape and Ctrl/Cmd+Enter through (both finish editing, like clicking Done)
+  if (document.activeElement.isContentEditable && e.key !== 'Escape' && !(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return;
   // Start/stop recording
   if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     toggleBtn.click();
   }
+  // Pause/resume recording
+  if (e.key === 'p' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (isRecording) togglePause();
+  }
   // Cancel / clear (Escape)
   if (e.key === 'Escape') {
     if (shortcutsPopover && shortcutsPopover.classList.contains('open')) { shortcutsPopover.classList.remove('open'); return; }
     if (document.getElementById('modalOverlay').classList.contains('open')) { closePromptModal(); return; }
+    if (isEditingTranscript) { setTranscriptEditing(false); return; }
     if (processingAbortController) { abortProcessing(); }
     else if (isRecording) { cancelRecording(); }
     else { clearBtn.click(); }
   }
   // Copy transcript
   if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); transcriptDisplay.click(); }
+  // Edit transcript
+  if (e.key === 'e' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    setTranscriptEditing(!isEditingTranscript);
+  }
+  // Finish editing transcript (Ctrl/Cmd+Enter — same as clicking Done)
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && isEditingTranscript) {
+    e.preventDefault();
+    setTranscriptEditing(false);
+  }
   // Toggle append mode
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();

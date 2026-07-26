@@ -1,6 +1,6 @@
 {
   "name": "dictation-tool",
-  "version": "6.4.0",
+  "version": "6.5.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

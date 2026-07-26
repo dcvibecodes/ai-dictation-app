@@ -189,6 +189,8 @@ app.get('/api/settings', requireOwner, (req, res) => {
     transcriptionKey: s.TRANSCRIPTION_API_KEY ? '••••' + s.TRANSCRIPTION_API_KEY.slice(-4) : '',
     transcriptionUrl: s.TRANSCRIPTION_BASE_URL || '',
     transcriptionModel: s.TRANSCRIPTION_MODEL || '',
+    transcriptionLanguage: s.TRANSCRIPTION_LANGUAGE || '',
+    transcriptionHint: s.TRANSCRIPTION_PROMPT || '',
     cleanupKey: s.CLEANUP_API_KEY ? '••••' + s.CLEANUP_API_KEY.slice(-4) : '',
     cleanupUrl: s.CLEANUP_BASE_URL || '',
     cleanupModel: s.CLEANUP_MODEL || ''
@@ -196,12 +198,14 @@ app.get('/api/settings', requireOwner, (req, res) => {
 });
 
 app.post('/api/settings', requireOwner, (req, res) => {
-  const { transcriptionKey, transcriptionUrl, transcriptionModel, cleanupKey, cleanupUrl, cleanupModel } = req.body;
+  const { transcriptionKey, transcriptionUrl, transcriptionModel, transcriptionLanguage, transcriptionHint, cleanupKey, cleanupUrl, cleanupModel } = req.body;
   const current = loadSettings();
 
   if (transcriptionKey) current.TRANSCRIPTION_API_KEY = transcriptionKey;
   if (transcriptionUrl !== undefined) current.TRANSCRIPTION_BASE_URL = transcriptionUrl;
   if (transcriptionModel !== undefined) current.TRANSCRIPTION_MODEL = transcriptionModel;
+  if (transcriptionLanguage !== undefined) current.TRANSCRIPTION_LANGUAGE = transcriptionLanguage;
+  if (transcriptionHint !== undefined) current.TRANSCRIPTION_PROMPT = transcriptionHint;
   if (cleanupKey) current.CLEANUP_API_KEY = cleanupKey;
   if (cleanupUrl !== undefined) current.CLEANUP_BASE_URL = cleanupUrl;
   if (cleanupModel !== undefined) current.CLEANUP_MODEL = cleanupModel;
@@ -287,12 +291,17 @@ app.post('/upload', requireOwner, upload.single('audio'), uploadErrorHandler, as
     if (!req.file) return res.status(400).json({ error: 'No audio file received' });
     const client = getTranscriptionClient();
     const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
+    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
     const audioPath = req.file.path;
 
-    const transcription = await client.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model
-    });
+    const params = { file: fs.createReadStream(audioPath), model };
+    // Optional params are only sent when configured — keeps requests identical
+    // to before for providers that reject unknown fields
+    if (language) params.language = language;
+    if (hint) params.prompt = hint;
+
+    const transcription = await client.audio.transcriptions.create(params);
 
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     res.json({ rawTranscript: transcription.text });
