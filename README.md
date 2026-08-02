@@ -212,10 +212,30 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 ## Notes
 
 - No `.env` file required — all config via Settings tab
-- Audio temp files deleted immediately after transcription
+- Audio temp files deleted immediately after transcription; orphaned uploads older than 30 min are auto-swept every 15 min
 - Session history is browser-side (localStorage)
-- API keys stored in `data/settings.json` (gitignored)
+- API keys are **encrypted at rest** (AES-256-GCM) in `data/settings.json` (gitignored). If the server's `data/session.secret` is ever recreated, stored keys can no longer be decrypted — re-enter them in Settings.
 - `data/` directory auto-created on first run, fully gitignored
 - PWA works offline for the UI shell; recording requires network for AI APIs
 - Append mode starts fresh each page load — no stale text from previous sessions
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
+- Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
+- A one-time status warning appears at 5 minutes of recording, reminding you that long recordings risk hitting the 50 MB upload limit — stop and append instead
+
+### Configurable rate limits & transcript cap
+
+The AI endpoints (`/upload`, `/cleanup`, `/cleanup-stream`) are rate-limited by default to protect your API credits from abuse. Defaults are generous for a single user:
+
+| Setting (settings.json or .env) | Default | Meaning |
+|---|---|---|
+| `RATE_LIMIT_UPLOAD_MAX` | `40` | Max transcription uploads per window |
+| `RATE_LIMIT_UPLOAD_WINDOW_MS` | `900000` (15 min) | Upload window length |
+| `RATE_LIMIT_CLEANUP_MAX` | `60` | Max cleanup requests per window |
+| `RATE_LIMIT_CLEANUP_WINDOW_MS` | `900000` (15 min) | Cleanup window length |
+| `MAX_TRANSCRIPT_CHARS` | `50000` | Max transcript length sent to cleanup APIs |
+
+Rate limiters are created at server startup, so **restart the server after changing these values**.
+
+### Spoken formatting commands
+
+The default cleanup prompt now recognizes **"new paragraph"**, **"new line"**, or **"newline"** as spoken commands that start a new paragraph at that point — useful for dictating structured documents like letters or multi-paragraph emails.

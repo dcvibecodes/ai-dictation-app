@@ -10,6 +10,7 @@ const OpenAI  = require('openai');
 const rateLimit = require('express-rate-limit');
 
 const app    = express();
+app.set('trust proxy', 1); // Behind nginx — use X-Forwarded-For so rate limiting sees the real client IP
 const upload = multer({
   dest: 'uploads/',
   limits: { fileSize: 50 * 1024 * 1024 } // 50 MB max audio file
@@ -39,14 +40,26 @@ let sessionSecretCache = null;
 function loadSettings() {
   if (settingsCache) return settingsCache;
   if (!fs.existsSync(SETTINGS_FILE)) { settingsCache = {}; return settingsCache; }
-  try { settingsCache = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); }
+  try {
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    // Decrypt keys so the rest of the app works with plaintext values
+    if (raw.TRANSCRIPTION_API_KEY) raw.TRANSCRIPTION_API_KEY = decryptSecret(raw.TRANSCRIPTION_API_KEY);
+    if (raw.CLEANUP_API_KEY) raw.CLEANUP_API_KEY = decryptSecret(raw.CLEANUP_API_KEY);
+    settingsCache = raw;
+  }
   catch { settingsCache = {}; }
   return settingsCache;
 }
 
 function saveSettings(settings) {
-  settingsCache = settings;
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+  settingsCache = settings; // cache stays plaintext for app use
+  // Encrypt keys at rest so a leaked settings.json doesn't expose API keys
+  const toWrite = {
+    ...settings,
+    TRANSCRIPTION_API_KEY: settings.TRANSCRIPTION_API_KEY ? encryptSecret(settings.TRANSCRIPTION_API_KEY) : '',
+    CLEANUP_API_KEY: settings.CLEANUP_API_KEY ? encryptSecret(settings.CLEANUP_API_KEY) : ''
+  };
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(toWrite, null, 2), 'utf8');
 }
 
 function getEffectiveSetting(key) {
@@ -54,6 +67,38 @@ function getEffectiveSetting(key) {
   // Explicit settings (including empty string) take priority over .env
   if (key in settings) return settings[key];
   return process.env[key] || '';
+}
+
+// --- API key encryption at rest ---
+// Keys are stored in settings.json encrypted with AES-256-GCM. The encryption
+// key is derived from the random session secret, so reading settings.json alone
+// is not enough to recover API keys. If the session secret is ever recreated
+// (e.g. data/ wiped), stored keys can no longer be decrypted — the user simply
+// re-enters them in Settings.
+function getEncryptionKey() {
+  return crypto.createHash('sha256').update(getSessionSecret()).digest();
+}
+
+function encryptSecret(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
+  const data = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const payload = { iv: iv.toString('base64'), tag: tag.toString('base64'), data: data.toString('base64') };
+  return 'enc:v1:' + Buffer.from(JSON.stringify(payload)).toString('base64');
+}
+
+function decryptSecret(value) {
+  if (!value || !value.startsWith('enc:v1:')) return value;
+  try {
+    const payload = JSON.parse(Buffer.from(value.slice('enc:v1:'.length), 'base64').toString('utf8'));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), Buffer.from(payload.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(payload.tag, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(payload.data, 'base64')), decipher.final()]).toString('utf8');
+  } catch (e) {
+    console.error('Could not decrypt stored API key — please re-enter it in Settings.', e.message);
+    return '';
+  }
 }
 
 // --- Auth ---
@@ -122,6 +167,51 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many attempts, please try again later.'
 });
+
+// --- Configurable limits for AI endpoints (protect API credits from abuse) ---
+// Defaults are generous for a single user. Tune via settings.json
+// (e.g. RATE_LIMIT_UPLOAD_MAX, RATE_LIMIT_UPLOAD_WINDOW_MS, RATE_LIMIT_CLEANUP_MAX,
+// RATE_LIMIT_CLEANUP_WINDOW_MS) or the equivalent .env vars.
+// Note: limiters are created once at startup — restart the server after changes.
+const DEFAULT_RATE_LIMITS = {
+  UPLOAD:  { max: 40, windowMs: 15 * 60 * 1000 }, // ~160 transcriptions/hour max
+  CLEANUP: { max: 60, windowMs: 15 * 60 * 1000 }  // ~240 cleanups/hour max
+};
+
+function getLimitConfig(kind) {
+  const prefix = 'RATE_LIMIT_' + kind;
+  const def = DEFAULT_RATE_LIMITS[kind] || DEFAULT_RATE_LIMITS.UPLOAD;
+  const max = Number(getEffectiveSetting(prefix + '_MAX'));
+  const windowMs = Number(getEffectiveSetting(prefix + '_WINDOW_MS'));
+  return {
+    max: Number.isFinite(max) && max > 0 ? max : def.max,
+    windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : def.windowMs
+  };
+}
+
+const aiUploadLimiter = rateLimit({
+  windowMs: getLimitConfig('UPLOAD').windowMs,
+  max: getLimitConfig('UPLOAD').max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many transcription requests — please wait a few minutes and try again.'
+});
+
+const aiCleanupLimiter = rateLimit({
+  windowMs: getLimitConfig('CLEANUP').windowMs,
+  max: getLimitConfig('CLEANUP').max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many cleanup requests — please wait a few minutes and try again.'
+});
+
+// Max transcript length sent to cleanup APIs (protects API costs).
+// Configurable via MAX_TRANSCRIPT_CHARS in settings.json or .env.
+const DEFAULT_MAX_TRANSCRIPT_CHARS = 50000;
+function getMaxTranscriptChars() {
+  const val = Number(getEffectiveSetting('MAX_TRANSCRIPT_CHARS'));
+  return Number.isFinite(val) && val > 0 ? val : DEFAULT_MAX_TRANSCRIPT_CHARS;
+}
 
 // --- Auth Routes ---
 app.get('/setup', (req, res) => {
@@ -286,7 +376,32 @@ function uploadErrorHandler(err, req, res, next) {
   next();
 }
 
-app.post('/upload', requireOwner, upload.single('audio'), uploadErrorHandler, async (req, res) => {
+// --- Temp upload sweeper ---
+// Removes orphaned audio files left behind if a request dies between multer
+// writing the file and the route handler cleaning it up. Runs every 15 minutes
+// and removes anything older than 30 minutes (safely above the 2-minute AI timeout).
+const UPLOAD_MAX_AGE_MS = 30 * 60 * 1000;
+const UPLOAD_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+
+function sweepStaleUploads() {
+  const uploadsDir = path.join(__dirname, 'uploads');
+  fs.readdir(uploadsDir, (err, files) => {
+    if (err || files.length === 0) return;
+    const now = Date.now();
+    for (const file of files) {
+      const filePath = path.join(uploadsDir, file);
+      fs.stat(filePath, (statErr, stat) => {
+        if (statErr || !stat.isFile()) return;
+        if (now - stat.mtimeMs > UPLOAD_MAX_AGE_MS) fs.unlink(filePath, () => {});
+      });
+    }
+  });
+}
+
+sweepStaleUploads();
+setInterval(sweepStaleUploads, UPLOAD_SWEEP_INTERVAL_MS).unref(); // unref so the process can exit naturally
+
+app.post('/upload', requireOwner, aiUploadLimiter, upload.single('audio'), uploadErrorHandler, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file received' });
     const client = getTranscriptionClient();
@@ -314,10 +429,13 @@ app.post('/upload', requireOwner, upload.single('audio'), uploadErrorHandler, as
   }
 });
 
-app.post('/cleanup', requireOwner, async (req, res) => {
+app.post('/cleanup', requireOwner, aiCleanupLimiter, async (req, res) => {
   try {
     const { rawTranscript, prompt } = req.body;
     if (!rawTranscript) return res.status(400).json({ error: 'No transcript' });
+    if (rawTranscript.length > getMaxTranscriptChars()) {
+      return res.status(400).json({ error: `Transcript too long (max ${getMaxTranscriptChars().toLocaleString()} characters).` });
+    }
 
     const client = getCleanupClient();
     const model = getEffectiveSetting('CLEANUP_MODEL') || 'gpt-4.1-mini';
@@ -341,10 +459,13 @@ app.post('/cleanup', requireOwner, async (req, res) => {
 });
 
 // --- Streaming Cleanup (SSE) ---
-app.post('/cleanup-stream', requireOwner, async (req, res) => {
+app.post('/cleanup-stream', requireOwner, aiCleanupLimiter, async (req, res) => {
   try {
     const { rawTranscript, prompt } = req.body;
     if (!rawTranscript) return res.status(400).json({ error: 'No transcript' });
+    if (rawTranscript.length > getMaxTranscriptChars()) {
+      return res.status(400).json({ error: `Transcript too long (max ${getMaxTranscriptChars().toLocaleString()} characters).` });
+    }
 
     const client = getCleanupClient();
     const model = getEffectiveSetting('CLEANUP_MODEL') || 'gpt-4.1-mini';
