@@ -86,13 +86,6 @@
           </label>
           <label class="clean-toggle-label">
             <span class="toggle-switch">
-              <input type="checkbox" id="liveToggle" checked>
-              <span class="toggle-slider"></span>
-            </span>
-            <span>Live</span>
-          </label>
-          <label class="clean-toggle-label">
-            <span class="toggle-switch">
               <input type="checkbox" id="appendToggle">
               <span class="toggle-slider"></span>
             </span>
@@ -232,17 +225,6 @@
           </div>
         </details>
         <details class="help-details">
-          <summary class="help-summary">Live transcription</summary>
-          <div class="help-content">
-            <p>The <strong>Live</strong> toggle on the record tab changes how transcription happens:</p>
-            <ul class="help-list">
-              <li><strong>Live ON</strong> — as you speak, the audio is sent in short chunks (~3 seconds each) and transcribed immediately, so the raw transcript appears on screen as you talk instead of waiting until you stop.</li>
-              <li><strong>Live OFF</strong> — the app records the whole thing and transcribes it only after you stop (the original behavior).</li>
-              <li><strong>Note:</strong> Live mode is <strong>likely to consume 10–20% more tokens</strong>, because the audio is transcribed in many small chunks rather than one batch.</li>
-            </ul>
-          </div>
-        </details>
-        <details class="help-details">
           <summary class="help-summary">Custom prompts</summary>
           <div class="help-content">
             <p>You can configure up to <strong>4 custom cleanup prompts</strong> in addition to the built-in Default prompt. Manage them from the <strong>Cleanup Prompts</strong> section in the Settings tab.</p>
@@ -292,7 +274,6 @@
               <li><kbd>A</kbd> — Toggle append mode</li>
               <li><kbd>T</kbd> — Toggle auto-clean</li>
               <li><kbd>1–5</kbd> — Switch cleanup prompt by position</li>
-              <li><kbd>L</kbd> — Toggle live transcription</li>
               <li><kbd>M</kbd> — Toggle light/dark theme</li>
               <li><kbd>D</kbd> — Dictate tab</li>
               <li><kbd>H</kbd> — History tab</li>
@@ -426,7 +407,6 @@
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
       <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
-      <div class="shortcut-item"><kbd>L</kbd><span>Toggle live transcription</span></div>
       <div class="shortcut-item"><kbd>M</kbd><span>Toggle light/dark theme</span></div>
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
