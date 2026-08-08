@@ -787,7 +787,11 @@ function restoreHistory(i) {
   showingRaw = false;
   updateTranscriptDisplay(true);
 }
-async function copyHistoryItem(i) { await copyToClipboard(history[i].cleaned); }
+async function copyHistoryItem(i) {
+  const item = history[i];
+  const text = item.cleaned || item.raw || '';
+  if (text) await copyToClipboard(text);
+}
 function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); }
 function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
 
