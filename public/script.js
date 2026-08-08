@@ -15,8 +15,9 @@ let longRecordingWarned = false; // one-time 5-minute recording warning
 let liveMode = localStorage.getItem('liveMode') !== 'false'; // default ON
 let liveStream = null;            // the mic MediaStream while live-recording
 let liveScriptNode = null;        // ScriptProcessorNode capturing raw PCM
-let livePcmBuffer = new Float32Array(0); // accumulated raw samples
-let liveLastChunkEndIndex = 0;    // index into livePcmBuffer where the current chunk starts
+let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
+let liveWriteIndex = 0;           // how many samples written into livePcmSamples
+let liveLastChunkEndIndex = 0;    // absolute sample index of the last sent chunk
 let liveChunkTimer = null;        // interval that sends chunks
 let liveChunkSeq = 0;             // incrementing sequence for chunks
 let liveNextSeq = 0;              // next sequence to append in order
@@ -25,6 +26,7 @@ let liveInflight = new Set();     // pending chunk transcription promises
 let livePaused = false;           // true while paused (discard captured audio)
 const CHUNK_DURATION_MS = 3000;   // send a chunk every 3 seconds
 const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
+const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
 
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
@@ -1402,30 +1404,59 @@ function liveTranscribeChunk(wavBlob, seq) {
   return promise;
 }
 
-// Slice the newest captured samples into a WAV chunk and send it.
+// Simple linear-interpolation downsampler (e.g. 48kHz -> 16kHz).
+// 16kHz is the native rate for speech-to-text models, so this keeps accuracy
+// while producing much smaller WAV files (faster uploads, especially on mobile).
+function resample(samples, fromRate, toRate) {
+  if (fromRate === toRate) return samples;
+  const ratio = toRate / fromRate;
+  const outLen = Math.max(1, Math.round(samples.length * ratio));
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const srcPos = i / ratio;
+    const i0 = Math.floor(srcPos);
+    const i1 = Math.min(i0 + 1, samples.length - 1);
+    const frac = srcPos - i0;
+    out[i] = samples[i0] * (1 - frac) + samples[i1] * frac;
+  }
+  return out;
+}
+
+// Send the newest captured samples as a 16kHz WAV chunk.
 // When force is true, it sends even while paused (used to flush the last bit
 // spoken before the user hits Pause, so it isn't lost).
 function liveSendChunk(force = false) {
-  if (livePcmBuffer.length <= liveLastChunkEndIndex) return;
-  const chunkSamples = livePcmBuffer.slice(liveLastChunkEndIndex);
-  liveLastChunkEndIndex = livePcmBuffer.length;
+  if (liveWriteIndex <= liveLastChunkEndIndex) return;
+  // Copy only the unconsumed chunk (the last few seconds), not the whole recording.
+  const chunkLen = liveWriteIndex - liveLastChunkEndIndex;
+  const chunkSamples = new Float32Array(chunkLen);
+  chunkSamples.set(livePcmSamples.subarray(liveLastChunkEndIndex, liveWriteIndex));
+  liveLastChunkEndIndex = liveWriteIndex;
+
   if (livePaused && !force) return; // discard audio captured while paused
-  const minSamples = audioContext.sampleRate * MIN_CHUNK_SAMPLES_FACTOR;
-  if (chunkSamples.length < minSamples && !force) return;
-  const wav = encodeWav(chunkSamples, audioContext.sampleRate);
+
+  // Downsample to 16kHz, then skip if it's still too short.
+  const resampled = resample(chunkSamples, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+  const minSamples = TARGET_SAMPLE_RATE * MIN_CHUNK_SAMPLES_FACTOR;
+  if (resampled.length < minSamples && !force) return;
+
+  const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
   const seq = liveChunkSeq++;
   liveTranscribeChunk(wav, seq);
-  // Bound memory: keep only the most recent ~30s of samples.
-  if (livePcmBuffer.length > audioContext.sampleRate * 30) {
-    livePcmBuffer = livePcmBuffer.slice(-audioContext.sampleRate * 30);
-    liveLastChunkEndIndex = livePcmBuffer.length;
+
+  // Bound memory: if everything is consumed and the buffer has grown large, reset it.
+  if (liveLastChunkEndIndex >= liveWriteIndex && liveWriteIndex > audioContext.sampleRate * 30) {
+    livePcmSamples = new Float32Array(0);
+    liveWriteIndex = 0;
+    liveLastChunkEndIndex = 0;
   }
 }
 
 // Set up WAV chunk capture on the existing audioContext/source.
 function startLiveCapture(stream) {
   liveStream = stream;
-  livePcmBuffer = new Float32Array(0);
+  livePcmSamples = new Float32Array(0);
+  liveWriteIndex = 0;
   liveLastChunkEndIndex = 0;
   liveChunkSeq = 0;
   liveNextSeq = 0;
@@ -1438,10 +1469,16 @@ function startLiveCapture(stream) {
   liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
   liveScriptNode.onaudioprocess = (e) => {
     const channel = e.inputBuffer.getChannelData(0);
-    const newBuf = new Float32Array(livePcmBuffer.length + channel.length);
-    newBuf.set(livePcmBuffer, 0);
-    newBuf.set(channel, livePcmBuffer.length);
-    livePcmBuffer = newBuf;
+    // Grow the buffer only when needed (amortized O(1) per sample). This avoids
+    // copying the whole recording on every callback, which is slow on iPhones.
+    if (liveWriteIndex + channel.length > livePcmSamples.length) {
+      const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
+      const nb = new Float32Array(newLen);
+      nb.set(livePcmSamples.subarray(0, liveWriteIndex), 0);
+      livePcmSamples = nb;
+    }
+    livePcmSamples.set(channel, liveWriteIndex);
+    liveWriteIndex += channel.length;
   };
   source.connect(liveScriptNode);
   liveScriptNode.connect(audioContext.destination);
