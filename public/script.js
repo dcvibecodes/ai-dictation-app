@@ -8,6 +8,24 @@ let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
 let longRecordingWarned = false; // one-time 5-minute recording warning
 
+// --- Live transcription mode ---
+// When enabled, audio is captured as WAV chunks and transcribed live while you
+// speak (text builds up in the transcript box), instead of waiting to transcribe
+// the whole recording when you stop.
+let liveMode = localStorage.getItem('liveMode') !== 'false'; // default ON
+let liveStream = null;            // the mic MediaStream while live-recording
+let liveScriptNode = null;        // ScriptProcessorNode capturing raw PCM
+let livePcmBuffer = new Float32Array(0); // accumulated raw samples
+let liveLastChunkEndIndex = 0;    // index into livePcmBuffer where the current chunk starts
+let liveChunkTimer = null;        // interval that sends chunks
+let liveChunkSeq = 0;             // incrementing sequence for chunks
+let liveNextSeq = 0;              // next sequence to append in order
+let livePending = new Map();      // seq -> transcribed text (out-of-order buffer)
+let liveInflight = new Set();     // pending chunk transcription promises
+let livePaused = false;           // true while paused (discard captured audio)
+const CHUNK_DURATION_MS = 3000;   // send a chunk every 3 seconds
+const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
+
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
 const pauseBtn   = document.getElementById('pauseBtn');
@@ -54,6 +72,36 @@ if (appendToggle) {
         setAccumulatedTranscript(onScreen);
       }
     }
+  });
+}
+
+// ── Live mode toggle ──
+const liveToggle = document.getElementById('liveToggle');
+if (liveToggle) {
+  liveToggle.checked = liveMode;
+  liveToggle.addEventListener('change', () => {
+    liveMode = liveToggle.checked;
+    localStorage.setItem('liveMode', liveMode);
+  });
+}
+
+// ── Animation preference ──
+// 'none', 'shatter' (default), or 'wordbyword'.
+function getAnimationPref() {
+  return localStorage.getItem('dictationAnimation') || 'shatter';
+}
+function setAnimationPref(v) {
+  localStorage.setItem('dictationAnimation', v);
+}
+// Wire up the animation radio buttons in Settings.
+const animationRadios = document.querySelectorAll('input[name="animation"]');
+if (animationRadios.length) {
+  const current = getAnimationPref();
+  animationRadios.forEach(r => {
+    r.checked = (r.value === current);
+    r.addEventListener('change', () => {
+      if (r.checked) setAnimationPref(r.value);
+    });
   });
 }
 
@@ -288,6 +336,182 @@ class UnauthorizedError extends Error {
   constructor() { super('unauthorized'); this.name = 'UnauthorizedError'; }
 }
 
+// MILESTONE: "Chomp" animation — the raw transcript is replaced word-by-word by
+// the cleaned text. Preserved for rollback; the active animation is the shatter
+// version in streamCleanup below.
+async function streamCleanupChomp(raw, prompt, signal) {
+  const sRes = await fetch('/cleanup-stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rawTranscript: raw, prompt }),
+    signal
+  });
+  if (sRes.status === 401) throw new UnauthorizedError();
+  if (!sRes.ok) return { cleaned: '', streamSuccess: false };
+
+  // Keep the raw transcript visible while cleaning, then "replace" it word by
+  // word: as each cleaned word appears, the corresponding raw word at the front
+  // is removed. The box always shows [cleaned so far] + [remaining raw], so the
+  // raw never blinks out — it's progressively consumed by the cleaned version.
+  let cleaned = '';
+  let started = false;
+  const pendingWords = [];     // cleaned words/whitespace waiting to be revealed
+  let cleanedRevealed = '';    // cleaned text revealed so far
+  let revealScheduled = false;
+  let revealResolve = null;
+  const REVEAL_MS = 55;        // reveal one word every 55ms (~30% faster)
+
+  // Split the raw into words so we can remove them from the front as cleaned words appear.
+  const rawWords = raw.trim().split(/\s+/);
+  let rawWordIndex = 0;        // how many raw words have been consumed
+
+  // Re-render the box: [cleaned so far, newest word popped] + [remaining raw].
+  function render() {
+    const cleanedHtml = escapeHtml(cleanedRevealed);
+    const remainingRaw = rawWords.slice(rawWordIndex).join(' ');
+    const rawHtml = remainingRaw ? ' ' + escapeHtml(remainingRaw) : '';
+    // Wrap only the newest cleaned word in a pop span so it animates in.
+    const newest = pendingWords[0] || '';
+    if (newest.trim()) {
+      const newestHtml = `<span class="clean-pop">${escapeHtml(newest)}</span>`;
+      transcriptDisplay.innerHTML = cleanedHtml + ' ' + newestHtml + rawHtml;
+    } else if (newest) {
+      transcriptDisplay.innerHTML = cleanedHtml + ' ' + newest + rawHtml;
+    } else {
+      transcriptDisplay.innerHTML = cleanedHtml + rawHtml;
+    }
+    transcriptWordCount.textContent = countWords(cleaned) + 'w';
+  }
+
+  // Reveal one buffered cleaned word, consuming one raw word from the front.
+  function scheduleReveal() {
+    if (revealScheduled) return;
+    revealScheduled = true;
+    setTimeout(() => {
+      revealScheduled = false;
+      if (pendingWords.length > 0) {
+        const part = pendingWords.shift();
+        if (part.trim()) {
+          cleanedRevealed += (cleanedRevealed ? ' ' : '') + part;
+          if (rawWordIndex < rawWords.length) rawWordIndex++;
+        }
+        render();
+        scheduleReveal();
+      } else if (revealResolve) {
+        revealResolve();
+        revealResolve = null;
+      }
+    }, REVEAL_MS);
+  }
+
+  // Queue newly arrived text for sequential reveal.
+  function feed(text) {
+    for (const t of text.split(/(\s+)/)) {
+      if (t) pendingWords.push(t);
+    }
+    scheduleReveal();
+  }
+
+  // Resolves once all buffered words have been revealed.
+  function waitForReveal() {
+    return new Promise(resolve => {
+      if (pendingWords.length === 0 && !revealScheduled) resolve();
+      else revealResolve = resolve;
+    });
+  }
+
+  transcriptDisplay.classList.remove('transcript-placeholder');
+  transcriptDisplay.classList.add('cleaning', 'streaming');
+
+  try {
+    // Show the full raw text in the box while cleaning (dimmed by .cleaning).
+    transcriptDisplay.innerHTML = escapeHtml(raw);
+
+    const reader = sRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamDone = false;
+
+    while (!streamDone) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const json = JSON.parse(line.slice(6));
+          if (json.error) throw new Error(json.error);
+          if (json.done) { streamDone = true; break; }
+          if (json.text) {
+            if (!started) {
+              // First cleaned text: stop dimming the raw and start replacing it.
+              started = true;
+              transcriptDisplay.classList.remove('cleaning');
+            }
+            cleaned += json.text;
+            feed(json.text);
+            transcriptWordCount.textContent = countWords(cleaned) + 'w';
+          }
+        } catch (parseErr) {
+          // If it's a real error (not a JSON parse issue), re-throw
+          if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
+          // Otherwise skip malformed SSE lines
+          continue;
+        }
+      }
+    }
+
+    // Wait for the word-by-word reveal to finish.
+    await waitForReveal();
+
+    // Clean up: any raw words not consumed by a shorter cleaned text fade out.
+    if (rawWordIndex < rawWords.length) {
+      transcriptDisplay.innerHTML = escapeHtml(cleanedRevealed);
+    }
+
+    transcriptDisplay.classList.remove('streaming');
+    return { cleaned, streamSuccess: true };
+  } catch (streamErr) {
+    revealResolve = null;
+    transcriptDisplay.classList.remove('streaming', 'cleaning');
+    throw streamErr;
+  }
+}
+
+// ── Shatter & Feed animation (active) ──
+// When cleaning completes, the raw transcript shatters into pieces that fly
+// apart and fade, then the cleaned text feeds in word-by-word.
+
+// Shatter the raw text into pieces that fly apart and fade, while the cleaned
+// text fades in underneath at the same time.
+function shatterAndFade(raw, cleaned) {
+  return new Promise(resolve => {
+    const words = raw.trim().split(/\s+/);
+    const pieces = words.map(w => {
+      const dx = (Math.random() * 220 - 110).toFixed(0);
+      const dy = (Math.random() * 220 - 150).toFixed(0);
+      const rot = (Math.random() * 140 - 70).toFixed(0);
+      const delay = (Math.random() * 0.15).toFixed(2);
+      return `<span class="shatter-piece" style="--dx:${dx}px;--dy:${dy}px;--rot:${rot}deg;--delay:${delay}s">${escapeHtml(w)}</span>`;
+    }).join(' ');
+
+    // Let the shatter pieces fly outside the box during the animation.
+    transcriptDisplay.style.overflow = 'visible';
+
+    // Raw shatter pieces overlay on top; cleaned text fades in underneath.
+    transcriptDisplay.innerHTML =
+      `<div class="shatter-layer">${pieces}</div>` +
+      `<div class="clean-fade">${escapeHtml(cleaned)}</div>`;
+
+    setTimeout(() => {
+      transcriptDisplay.style.overflow = ''; // restore clipping
+      resolve();
+    }, 800); // wait for the shatter + fade to finish
+  });
+}
+
 async function streamCleanup(raw, prompt, signal) {
   const sRes = await fetch('/cleanup-stream', {
     method: 'POST',
@@ -298,12 +522,15 @@ async function streamCleanup(raw, prompt, signal) {
   if (sRes.status === 401) throw new UnauthorizedError();
   if (!sRes.ok) return { cleaned: '', streamSuccess: false };
 
+  // Keep the raw transcript visible (dimmed) while the cleaned version is generated.
   let cleaned = '';
-  transcriptDisplay.classList.add('streaming');
-  transcriptDisplay.textContent = '';
   transcriptDisplay.classList.remove('transcript-placeholder');
+  transcriptDisplay.classList.add('cleaning');
 
   try {
+    // Show the full raw text dimmed while cleaning happens.
+    transcriptDisplay.innerHTML = escapeHtml(raw);
+
     const reader = sRes.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -323,7 +550,6 @@ async function streamCleanup(raw, prompt, signal) {
           if (json.done) { streamDone = true; break; }
           if (json.text) {
             cleaned += json.text;
-            transcriptDisplay.textContent = cleaned;
             transcriptWordCount.textContent = countWords(cleaned) + 'w';
           }
         } catch (parseErr) {
@@ -335,10 +561,29 @@ async function streamCleanup(raw, prompt, signal) {
       }
     }
 
-    transcriptDisplay.classList.remove('streaming');
+    // If nothing was cleaned, leave the raw and let the caller fall back.
+    if (!cleaned.trim()) {
+      transcriptDisplay.classList.remove('cleaning');
+      return { cleaned: '', streamSuccess: false };
+    }
+
+    // Cleaning done: apply the selected animation.
+    transcriptDisplay.classList.remove('cleaning');
+    const anim = getAnimationPref();
+    if (anim === 'none') {
+      // No animation — show the cleaned text directly.
+      transcriptDisplay.textContent = cleaned;
+    } else if (anim === 'wordbyword') {
+      // Word-by-word — the cleaned text replaces the raw progressively.
+      await streamCleanupChomp(raw, prompt, signal);
+    } else {
+      // Shatter (default) — the raw shatters while the cleaned text fades in.
+      await shatterAndFade(raw, cleaned);
+    }
+
     return { cleaned, streamSuccess: true };
   } catch (streamErr) {
-    transcriptDisplay.classList.remove('streaming');
+    transcriptDisplay.classList.remove('cleaning');
     throw streamErr;
   }
 }
@@ -422,7 +667,7 @@ function updateTranscriptDisplay(animate = false) {
   // Any programmatic re-render ends transcript editing
   isEditingTranscript = false;
   transcriptDisplay.contentEditable = 'false';
-  transcriptDisplay.classList.remove('editing');
+  transcriptDisplay.classList.remove('editing', 'cleaning', 'streaming');
   editTranscriptBtn.textContent = 'Edit';
   const text = getDisplayText();
   if (text.trim()) {
@@ -1042,44 +1287,312 @@ async function startRecording() {
     isRecording = true;
     setStatus('Recording…', 'active');
 
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    if (liveMode) {
+      startLiveCapture(stream);
+    } else {
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
-    mediaRecorder.onstop = async () => {
-      cancelAnimationFrame(animationId);
-      stopTimer(); clearWaveform();
-      toggleBtn.classList.remove('recording');
-      isPaused = false;
-      pauseBtn.style.display = 'none';
+      mediaRecorder.onstop = async () => {
+        cancelAnimationFrame(animationId);
+        stopTimer(); clearWaveform();
+        toggleBtn.classList.remove('recording');
+        isPaused = false;
+        pauseBtn.style.display = 'none';
 
-      if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+        if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
-      if (cancelled) {
-        cancelled = false; audioChunks = [];
-        cancelBtn.style.display = 'none';
-        document.querySelector('.action-btns').style.display = '';
-        resetButton(); setStatus('Cancelled', 'error');
-        setTimeout(() => setStatus('Ready'), 1200);
-        return;
-      }
+        if (cancelled) {
+          cancelled = false; audioChunks = [];
+          cancelBtn.style.display = 'none';
+          document.querySelector('.action-btns').style.display = '';
+          resetButton(); setStatus('Cancelled', 'error');
+          setTimeout(() => setStatus('Ready'), 1200);
+          return;
+        }
 
-      const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      try {
-        await saveAudioBackup(audioBlob);
-        inMemoryAudioBlob = null;
-      } catch {
-        inMemoryAudioBlob = audioBlob;
-      }
-      await transcribeAudioBlob(audioBlob);
-    };
-    mediaRecorder.start();
+        const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        try {
+          await saveAudioBackup(audioBlob);
+          inMemoryAudioBlob = null;
+        } catch {
+          inMemoryAudioBlob = audioBlob;
+        }
+        await transcribeAudioBlob(audioBlob);
+      };
+      mediaRecorder.start();
+    }
   } catch (e) {
     console.error('getUserMedia error:', e);
     resetButton();
     setStatus('Microphone access denied or unavailable', 'error');
     setTimeout(() => setStatus('Ready'), 2500);
   }
+}
+
+// ── Live transcription helpers ──
+// Encode a mono Float32Array (values -1..1) into a WAV Blob. WAV is accepted by
+// transcription APIs, unlike short webm chunks.
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  function writeString(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// Append transcribed chunks in order, even if responses arrive out of order.
+function liveFlushPending() {
+  while (livePending.has(liveNextSeq)) {
+    const t = livePending.get(liveNextSeq);
+    livePending.delete(liveNextSeq);
+    if (t) {
+      currentRaw += (currentRaw ? ' ' : '') + t;
+      updateTranscriptDisplay();
+    }
+    liveNextSeq++;
+  }
+}
+
+// Transcribe a chunk and track the promise so stopLiveRecording can wait for it.
+function liveTranscribeChunk(wavBlob, seq) {
+  const promise = (async () => {
+    try {
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'chunk.wav');
+      const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setStatus('Chunk error: ' + (d.error || res.status), 'error');
+        return;
+      }
+      const data = await res.json();
+      livePending.set(seq, (data.rawTranscript || '').trim());
+    } catch (e) {
+      console.error('chunk error', e);
+      setStatus('Chunk upload failed: ' + e.message, 'error');
+    } finally {
+      liveFlushPending();
+    }
+  })();
+  liveInflight.add(promise);
+  promise.finally(() => liveInflight.delete(promise));
+  return promise;
+}
+
+// Slice the newest captured samples into a WAV chunk and send it.
+// When force is true, it sends even while paused (used to flush the last bit
+// spoken before the user hits Pause, so it isn't lost).
+function liveSendChunk(force = false) {
+  if (livePcmBuffer.length <= liveLastChunkEndIndex) return;
+  const chunkSamples = livePcmBuffer.slice(liveLastChunkEndIndex);
+  liveLastChunkEndIndex = livePcmBuffer.length;
+  if (livePaused && !force) return; // discard audio captured while paused
+  const minSamples = audioContext.sampleRate * MIN_CHUNK_SAMPLES_FACTOR;
+  if (chunkSamples.length < minSamples && !force) return;
+  const wav = encodeWav(chunkSamples, audioContext.sampleRate);
+  const seq = liveChunkSeq++;
+  liveTranscribeChunk(wav, seq);
+  // Bound memory: keep only the most recent ~30s of samples.
+  if (livePcmBuffer.length > audioContext.sampleRate * 30) {
+    livePcmBuffer = livePcmBuffer.slice(-audioContext.sampleRate * 30);
+    liveLastChunkEndIndex = livePcmBuffer.length;
+  }
+}
+
+// Set up WAV chunk capture on the existing audioContext/source.
+function startLiveCapture(stream) {
+  liveStream = stream;
+  livePcmBuffer = new Float32Array(0);
+  liveLastChunkEndIndex = 0;
+  liveChunkSeq = 0;
+  liveNextSeq = 0;
+  livePending.clear();
+  livePaused = false;
+  currentRaw = '';
+  currentCleaned = '';
+  showingRaw = false;
+
+  liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+  liveScriptNode.onaudioprocess = (e) => {
+    const channel = e.inputBuffer.getChannelData(0);
+    const newBuf = new Float32Array(livePcmBuffer.length + channel.length);
+    newBuf.set(livePcmBuffer, 0);
+    newBuf.set(channel, livePcmBuffer.length);
+    livePcmBuffer = newBuf;
+  };
+  source.connect(liveScriptNode);
+  liveScriptNode.connect(audioContext.destination);
+
+  liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+  updateTranscriptDisplay();
+}
+
+// Tear down live capture and process the accumulated transcript.
+async function stopLiveRecording() {
+  clearInterval(liveChunkTimer);
+  liveSendChunk(); // send the final partial chunk
+
+  cancelAnimationFrame(animationId);
+  stopTimer(); clearWaveform();
+  toggleBtn.classList.remove('recording');
+  isPaused = false;
+  pauseBtn.style.display = 'none';
+
+  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+  liveScriptNode = null;
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null;
+
+  // Wait for all in-flight chunk transcriptions to finish so the final spoken
+  // bit is captured before we clean up. Then flush any ordered chunks still buffered.
+  try {
+    await Promise.allSettled([...liveInflight]);
+  } catch {}
+  liveFlushPending();
+
+  await finishLiveRecording();
+}
+
+// Cancel live recording — discard everything, no cleanup.
+async function cancelLiveRecording() {
+  clearInterval(liveChunkTimer);
+  cancelAnimationFrame(animationId);
+  stopTimer(); clearWaveform();
+  toggleBtn.classList.remove('recording');
+  isPaused = false;
+  pauseBtn.style.display = 'none';
+  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+  liveScriptNode = null;
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null;
+  cancelBtn.style.display = 'none';
+  document.querySelector('.action-btns').style.display = '';
+  resetButton(); setStatus('Cancelled', 'error');
+  setTimeout(() => setStatus('Ready'), 1200);
+}
+
+// On stop: clean up the accumulated live raw text (or keep raw), update history, copy.
+async function finishLiveRecording() {
+  const raw = currentRaw;
+  if (!raw.trim()) {
+    // nothing was transcribed
+    clearProcessingUI();
+    resetButton();
+    setStatus('Ready');
+    return;
+  }
+
+  toggleBtn.classList.add('processing');
+  setStatusProcessing('Cleaning up…');
+  const abortController = new AbortController();
+  processingAbortController = abortController;
+
+  let copiedLabel = '';
+  try {
+    if (cleanToggle.checked) {
+      // Try streaming cleanup first
+      let cleaned = '';
+      let streamSuccess = false;
+      try {
+        ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
+      } catch (streamErr) {
+        if (streamErr.name === 'UnauthorizedError') { window.location.href = '/login'; return; }
+        if (streamErr.name === 'AbortError') throw streamErr;
+        cleaned = '';
+        streamSuccess = false;
+      }
+      // Fallback: non-streaming cleanup
+      if (!streamSuccess || !cleaned) {
+        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
+        if (cRes.status === 401) { window.location.href = '/login'; return; }
+        if (!cRes.ok) {
+          currentCleaned = '';
+          updateTranscriptDisplay(true);
+          addToHistory(raw, raw);
+          if (isAppendMode()) {
+            const accumulated = appendToTranscript(raw);
+            await copyToClipboard(accumulated);
+          } else {
+            await copyToClipboard(raw);
+          }
+          setStatus('Cleanup failed — use Clean up to retry', 'error');
+          setTimeout(() => setStatus('Ready'), 3000);
+          clearProcessingUI();
+          resetButton();
+          return;
+        }
+        const cData = await cRes.json();
+        if (cData.error) throw new Error(cData.error);
+        cleaned = cData.cleanedTranscript || '';
+      }
+      currentCleaned = cleaned;
+      showingRaw = false;
+      if (isAppendMode() && cleaned) {
+        const accumulated = appendToTranscript(cleaned);
+        currentCleaned = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, cleaned);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+      }
+    } else {
+      currentCleaned = '';
+      showingRaw = false;
+      if (isAppendMode() && raw.trim()) {
+        const accumulated = appendToTranscript(raw);
+        currentRaw = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw); await copyToClipboard(raw);
+        copiedLabel = 'Raw copied';
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      setStatus('Cancelled', 'error');
+      setTimeout(() => setStatus('Ready'), 1500);
+    } else {
+      setStatus('Error: ' + e.message, 'error');
+      setTimeout(() => setStatus('Ready'), 3000);
+    }
+  }
+  processingAbortController = null;
+  clearProcessingUI();
+  resetButton();
+  setStatus(copiedLabel, 'done');
+  setTimeout(() => setStatus('Ready'), 2000);
 }
 
 function resetButton() {
@@ -1094,12 +1607,14 @@ function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (liveMode) { cancelLiveRecording(); return; }
   cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (liveMode) { stopLiveRecording(); return; }
   mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
@@ -1113,8 +1628,29 @@ const pauseViaMute = /iP(hone|ad|od)/.test(navigator.userAgent)
   || /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 function togglePause() {
-  if (!isRecording || !mediaRecorder) return;
+  if (!isRecording) return;
   if (navigator.vibrate) navigator.vibrate(10);
+
+  // Live mode: pause just stops sending chunks; captured audio is discarded while paused.
+  if (liveMode) {
+    if (isPaused) {
+      livePaused = false;
+      resumeTimer();
+      isPaused = false;
+      pauseBtn.textContent = 'Pause';
+      setStatus('Recording…', 'active');
+    } else {
+      livePaused = true;
+      liveSendChunk(true); // flush the last bit spoken before pausing
+      pauseTimer();
+      isPaused = true;
+      pauseBtn.textContent = 'Resume';
+      setStatus(navigator.maxTouchPoints > 0 ? 'Paused' : 'Paused — press P to resume', 'active');
+    }
+    return;
+  }
+
+  if (!mediaRecorder) return;
   if (isPaused) {
     if (pauseViaMute) {
       mediaRecorder.stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -1247,8 +1783,13 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     if (currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
   }
-  // Theme toggle (light/dark)
+  // Toggle live transcription
   if (e.key === 'l' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (liveToggle) { liveToggle.checked = !liveToggle.checked; liveToggle.dispatchEvent(new Event('change')); }
+  }
+  // Theme toggle (light/dark) — 'M' for Mode/Moon
+  if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     toggleTheme();
   }

@@ -86,6 +86,13 @@
           </label>
           <label class="clean-toggle-label">
             <span class="toggle-switch">
+              <input type="checkbox" id="liveToggle" checked>
+              <span class="toggle-slider"></span>
+            </span>
+            <span>Live</span>
+          </label>
+          <label class="clean-toggle-label">
+            <span class="toggle-switch">
               <input type="checkbox" id="appendToggle">
               <span class="toggle-slider"></span>
             </span>
@@ -162,6 +169,37 @@
         <div id="promptsList" class="prompts-list"></div>
       </div>
 
+      <!-- Animation settings -->
+      <div class="settings-section">
+        <div class="tab-panel-header">
+          <h2>Animation</h2>
+        </div>
+        <p class="settings-desc">Choose how the cleaned transcript appears after dictation.</p>
+        <div class="animation-options">
+          <label class="animation-option">
+            <input type="radio" name="animation" value="none">
+            <div class="animation-option-body">
+              <span class="animation-option-name">No animation</span>
+              <span class="animation-option-desc">The cleaned transcript simply replaces the raw one. No transition effect.</span>
+            </div>
+          </label>
+          <label class="animation-option">
+            <input type="radio" name="animation" value="shatter">
+            <div class="animation-option-body">
+              <span class="animation-option-name">Shatter</span>
+              <span class="animation-option-desc">The raw transcript breaks apart into pieces that fly away, while the cleaned version fades in at the same time. A dramatic, "magic" transformation.</span>
+            </div>
+          </label>
+          <label class="animation-option">
+            <input type="radio" name="animation" value="wordbyword">
+            <div class="animation-option-body">
+              <span class="animation-option-name">Word-by-word</span>
+              <span class="animation-option-desc">The cleaned transcript appears one word at a time, progressively replacing the raw transcript from the beginning.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <!-- Help & Troubleshooting -->
       <div class="settings-section">
         <div class="tab-panel-header">
@@ -190,6 +228,17 @@
               <li>If you toggle Append on mid-session, whatever's currently on screen is captured as the starting point.</li>
               <li>Click <strong>Clear</strong> to reset the entire accumulated transcript.</li>
               <li>Turning off Append switches back to single-segment view. The accumulated text is still saved and reappears when you toggle Append back on.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Live transcription</summary>
+          <div class="help-content">
+            <p>The <strong>Live</strong> toggle on the record tab changes how transcription happens:</p>
+            <ul class="help-list">
+              <li><strong>Live ON</strong> — as you speak, the audio is sent in short chunks (~3 seconds each) and transcribed immediately, so the raw transcript appears on screen as you talk instead of waiting until you stop.</li>
+              <li><strong>Live OFF</strong> — the app records the whole thing and transcribes it only after you stop (the original behavior).</li>
+              <li><strong>Note:</strong> Live mode is <strong>likely to consume 10–20% more tokens</strong>, because the audio is transcribed in many small chunks rather than one batch.</li>
             </ul>
           </div>
         </details>
@@ -243,7 +292,8 @@
               <li><kbd>A</kbd> — Toggle append mode</li>
               <li><kbd>T</kbd> — Toggle auto-clean</li>
               <li><kbd>1–5</kbd> — Switch cleanup prompt by position</li>
-              <li><kbd>L</kbd> — Toggle light/dark theme</li>
+              <li><kbd>L</kbd> — Toggle live transcription</li>
+              <li><kbd>M</kbd> — Toggle light/dark theme</li>
               <li><kbd>D</kbd> — Dictate tab</li>
               <li><kbd>H</kbd> — History tab</li>
               <li><kbd>S</kbd> — Settings tab</li>
@@ -376,7 +426,8 @@
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
       <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
-      <div class="shortcut-item"><kbd>L</kbd><span>Toggle light/dark theme</span></div>
+      <div class="shortcut-item"><kbd>L</kbd><span>Toggle live transcription</span></div>
+      <div class="shortcut-item"><kbd>M</kbd><span>Toggle light/dark theme</span></div>
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
       <div class="shortcut-item"><kbd>S</kbd><span>Settings tab</span></div>

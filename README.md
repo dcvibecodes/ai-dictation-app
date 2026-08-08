@@ -57,6 +57,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits; starts fresh each session
+- **Live transcription** — as you speak, audio is sent in ~3-second chunks and transcribed immediately, so the raw transcript appears on screen as you talk instead of waiting until you stop. Note: this is likely to consume 10–20% more tokens.
+- **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
@@ -132,7 +134,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
 | `1–5` | Switch cleanup prompt by position |
-| `L` | Toggle light/dark theme |
+| `L` | Toggle live transcription |
+| `M` | Toggle light/dark theme |
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |
