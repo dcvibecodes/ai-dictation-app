@@ -429,6 +429,42 @@ app.post('/upload', requireOwner, aiUploadLimiter, upload.single('audio'), uploa
   }
 });
 
+// --- Live transcription chunk (used by Live mode) ---
+// Live mode sends a ~3s WAV chunk every 3 seconds while recording, so it needs a
+// much higher rate limit than the main /upload (which is capped at 40/15min).
+const aiChunkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1500, // ~3s chunks → up to ~75 min of continuous live recording per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many transcription requests — please try again in a moment.'
+});
+
+app.post('/upload-chunk', requireOwner, aiChunkLimiter, upload.single('audio'), uploadErrorHandler, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No audio received' });
+    const client = getTranscriptionClient();
+    const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
+    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+    const audioPath = req.file.path;
+
+    const params = { file: fs.createReadStream(audioPath), model };
+    if (language) params.language = language;
+    if (hint) params.prompt = hint;
+
+    const transcription = await client.audio.transcriptions.create(params);
+
+    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+    res.json({ rawTranscript: transcription.text });
+  } catch (error) {
+    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    console.error('Chunk upload error:', error.message);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message });
+  }
+});
+
 app.post('/cleanup', requireOwner, aiCleanupLimiter, async (req, res) => {
   try {
     const { rawTranscript, prompt } = req.body;
