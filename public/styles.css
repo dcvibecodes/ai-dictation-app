@@ -823,16 +823,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   .recorder-row { grid-template-columns: minmax(54px, 1fr) auto minmax(54px, 1fr); }
 }
 
-/* ── iOS PWA standalone mode fix ──
-   In standalone PWA there is no address bar, so the record card should sit at
-   the very bottom of the screen with only a small amount of padding (enough for
-   the home indicator). Safari (non-standalone) keeps the full safe-area padding
-   so the card sits above the address bar. */
-@media (display-mode: standalone) and (max-width: 600px) {
-  .recorder-row {
-    padding-bottom: 10px;
-  }
-  body {
-    padding-bottom: 120px;
-  }
-}
+/* ── iOS PWA standalone ──
+   Use env(safe-area-inset-bottom) consistently so the record card keeps the
+   correct bottom padding in both Safari (above the address bar) and the PWA
+   (above the home indicator), and it doesn't change when switching tabs. */

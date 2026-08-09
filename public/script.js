@@ -275,6 +275,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
     const isRecord = btn.dataset.tab === 'record';
     document.body.classList.toggle('record-active', isRecord);
+    // Re-apply the recorder row layout on iOS PWA so the env(safe-area-inset-bottom)
+    // padding stays consistent when returning to the record tab.
+    if (isRecord && (window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches)) {
+      requestAnimationFrame(reflowRecorderRow);
+    }
     if (btn.dataset.tab === 'settings') loadSettingsUI();
   });
 });
