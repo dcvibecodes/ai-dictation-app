@@ -673,6 +673,9 @@ async function sendRawForCleanup() {
 
     currentCleaned = cleaned;
 
+    // Manual cleanup: the user asked to clean, so switch to showing the cleaned view.
+    showingRaw = false;
+
     // Manual cleanup is re-processing existing text, not a new segment — don't append
     updateTranscriptDisplay();
     const textToCopy = isAppendMode() ? getAccumulatedTranscript() || cleaned : cleaned;
@@ -1551,6 +1554,15 @@ async function stopLiveRecording() {
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
 
+  // Recording has stopped — show a "Transcribing…" status with elapsed seconds
+  // while the final chunks are processed, instead of leaving it on "Recording…".
+  setStatusProcessing('Transcribing…');
+  let procSeconds = 0;
+  const procTimer = setInterval(() => {
+    procSeconds++;
+    statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
+  }, 1000);
+
   // Wait for all in-flight chunk transcriptions to finish so the final spoken
   // bit is captured before we clean up. Then flush any ordered chunks still buffered.
   try {
@@ -1559,6 +1571,7 @@ async function stopLiveRecording() {
   liveFlushPending();
 
   await finishLiveRecording();
+  clearInterval(procTimer);
 }
 
 // Cancel live recording — discard everything, no cleanup.

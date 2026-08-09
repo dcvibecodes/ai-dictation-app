@@ -298,6 +298,15 @@ header {
   justify-content: space-between;
   gap: 8px;
   min-height: 24px;
+  flex-wrap: wrap;
+}
+.transcript-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.transcript-actions {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .transcript-header .word-count {
