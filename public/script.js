@@ -403,7 +403,7 @@ async function streamCleanupChomp(raw, prompt, signal) {
   let cleanedRevealed = '';    // cleaned text revealed so far
   let revealScheduled = false;
   let revealResolve = null;
-  const REVEAL_MS = 55;        // reveal one word every 55ms (~30% faster)
+  const REVEAL_MS = 27;        // reveal one word every 27ms (~2x faster)
 
   // Split the raw into words so we can remove them from the front as cleaned words appear.
   const rawWords = raw.trim().split(/\s+/);
