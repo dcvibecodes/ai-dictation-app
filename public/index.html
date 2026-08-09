@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=14">
+  <link rel="stylesheet" href="styles.css?v=15">
 </head>
 <body>
   <div class="app">
@@ -105,7 +105,7 @@
       <!-- Single transcript display -->
       <div class="transcript-area">
         <div class="transcript-header">
-          <span class="word-count" id="transcriptWordCount">0w</span>
+          <span class="transcript-meta" id="transcriptMeta">0 words</span>
           <div class="transcript-actions">
             <button class="btn btn-ghost btn-sm" id="editTranscriptBtn" style="display:none">Edit</button>
             <button class="btn btn-ghost btn-sm" id="toggleRawBtn" style="display:none">Show raw</button>
@@ -240,6 +240,17 @@
               <li><strong>Live ON</strong> — while you record, the audio is sent in ~10-second chunks and each chunk is transcribed as you go. This is designed for <strong>long dictation sessions</strong> (1–2 minutes or more): by the time you stop, most of the audio has already been transcribed during recording, so you don't wait for the whole transcription at the end.</li>
               <li><strong>Why 10 seconds?</strong> Longer chunks mean far fewer chunk boundaries than 3-second chunks, which greatly reduces the chance of a word being cut off at a boundary. The trade-off is that text appears every ~10 seconds rather than instantly.</li>
               <li><strong>Note:</strong> Live mode transcribes the same total audio, so API cost is roughly comparable (it may use slightly more due to chunking); it's mainly a wait-time trade for long dictations.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Transcript stats (words, reading time, filler)</summary>
+          <div class="help-content">
+            <p>Above the transcript, a small line shows useful info about the cleaned text, separated by dots:</p>
+            <ul class="help-list">
+              <li><strong>Word count</strong> — e.g. "89 words".</li>
+              <li><strong>Reading time</strong> — an estimate at ~200 words per minute, e.g. "~1 min read".</li>
+              <li><strong>Filler words removed</strong> — how many "um", "uh", "you know", "like", etc. were cleaned out, e.g. "Removed 3 filler words".</li>
             </ul>
           </div>
         </details>
@@ -435,6 +446,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=14"></script>
+  <script src="script.js?v=15"></script>
 </body>
 </html>

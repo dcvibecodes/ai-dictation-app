@@ -46,7 +46,7 @@ const fileInput = document.getElementById("fileInput");
 
 // New transcript display elements
 const transcriptDisplay = document.getElementById('transcriptDisplay');
-const transcriptWordCount = document.getElementById('transcriptWordCount');
+const transcriptMeta = document.getElementById('transcriptMeta');
 const toggleRawBtn = document.getElementById('toggleRawBtn');
 const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 const editTranscriptBtn = document.getElementById('editTranscriptBtn');
@@ -329,6 +329,48 @@ function updateSendCleanupBtn() {
   sendCleanupBtn.style.display = currentRaw.trim() ? '' : 'none';
 }
 
+// ── Transcript meta (words · reading time · filler) ──
+// A single gray line above the transcript, e.g. "89 words · ~1 min read · Removed 3 filler words".
+const FILLER_WORDS = ['um','uh','umm','uhh','er','ah','hmm','mmm','well','so','yeah','okay','ok','uh-huh','huh','you know','like','actually','wait','nevermind','sorry','basically','i mean','you see','kind of','sort of','i guess','right'];
+let metaWordCount = 0;
+let metaReading = '';
+let metaFiller = '';
+function setTranscriptMeta() {
+  if (!transcriptMeta) return;
+  const wc = metaWordCount + ' word' + (metaWordCount === 1 ? '' : 's');
+  const parts = [wc];
+  if (metaReading) parts.push(metaReading);
+  if (metaFiller) parts.push(metaFiller);
+  transcriptMeta.textContent = parts.join(' · ');
+}
+function updateReadingTime(text) {
+  const words = countWords(text);
+  if (words === 0) { metaReading = ''; setTranscriptMeta(); return; }
+  const seconds = Math.round(words / 200 * 60);
+  metaReading = seconds < 60 ? `~${Math.max(1, seconds)} sec read` : `~${Math.max(1, Math.round(seconds / 60))} min read`;
+  setTranscriptMeta();
+}
+function countFillerWords(text) {
+  const lower = ' ' + text.toLowerCase().replace(/[^a-z' ]/g, ' ') + ' ';
+  let count = 0;
+  for (const f of FILLER_WORDS) {
+    const re = new RegExp('\\b' + f.replace(/ /g, '\\s+') + '\\b', 'g');
+    const m = lower.match(re);
+    if (m) count += m.length;
+  }
+  return count;
+}
+function updateFillerStats(raw, cleaned) {
+  const removed = countFillerWords(raw) - countFillerWords(cleaned);
+  metaFiller = removed > 0 ? `Removed ${removed} filler word${removed === 1 ? '' : 's'}` : '';
+  setTranscriptMeta();
+}
+function clearStats() {
+  metaReading = '';
+  metaFiller = '';
+  setTranscriptMeta();
+}
+
 // ── Shared streaming cleanup helper ──
 // POSTs to /cleanup-stream and renders SSE text chunks progressively into the
 // transcript display. Returns { cleaned, streamSuccess } so callers can fall back
@@ -382,7 +424,7 @@ async function streamCleanupChomp(raw, prompt, signal) {
     } else {
       transcriptDisplay.innerHTML = cleanedHtml + rawHtml;
     }
-    transcriptWordCount.textContent = countWords(cleaned) + 'w';
+    metaWordCount = countWords(cleaned); setTranscriptMeta();
   }
 
   // Reveal one buffered cleaned word, consuming one raw word from the front.
@@ -454,7 +496,7 @@ async function streamCleanupChomp(raw, prompt, signal) {
             }
             cleaned += json.text;
             feed(json.text);
-            transcriptWordCount.textContent = countWords(cleaned) + 'w';
+            metaWordCount = countWords(cleaned); setTranscriptMeta();
           }
         } catch (parseErr) {
           // If it's a real error (not a JSON parse issue), re-throw
@@ -552,7 +594,7 @@ async function streamCleanup(raw, prompt, signal) {
           if (json.done) { streamDone = true; break; }
           if (json.text) {
             cleaned += json.text;
-            transcriptWordCount.textContent = countWords(cleaned) + 'w';
+            metaWordCount = countWords(cleaned); setTranscriptMeta();
           }
         } catch (parseErr) {
           // If it's a real error (not a JSON parse issue), re-throw
@@ -682,11 +724,14 @@ function updateTranscriptDisplay(animate = false) {
       void transcriptDisplay.offsetWidth;
       transcriptDisplay.classList.add('pop-in');
     }
-    transcriptWordCount.textContent = countWords(text) + 'w';
+    metaWordCount = countWords(text); setTranscriptMeta();
+    updateReadingTime(text);
+    updateFillerStats(currentRaw, currentCleaned);
   } else {
     transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
-    transcriptWordCount.textContent = '0w';
+    metaWordCount = 0; setTranscriptMeta();
     editTranscriptBtn.style.display = 'none';
+    clearStats();
   }
 
   // Show/hide toggle raw button — show whenever both versions exist
@@ -727,7 +772,7 @@ editTranscriptBtn.addEventListener('click', () => setTranscriptEditing(!isEditin
 transcriptDisplay.addEventListener('input', () => {
   if (!isEditingTranscript) return;
   const text = transcriptDisplay.innerText;
-  transcriptWordCount.textContent = countWords(text) + 'w';
+  metaWordCount = countWords(text); setTranscriptMeta();
   if (isAppendMode()) {
     setAccumulatedTranscript(text);
     if (currentCleaned) currentCleaned = text;
@@ -949,7 +994,9 @@ async function loadPrompts() {
 
 function getDefaultPromptText() { return defaultOverride ? defaultOverride.text : DEFAULT_PROMPT_TEXT; }
 function getAllPrompts() { return [{ id: 'default', name: 'Default', text: getDefaultPromptText() }, ...prompts]; }
-function getActivePrompt() { return getAllPrompts().find(p => p.id === activePromptId) || getAllPrompts()[0]; }
+function getActivePrompt() {
+  return getAllPrompts().find(x => x.id === activePromptId) || getAllPrompts()[0];
+}
 
 function renderPromptBar() {
   const sel = document.getElementById('promptBarSelect');
