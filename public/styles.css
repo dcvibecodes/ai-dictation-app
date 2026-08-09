@@ -824,23 +824,15 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 }
 
 /* ── iOS PWA standalone mode fix ──
-   On iPhone PWA, env(safe-area-inset-bottom) can be delayed on first paint.
-   Force a stable layout by ensuring the recorder row is properly anchored. */
+   In standalone PWA there is no address bar, so the record card should sit at
+   the very bottom of the screen with only a small amount of padding (enough for
+   the home indicator). Safari (non-standalone) keeps the full safe-area padding
+   so the card sits above the address bar. */
 @media (display-mode: standalone) and (max-width: 600px) {
   .recorder-row {
-    /* Minimum bottom padding for home indicator even if env() returns 0 initially */
-    padding-bottom: max(18px, calc(18px + env(safe-area-inset-bottom, 0px)));
+    padding-bottom: 10px;
   }
   body {
-    padding-bottom: max(130px, calc(130px + env(safe-area-inset-bottom, 0px)));
-  }
-}
-
-/* iOS standalone via apple meta tag (fallback selector) */
-@supports (-webkit-touch-callout: none) {
-  @media (max-width: 600px) and (display-mode: standalone) {
-    .recorder-row {
-      padding-bottom: max(22px, calc(18px + env(safe-area-inset-bottom, 0px)));
-    }
+    padding-bottom: 120px;
   }
 }

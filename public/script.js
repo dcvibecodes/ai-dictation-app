@@ -258,13 +258,23 @@ function hideRecoveryRow() {
 }
 
 // ── Tabs ──
+// Force a layout recalculation of the recorder row. On iOS PWA, env(safe-area-inset-bottom)
+// resolves after first paint, so re-toggling display re-applies the correct bottom padding.
+function reflowRecorderRow() {
+  const recRow = document.getElementById('recorderRow');
+  if (!recRow) return;
+  recRow.style.display = 'none';
+  void recRow.offsetHeight; // force reflow
+  recRow.style.display = '';
+}
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
-    document.body.classList.toggle('record-active', btn.dataset.tab === 'record');
+    const isRecord = btn.dataset.tab === 'record';
+    document.body.classList.toggle('record-active', isRecord);
     if (btn.dataset.tab === 'settings') loadSettingsUI();
   });
 });
@@ -329,45 +339,14 @@ function updateSendCleanupBtn() {
   sendCleanupBtn.style.display = currentRaw.trim() ? '' : 'none';
 }
 
-// ── Transcript meta (words · reading time · filler) ──
-// A single gray line above the transcript, e.g. "89 words · ~1 min read · Removed 3 filler words".
-const FILLER_WORDS = ['um','uh','umm','uhh','er','ah','hmm','mmm','well','so','yeah','okay','ok','uh-huh','huh','you know','like','actually','wait','nevermind','sorry','basically','i mean','you see','kind of','sort of','i guess','right'];
+// ── Transcript meta (word count) ──
+// A single gray line above the transcript, e.g. "89 words".
 let metaWordCount = 0;
-let metaReading = '';
-let metaFiller = '';
 function setTranscriptMeta() {
   if (!transcriptMeta) return;
-  const wc = metaWordCount + ' word' + (metaWordCount === 1 ? '' : 's');
-  const parts = [wc];
-  if (metaReading) parts.push(metaReading);
-  if (metaFiller) parts.push(metaFiller);
-  transcriptMeta.textContent = parts.join(' · ');
-}
-function updateReadingTime(text) {
-  const words = countWords(text);
-  if (words === 0) { metaReading = ''; setTranscriptMeta(); return; }
-  const seconds = Math.round(words / 200 * 60);
-  metaReading = seconds < 60 ? `~${Math.max(1, seconds)} sec read` : `~${Math.max(1, Math.round(seconds / 60))} min read`;
-  setTranscriptMeta();
-}
-function countFillerWords(text) {
-  const lower = ' ' + text.toLowerCase().replace(/[^a-z' ]/g, ' ') + ' ';
-  let count = 0;
-  for (const f of FILLER_WORDS) {
-    const re = new RegExp('\\b' + f.replace(/ /g, '\\s+') + '\\b', 'g');
-    const m = lower.match(re);
-    if (m) count += m.length;
-  }
-  return count;
-}
-function updateFillerStats(raw, cleaned) {
-  const removed = countFillerWords(raw) - countFillerWords(cleaned);
-  metaFiller = removed > 0 ? `Removed ${removed} filler word${removed === 1 ? '' : 's'}` : '';
-  setTranscriptMeta();
+  transcriptMeta.textContent = metaWordCount + ' word' + (metaWordCount === 1 ? '' : 's');
 }
 function clearStats() {
-  metaReading = '';
-  metaFiller = '';
   setTranscriptMeta();
 }
 
@@ -728,8 +707,6 @@ function updateTranscriptDisplay(animate = false) {
       transcriptDisplay.classList.add('pop-in');
     }
     metaWordCount = countWords(text); setTranscriptMeta();
-    updateReadingTime(text);
-    updateFillerStats(currentRaw, currentCleaned);
   } else {
     transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
     metaWordCount = 0; setTranscriptMeta();
@@ -1955,14 +1932,7 @@ updateTranscriptDisplay();
 // On iOS standalone PWA, env() values may not resolve until after first paint.
 // Toggling a property forces WebKit to recompute the layout.
 if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) {
-  requestAnimationFrame(() => {
-    const recRow = document.getElementById('recorderRow');
-    if (recRow) {
-      recRow.style.display = 'none';
-      void recRow.offsetHeight; // force reflow
-      recRow.style.display = '';
-    }
-  });
+  requestAnimationFrame(reflowRecorderRow);
 }
 
 // ── Service Worker (PWA) ──
