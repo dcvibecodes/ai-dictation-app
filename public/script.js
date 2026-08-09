@@ -8,6 +8,26 @@ let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
 let longRecordingWarned = false; // one-time 5-minute recording warning
 
+// --- Live transcription mode ---
+// When enabled, audio is captured in chunks and transcribed as you speak, so
+// long dictations are transcribed during recording instead of all at the end.
+// Default OFF — enable via the Live toggle or the L shortcut.
+let liveMode = localStorage.getItem('liveMode') === 'true'; // default OFF
+let liveStream = null;            // the mic MediaStream while live-recording
+let liveScriptNode = null;        // ScriptProcessorNode capturing raw PCM
+let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
+let liveWriteIndex = 0;           // how many samples written into livePcmSamples
+let liveLastChunkEndIndex = 0;    // absolute sample index of the last sent chunk
+let liveChunkTimer = null;        // interval that sends chunks
+let liveChunkSeq = 0;             // incrementing sequence for chunks
+let liveNextSeq = 0;              // next sequence to append in order
+let livePending = new Map();      // seq -> transcribed text (out-of-order buffer)
+let liveInflight = new Set();     // pending chunk transcription promises
+let livePaused = false;           // true while paused (discard captured audio)
+const CHUNK_DURATION_MS = 10000;  // send a chunk every 10 seconds (for long dictation sessions)
+const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
+const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
+
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
 const pauseBtn   = document.getElementById('pauseBtn');
@@ -54,6 +74,16 @@ if (appendToggle) {
         setAccumulatedTranscript(onScreen);
       }
     }
+  });
+}
+
+// ── Live mode toggle ──
+const liveToggle = document.getElementById('liveToggle');
+if (liveToggle) {
+  liveToggle.checked = liveMode;
+  liveToggle.addEventListener('change', () => {
+    liveMode = liveToggle.checked;
+    localStorage.setItem('liveMode', liveMode);
   });
 }
 
@@ -1259,44 +1289,346 @@ async function startRecording() {
     isRecording = true;
     setStatus('Recording…', 'active');
 
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    if (liveMode) {
+      startLiveCapture(stream);
+    } else {
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
-    mediaRecorder.onstop = async () => {
-      cancelAnimationFrame(animationId);
-      stopTimer(); clearWaveform();
-      toggleBtn.classList.remove('recording');
-      isPaused = false;
-      pauseBtn.style.display = 'none';
+      mediaRecorder.onstop = async () => {
+        cancelAnimationFrame(animationId);
+        stopTimer(); clearWaveform();
+        toggleBtn.classList.remove('recording');
+        isPaused = false;
+        pauseBtn.style.display = 'none';
 
-      if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+        if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
 
-      if (cancelled) {
-        cancelled = false; audioChunks = [];
-        cancelBtn.style.display = 'none';
-        document.querySelector('.action-btns').style.display = '';
-        resetButton(); setStatus('Cancelled', 'error');
-        setTimeout(() => setStatus('Ready'), 1200);
-        return;
-      }
+        if (cancelled) {
+          cancelled = false; audioChunks = [];
+          cancelBtn.style.display = 'none';
+          document.querySelector('.action-btns').style.display = '';
+          resetButton(); setStatus('Cancelled', 'error');
+          setTimeout(() => setStatus('Ready'), 1200);
+          return;
+        }
 
-      const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      try {
-        await saveAudioBackup(audioBlob);
-        inMemoryAudioBlob = null;
-      } catch {
-        inMemoryAudioBlob = audioBlob;
-      }
-      await transcribeAudioBlob(audioBlob);
-    };
-    mediaRecorder.start();
+        const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        try {
+          await saveAudioBackup(audioBlob);
+          inMemoryAudioBlob = null;
+        } catch {
+          inMemoryAudioBlob = audioBlob;
+        }
+        await transcribeAudioBlob(audioBlob);
+      };
+      mediaRecorder.start();
+    }
   } catch (e) {
     console.error('getUserMedia error:', e);
     resetButton();
     setStatus('Microphone access denied or unavailable', 'error');
     setTimeout(() => setStatus('Ready'), 2500);
   }
+}
+
+// ── Live transcription helpers ──
+// Encode a mono Float32Array (values -1..1) into a WAV Blob. WAV is accepted by
+// transcription APIs, unlike short webm chunks.
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  function writeString(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// Append transcribed chunks in order, even if responses arrive out of order.
+function liveFlushPending() {
+  while (livePending.has(liveNextSeq)) {
+    const t = livePending.get(liveNextSeq);
+    livePending.delete(liveNextSeq);
+    if (t) {
+      currentRaw += (currentRaw ? ' ' : '') + t;
+      updateTranscriptDisplay();
+    }
+    liveNextSeq++;
+  }
+}
+
+// Transcribe a chunk and track the promise so stopLiveRecording can wait for it.
+function liveTranscribeChunk(wavBlob, seq) {
+  const promise = (async () => {
+    try {
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'chunk.wav');
+      const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setStatus('Chunk error: ' + (d.error || res.status), 'error');
+        return;
+      }
+      const data = await res.json();
+      livePending.set(seq, (data.rawTranscript || '').trim());
+    } catch (e) {
+      console.error('chunk error', e);
+      setStatus('Chunk upload failed: ' + e.message, 'error');
+    } finally {
+      liveFlushPending();
+    }
+  })();
+  liveInflight.add(promise);
+  promise.finally(() => liveInflight.delete(promise));
+  return promise;
+}
+
+// Simple linear-interpolation downsampler (e.g. 48kHz -> 16kHz).
+// 16kHz is the native rate for speech-to-text models, so this keeps accuracy
+// while producing much smaller WAV files (faster uploads, especially on mobile).
+function resample(samples, fromRate, toRate) {
+  if (fromRate === toRate) return samples;
+  const ratio = toRate / fromRate;
+  const outLen = Math.max(1, Math.round(samples.length * ratio));
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const srcPos = i / ratio;
+    const i0 = Math.floor(srcPos);
+    const i1 = Math.min(i0 + 1, samples.length - 1);
+    const frac = srcPos - i0;
+    out[i] = samples[i0] * (1 - frac) + samples[i1] * frac;
+  }
+  return out;
+}
+
+// Send the newest captured samples as a 16kHz WAV chunk.
+// When force is true, it sends even while paused (used to flush the last bit
+// spoken before the user hits Pause, so it isn't lost).
+function liveSendChunk(force = false) {
+  if (liveWriteIndex <= liveLastChunkEndIndex) return;
+  // Copy only the unconsumed chunk (the last ~10s), not the whole recording.
+  const chunkLen = liveWriteIndex - liveLastChunkEndIndex;
+  const chunkSamples = new Float32Array(chunkLen);
+  chunkSamples.set(livePcmSamples.subarray(liveLastChunkEndIndex, liveWriteIndex));
+  liveLastChunkEndIndex = liveWriteIndex;
+
+  if (livePaused && !force) return; // discard audio captured while paused
+
+  // Downsample to 16kHz, then skip if it's still too short.
+  const resampled = resample(chunkSamples, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+  const minSamples = TARGET_SAMPLE_RATE * MIN_CHUNK_SAMPLES_FACTOR;
+  if (resampled.length < minSamples && !force) return;
+
+  const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
+  const seq = liveChunkSeq++;
+  liveTranscribeChunk(wav, seq);
+
+  // Bound memory: if everything is consumed and the buffer has grown large, reset it.
+  if (liveLastChunkEndIndex >= liveWriteIndex && liveWriteIndex > audioContext.sampleRate * 30) {
+    livePcmSamples = new Float32Array(0);
+    liveWriteIndex = 0;
+    liveLastChunkEndIndex = 0;
+  }
+}
+
+// Set up WAV chunk capture on the existing audioContext/source.
+function startLiveCapture(stream) {
+  liveStream = stream;
+  livePcmSamples = new Float32Array(0);
+  liveWriteIndex = 0;
+  liveLastChunkEndIndex = 0;
+  liveChunkSeq = 0;
+  liveNextSeq = 0;
+  livePending.clear();
+  livePaused = false;
+  currentRaw = '';
+  currentCleaned = '';
+  showingRaw = false;
+
+  liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+  liveScriptNode.onaudioprocess = (e) => {
+    const channel = e.inputBuffer.getChannelData(0);
+    // Grow the buffer only when needed (amortized O(1) per sample). This avoids
+    // copying the whole recording on every callback, which is slow on iPhones.
+    if (liveWriteIndex + channel.length > livePcmSamples.length) {
+      const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
+      const nb = new Float32Array(newLen);
+      nb.set(livePcmSamples.subarray(0, liveWriteIndex), 0);
+      livePcmSamples = nb;
+    }
+    livePcmSamples.set(channel, liveWriteIndex);
+    liveWriteIndex += channel.length;
+  };
+  source.connect(liveScriptNode);
+  liveScriptNode.connect(audioContext.destination);
+
+  liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+  updateTranscriptDisplay();
+}
+
+// Tear down live capture and process the accumulated transcript.
+async function stopLiveRecording() {
+  clearInterval(liveChunkTimer);
+  liveSendChunk(); // send the final partial chunk
+
+  cancelAnimationFrame(animationId);
+  stopTimer(); clearWaveform();
+  toggleBtn.classList.remove('recording');
+  isPaused = false;
+  pauseBtn.style.display = 'none';
+
+  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+  liveScriptNode = null;
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null;
+
+  // Wait for all in-flight chunk transcriptions to finish so the final spoken
+  // bit is captured before we clean up. Then flush any ordered chunks still buffered.
+  try {
+    await Promise.allSettled([...liveInflight]);
+  } catch {}
+  liveFlushPending();
+
+  await finishLiveRecording();
+}
+
+// Cancel live recording — discard everything, no cleanup.
+async function cancelLiveRecording() {
+  clearInterval(liveChunkTimer);
+  cancelAnimationFrame(animationId);
+  stopTimer(); clearWaveform();
+  toggleBtn.classList.remove('recording');
+  isPaused = false;
+  pauseBtn.style.display = 'none';
+  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+  liveScriptNode = null;
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null;
+  cancelBtn.style.display = 'none';
+  document.querySelector('.action-btns').style.display = '';
+  resetButton(); setStatus('Cancelled', 'error');
+  setTimeout(() => setStatus('Ready'), 1200);
+}
+
+// On stop: clean up the accumulated live raw text (or keep raw), update history, copy.
+async function finishLiveRecording() {
+  const raw = currentRaw;
+  if (!raw.trim()) {
+    clearProcessingUI();
+    resetButton();
+    setStatus('Ready');
+    return;
+  }
+
+  toggleBtn.classList.add('processing');
+  setStatusProcessing('Cleaning up…');
+  const abortController = new AbortController();
+  processingAbortController = abortController;
+
+  let copiedLabel = '';
+  try {
+    if (cleanToggle.checked) {
+      // Try streaming cleanup first
+      let cleaned = '';
+      let streamSuccess = false;
+      try {
+        ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
+      } catch (streamErr) {
+        if (streamErr.name === 'UnauthorizedError') { window.location.href = '/login'; return; }
+        if (streamErr.name === 'AbortError') throw streamErr;
+        cleaned = '';
+        streamSuccess = false;
+      }
+      // Fallback: non-streaming cleanup
+      if (!streamSuccess || !cleaned) {
+        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
+        if (cRes.status === 401) { window.location.href = '/login'; return; }
+        if (!cRes.ok) {
+          currentCleaned = '';
+          updateTranscriptDisplay(true);
+          addToHistory(raw, raw);
+          if (isAppendMode()) {
+            const accumulated = appendToTranscript(raw);
+            await copyToClipboard(accumulated);
+          } else {
+            await copyToClipboard(raw);
+          }
+          setStatus('Cleanup failed — use Clean up to retry', 'error');
+          setTimeout(() => setStatus('Ready'), 3000);
+          clearProcessingUI();
+          resetButton();
+          return;
+        }
+        const cData = await cRes.json();
+        if (cData.error) throw new Error(cData.error);
+        cleaned = cData.cleanedTranscript || '';
+      }
+      currentCleaned = cleaned;
+      showingRaw = false;
+      if (isAppendMode() && cleaned) {
+        const accumulated = appendToTranscript(cleaned);
+        currentCleaned = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, cleaned);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+      }
+    } else {
+      currentCleaned = '';
+      showingRaw = false;
+      if (isAppendMode() && raw.trim()) {
+        const accumulated = appendToTranscript(raw);
+        currentRaw = accumulated;
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw);
+        await copyToClipboard(accumulated);
+        copiedLabel = 'Appended & copied';
+      } else {
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw); await copyToClipboard(raw);
+        copiedLabel = 'Raw copied';
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      setStatus('Cancelled', 'error');
+      setTimeout(() => setStatus('Ready'), 1500);
+    } else {
+      setStatus('Error: ' + e.message, 'error');
+      setTimeout(() => setStatus('Ready'), 3000);
+    }
+  }
+  processingAbortController = null;
+  clearProcessingUI();
+  resetButton();
+  setStatus(copiedLabel, 'done');
+  setTimeout(() => setStatus('Ready'), 2000);
 }
 
 function resetButton() {
@@ -1311,12 +1643,14 @@ function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (liveMode) { cancelLiveRecording(); return; }
   cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (liveMode) { stopLiveRecording(); return; }
   mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 
@@ -1332,6 +1666,25 @@ const pauseViaMute = /iP(hone|ad|od)/.test(navigator.userAgent)
 function togglePause() {
   if (!isRecording) return;
   if (navigator.vibrate) navigator.vibrate(10);
+
+  // Live mode: pause just stops sending chunks; captured audio is discarded while paused.
+  if (liveMode) {
+    if (isPaused) {
+      livePaused = false;
+      resumeTimer();
+      isPaused = false;
+      pauseBtn.textContent = 'Pause';
+      setStatus('Recording…', 'active');
+    } else {
+      livePaused = true;
+      liveSendChunk(true); // flush the last bit spoken before pausing
+      pauseTimer();
+      isPaused = true;
+      pauseBtn.textContent = 'Resume';
+      setStatus(navigator.maxTouchPoints > 0 ? 'Paused' : 'Paused — press P to resume', 'active');
+    }
+    return;
+  }
 
   if (!mediaRecorder) return;
   if (isPaused) {
@@ -1445,6 +1798,11 @@ document.addEventListener('keydown', e => {
   if (e.key === 't' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     cleanToggle.checked = !cleanToggle.checked; cleanToggle.dispatchEvent(new Event('change'));
+  }
+  // Toggle live transcription
+  if (e.key === 'l' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (liveToggle) { liveToggle.checked = !liveToggle.checked; liveToggle.dispatchEvent(new Event('change')); }
   }
   // New recording (clear + start)
   if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {

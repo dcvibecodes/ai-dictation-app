@@ -86,6 +86,13 @@
           </label>
           <label class="clean-toggle-label">
             <span class="toggle-switch">
+              <input type="checkbox" id="liveToggle">
+              <span class="toggle-slider"></span>
+            </span>
+            <span>Live</span>
+          </label>
+          <label class="clean-toggle-label">
+            <span class="toggle-switch">
               <input type="checkbox" id="appendToggle">
               <span class="toggle-slider"></span>
             </span>
@@ -225,6 +232,18 @@
           </div>
         </details>
         <details class="help-details">
+          <summary class="help-summary">Live transcription</summary>
+          <div class="help-content">
+            <p>The <strong>Live</strong> toggle on the record tab changes how recording is transcribed. It is off by default.</p>
+            <ul class="help-list">
+              <li><strong>Live OFF</strong> — the app records the whole thing and transcribes it only after you stop (the default behavior).</li>
+              <li><strong>Live ON</strong> — while you record, the audio is sent in ~10-second chunks and each chunk is transcribed as you go. This is designed for <strong>long dictation sessions</strong> (1–2 minutes or more): by the time you stop, most of the audio has already been transcribed during recording, so you don't wait for the whole transcription at the end.</li>
+              <li><strong>Why 10 seconds?</strong> Longer chunks mean far fewer chunk boundaries than 3-second chunks, which greatly reduces the chance of a word being cut off at a boundary. The trade-off is that text appears every ~10 seconds rather than instantly.</li>
+              <li><strong>Note:</strong> Live mode transcribes the same total audio, so API cost is roughly comparable (it may use slightly more due to chunking); it's mainly a wait-time trade for long dictations.</li>
+            </ul>
+          </div>
+        </details>
+        <details class="help-details">
           <summary class="help-summary">Custom prompts</summary>
           <div class="help-content">
             <p>You can configure up to <strong>4 custom cleanup prompts</strong> in addition to the built-in Default prompt. Manage them from the <strong>Cleanup Prompts</strong> section in the Settings tab.</p>
@@ -274,6 +293,7 @@
               <li><kbd>A</kbd> — Toggle append mode</li>
               <li><kbd>T</kbd> — Toggle auto-clean</li>
               <li><kbd>1–5</kbd> — Switch cleanup prompt by position</li>
+              <li><kbd>L</kbd> — Toggle live transcription</li>
               <li><kbd>M</kbd> — Toggle light/dark theme</li>
               <li><kbd>D</kbd> — Dictate tab</li>
               <li><kbd>H</kbd> — History tab</li>
@@ -407,6 +427,7 @@
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
       <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
+      <div class="shortcut-item"><kbd>L</kbd><span>Toggle live transcription</span></div>
       <div class="shortcut-item"><kbd>M</kbd><span>Toggle light/dark theme</span></div>
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
