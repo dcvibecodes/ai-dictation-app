@@ -378,14 +378,27 @@ function getCleanupClient() {
 // Two transcription engines are supported:
 //   1. "whisper" — any Whisper-compatible API (Mistral Voxtral, OpenAI, Groq, etc.)
 //      via the OpenAI SDK's audio.transcriptions endpoint.
-//   2. "gemini"  — Google's native Gemini API. Gemini is a multimodal LLM, so
-//      audio is sent inline (base64) to the generateContent endpoint with a
-//      "transcribe verbatim" prompt. Google's OpenAI-compatible layer does NOT
-//      expose an /audio/transcriptions endpoint, which is why this uses the
-//      native REST API instead.
-// Default Gemini base URL (Google's native API). Editable in Settings so users
-// can point at a different Gemini-compatible provider.
-const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+//   2. "gemini"  — Google's OpenAI-compatible layer. Gemini is a multimodal LLM,
+//      so audio is sent as an OpenAI-style `input_audio` content part to the
+//      `/chat/completions` endpoint with a "transcribe verbatim" prompt. The
+//      base URL setting is the OpenAI-compatible endpoint (e.g.
+//      https://generativelanguage.googleapis.com/v1beta/openai/) — the code
+//      appends `/chat/completions` at request time, never to the saved setting.
+// Default Gemini base URL (Google's OpenAI-compatible layer). Editable in Settings.
+const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+
+// Map a MIME type to the audio format Google's OpenAI-compatible layer accepts.
+// Supported: wav, mp3, aiff, aac, ogg, flac. WebM is NOT in Google's list, so
+// fall back to 'wav' (Live mode already sends WAV, which is fully supported).
+function geminiAudioFormat(mimeType) {
+  const m = (mimeType || '').toLowerCase();
+  if (m.includes('mp3') || m.includes('mpeg')) return 'mp3';
+  if (m.includes('aac') || m.includes('m4a') || m.includes('mp4')) return 'aac';
+  if (m.includes('ogg')) return 'ogg';
+  if (m.includes('flac')) return 'flac';
+  if (m.includes('aiff')) return 'aiff';
+  return 'wav'; // default — covers webm and wav
+}
 
 // Transcribe an audio file using the configured engine. Returns the raw text.
 async function transcribeAudio(audioPath, mimeType) {
@@ -402,7 +415,7 @@ async function transcribeAudio(audioPath, mimeType) {
     // Gemini accepts inline audio up to ~20MB. The app's own upload cap is 50MB,
     // so a recording between 20–50MB will work with Whisper but fail here.
     const audioB64 = fs.readFileSync(audioPath).toString('base64');
-    const mime = mimeType || 'audio/webm';
+    const format = geminiAudioFormat(mimeType);
 
     // Build the transcription instruction. The language/hint are optional and
     // only included when configured, mirroring the Whisper path.
@@ -410,20 +423,23 @@ async function transcribeAudio(audioPath, mimeType) {
     if (language) instruction += ` The audio is in language code: ${language}.`;
     if (hint) instruction += ` Use this vocabulary for proper nouns and jargon: ${hint}.`;
 
+    // OpenAI-compatible chat request with an audio content part.
     const body = {
-      contents: [
+      model,
+      messages: [
         {
-          parts: [
-            { text: instruction },
-            { inline_data: { mime_type: mime, data: audioB64 } }
+          role: 'user',
+          content: [
+            { type: 'text', text: instruction },
+            { type: 'input_audio', input_audio: { data: audioB64, format } }
           ]
         }
       ]
     };
 
-    const resp = await fetch(`${baseURL}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+    const resp = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS)
     });
@@ -436,7 +452,7 @@ async function transcribeAudio(audioPath, mimeType) {
     }
 
     const data = await resp.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    const text = data?.choices?.[0]?.message?.content || '';
     if (!text) throw new Error('Gemini returned an empty transcription.');
     return text;
   }
@@ -472,9 +488,17 @@ app.post('/api/test-transcription', requireOwner, async (req, res) => {
       const testUrl = (geminiUrl || getEffectiveSetting('GEMINI_TRANSCRIPTION_BASE_URL') || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '');
       const testModel = geminiModel || getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
 
-      // Verify by listing models — confirms the key + base URL are valid.
-      const resp = await fetch(`${testUrl}/models?key=${encodeURIComponent(testKey)}`, {
-        method: 'GET',
+      // Verify with a tiny text-only chat completion to the OpenAI-compatible
+      // endpoint. This confirms the key, base URL, and model all work together
+      // (the same endpoint the actual transcription uses).
+      const resp = await fetch(`${testUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testKey}` },
+        body: JSON.stringify({
+          model: testModel,
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'ping' }]
+        }),
         signal: AbortSignal.timeout(AI_TIMEOUT_MS)
       });
       if (!resp.ok) {

@@ -156,8 +156,8 @@
             </div>
             <div class="engine-fields" id="engineGemini">
               <label>API Key <span class="optional">(separate from cleanup — even if it's the same key)</span><input type="text" id="setGeminiTranscriptionKey" class="input input-masked" placeholder="AIza..." autocomplete="off"></label>
-              <label>Base URL <span class="optional">(defaults to Google's native API)</span><input type="text" id="setGeminiTranscriptionUrl" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta"></label>
-              <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash"></label>
+              <label>Base URL <span class="optional">(defaults to Google's OpenAI-compatible API)</span><input type="text" id="setGeminiTranscriptionUrl" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta/openai"></label>
+              <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash-lite"></label>
             </div>
             <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
             <label>Vocabulary hint <span class="optional">(optional — names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
@@ -244,7 +244,7 @@
             <p>The app supports <strong>two transcription engines</strong>, chosen from the <strong>Engine</strong> dropdown in Settings > API Configuration. Each engine uses its own API key, so you can switch freely without losing your other configuration.</p>
             <ul class="help-list">
               <li><strong>Whisper-compatible</strong> — works with any provider that exposes the OpenAI-style <code>/audio/transcriptions</code> endpoint: <strong>Mistral Voxtral</strong>, <strong>OpenAI Whisper</strong>, <strong>Groq</strong>, and others. This is a dedicated speech-to-text model. Configure its API key, base URL, and model (e.g. <code>voxtral-mini-latest</code>).</li>
-              <li><strong>Gemini (Google)</strong> — uses Google's native Gemini API. Gemini is a multimodal LLM, so audio is sent inline and transcribed with a "transcribe verbatim" prompt. Configure its API key and model (e.g. <code>gemini-2.5-flash</code>). This is often <strong>much cheaper</strong> than dedicated speech models.</li>
+              <li><strong>Gemini (Google)</strong> — uses Google's OpenAI-compatible layer. Gemini is a multimodal LLM, so audio is sent as an OpenAI-style <code>input_audio</code> part to the <code>/chat/completions</code> endpoint with a "transcribe verbatim" prompt. Configure its API key, base URL (defaults to <code>https://generativelanguage.googleapis.com/v1beta/openai</code>), and model (e.g. <code>gemini-2.5-flash-lite</code>). This is often <strong>much cheaper</strong> than dedicated speech models.</li>
             </ul>
             <p><strong>Key differences:</strong></p>
             <ul class="help-list">
