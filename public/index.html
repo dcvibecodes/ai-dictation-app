@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=15">
+  <link rel="stylesheet" href="styles.css?v=16">
 </head>
 <body>
   <div class="app">
@@ -143,9 +143,21 @@
         <div class="settings-grid">
           <fieldset class="settings-group">
             <legend>Transcription</legend>
-            <label>API Key<input type="text" id="setTranscriptionKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
-            <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
-            <label>Model<input type="text" id="setTranscriptionModel" class="input" placeholder="whisper-1"></label>
+            <label>Engine
+              <select id="setTranscriptionEngine" class="input">
+                <option value="whisper">Whisper-compatible (Mistral Voxtral, OpenAI, Groq)</option>
+                <option value="gemini">Gemini (Google)</option>
+              </select>
+            </label>
+            <div class="engine-fields" id="engineWhisper">
+              <label>API Key<input type="text" id="setTranscriptionKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
+              <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
+              <label>Model<input type="text" id="setTranscriptionModel" class="input" placeholder="whisper-1"></label>
+            </div>
+            <div class="engine-fields" id="engineGemini">
+              <label>API Key <span class="optional">(separate from cleanup — even if it's the same key)</span><input type="text" id="setGeminiTranscriptionKey" class="input input-masked" placeholder="AIza..." autocomplete="off"></label>
+              <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash"></label>
+            </div>
             <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
             <label>Vocabulary hint <span class="optional">(optional — names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
           </fieldset>
@@ -156,7 +168,7 @@
             <label>Model<input type="text" id="setCleanupModel" class="input" placeholder="gpt-4.1-mini"></label>
           </fieldset>
         </div>
-        <p class="settings-note">Works with Mistral, OpenAI, Grok, Gemini, or any provider that supports the same API format. Enter a new key to update it.</p>
+        <p class="settings-note">Transcription supports two engines: <strong>Whisper-compatible</strong> (Mistral Voxtral, OpenAI, Groq) or <strong>Gemini</strong> (Google). Each uses its own API key. Cleanup is configured separately. Enter a new key to update it.</p>
       </div>
 
       <!-- Prompts -->
@@ -215,6 +227,23 @@
               <li><strong>Auto-cleanup</strong> (if enabled) sends the raw transcript to a second API for grammar fixing, punctuation, and formatting.</li>
               <li>The cleaned result is automatically <strong>copied to your clipboard</strong> and saved to history.</li>
             </ol>
+          </div>
+        </details>
+        <details class="help-details">
+          <summary class="help-summary">Transcription engines (Whisper vs Gemini)</summary>
+          <div class="help-content">
+            <p>The app supports <strong>two transcription engines</strong>, chosen from the <strong>Engine</strong> dropdown in Settings > API Configuration. Each engine uses its own API key, so you can switch freely without losing your other configuration.</p>
+            <ul class="help-list">
+              <li><strong>Whisper-compatible</strong> — works with any provider that exposes the OpenAI-style <code>/audio/transcriptions</code> endpoint: <strong>Mistral Voxtral</strong>, <strong>OpenAI Whisper</strong>, <strong>Groq</strong>, and others. This is a dedicated speech-to-text model. Configure its API key, base URL, and model (e.g. <code>voxtral-mini-latest</code>).</li>
+              <li><strong>Gemini (Google)</strong> — uses Google's native Gemini API. Gemini is a multimodal LLM, so audio is sent inline and transcribed with a "transcribe verbatim" prompt. Configure its API key and model (e.g. <code>gemini-2.5-flash</code>). This is often <strong>much cheaper</strong> than dedicated speech models.</li>
+            </ul>
+            <p><strong>Key differences:</strong></p>
+            <ul class="help-list">
+              <li><strong>Cost</strong> — Gemini bills per token (audio tokenizes very efficiently), so it's typically far cheaper per minute than Whisper-compatible models that bill per minute of audio.</li>
+              <li><strong>File size limit</strong> — Gemini accepts inline audio up to <strong>~20 MB</strong> (roughly 10–20 minutes of speech). Whisper-compatible engines accept up to the app's 50 MB cap. For typical dictation this won't matter, but very long single recordings may need the Whisper engine.</li>
+              <li><strong>Language & vocabulary hint</strong> — both engines respect the Language and Vocabulary hint fields in Settings.</li>
+            </ul>
+            <p><strong>Note:</strong> The Gemini transcription key is <em>separate</em> from the Cleanup key — even if you use the same key for both, enter it in both fields. This lets you use different providers for transcription and cleanup if you want.</p>
           </div>
         </details>
         <details class="help-details">
@@ -441,6 +470,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=15"></script>
+  <script src="script.js?v=16"></script>
 </body>
 </html>

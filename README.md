@@ -176,13 +176,30 @@ dictation-app/
 
 ## API Configuration
 
-Configure from the Settings tab. Works with any provider that uses the same API format:
+Configure from the Settings tab. Transcription supports **two engines**, chosen from the **Engine** dropdown. Each engine uses its own API key, so you can switch freely without losing your other configuration.
+
+### Transcription engines
+
+| Engine | What it is | Fields |
+|---|---|---|
+| **Whisper-compatible** | Any provider exposing the OpenAI-style `/audio/transcriptions` endpoint: Mistral Voxtral, OpenAI Whisper, Groq, etc. | API Key, Base URL, Model |
+| **Gemini (Google)** | Google's native Gemini API. Gemini is a multimodal LLM — audio is sent inline and transcribed with a "transcribe verbatim" prompt. Often much cheaper than dedicated speech models. | API Key (separate from cleanup), Model |
+
+**Key differences:**
+- **Cost** — Gemini bills per token (audio tokenizes very efficiently), so it's typically far cheaper per minute than Whisper-compatible models that bill per minute of audio.
+- **File size limit** — Gemini accepts inline audio up to ~20 MB (roughly 10–20 minutes of speech). Whisper-compatible engines accept up to the app's 50 MB cap. For typical dictation this won't matter, but very long single recordings may need the Whisper engine.
+- **Language & vocabulary hint** — both engines respect the Language and Vocabulary hint fields.
+
+### All settings fields
 
 | Field | Example |
 |---|---|
-| Transcription API Key | Mistral key, OpenAI key, etc. |
+| Transcription Engine | `whisper` (default) or `gemini` |
+| Transcription API Key | Mistral key, OpenAI key, etc. (Whisper engine) |
 | Transcription Base URL | `https://api.mistral.ai/v1` (required for non-OpenAI) |
 | Transcription Model | `whisper-1`, `voxtral-mini-latest` |
+| Gemini Transcription API Key | Google AI Studio key (Gemini engine) — separate from cleanup, even if it's the same key |
+| Gemini Transcription Model | `gemini-2.5-flash` |
 | Transcription Language | Optional — e.g. `en`; blank = auto-detect |
 | Vocabulary Hint | Optional — names/jargon to bias spelling, e.g. `Acme, Jira, WebM` |
 | Cleanup API Key | Your provider's key |

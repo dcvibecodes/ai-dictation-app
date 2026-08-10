@@ -1082,19 +1082,37 @@ async function loadSettingsUI() {
     const res = await fetch('/api/settings');
     if (res.status === 401) { window.location.href = '/login'; return; }
     const s = await res.json();
+    document.getElementById('setTranscriptionEngine').value = s.transcriptionEngine || 'whisper';
     document.getElementById('setTranscriptionKey').value = '';
     document.getElementById('setTranscriptionKey').placeholder = s.transcriptionKey || 'sk-...';
     document.getElementById('setTranscriptionUrl').value = s.transcriptionUrl;
     document.getElementById('setTranscriptionModel').value = s.transcriptionModel;
+    document.getElementById('setGeminiTranscriptionKey').value = '';
+    document.getElementById('setGeminiTranscriptionKey').placeholder = s.geminiTranscriptionKey || 'AIza...';
+    document.getElementById('setGeminiTranscriptionModel').value = s.geminiTranscriptionModel || '';
     document.getElementById('setTranscriptionLanguage').value = s.transcriptionLanguage || '';
     document.getElementById('setTranscriptionHint').value = s.transcriptionHint || '';
     document.getElementById('setCleanupKey').value = '';
     document.getElementById('setCleanupKey').placeholder = s.cleanupKey || 'sk-...';
     document.getElementById('setCleanupUrl').value = s.cleanupUrl;
     document.getElementById('setCleanupModel').value = s.cleanupModel;
+    updateEngineFields();
   } catch (e) { console.error('loadSettingsUI error:', e); }
   settingsLocked = true;
   applySettingsLock();
+}
+
+// Show/hide the engine-specific fields based on the selected transcription engine.
+function updateEngineFields() {
+  const engine = document.getElementById('setTranscriptionEngine').value;
+  document.getElementById('engineWhisper').style.display = engine === 'whisper' ? '' : 'none';
+  document.getElementById('engineGemini').style.display = engine === 'gemini' ? '' : 'none';
+}
+
+// Wire up the engine dropdown to toggle its fields.
+const engineSelect = document.getElementById('setTranscriptionEngine');
+if (engineSelect) {
+  engineSelect.addEventListener('change', updateEngineFields);
 }
 
 function applySettingsLock() {
@@ -1114,11 +1132,14 @@ function unlockSettings() {
 
 async function saveSettings() {
   const body = {
+    transcriptionEngine: document.getElementById('setTranscriptionEngine').value,
     transcriptionKey: document.getElementById('setTranscriptionKey').value.trim(),
     transcriptionUrl: document.getElementById('setTranscriptionUrl').value.trim(),
     transcriptionModel: document.getElementById('setTranscriptionModel').value.trim(),
     transcriptionLanguage: document.getElementById('setTranscriptionLanguage').value.trim(),
     transcriptionHint: document.getElementById('setTranscriptionHint').value.trim(),
+    geminiTranscriptionKey: document.getElementById('setGeminiTranscriptionKey').value.trim(),
+    geminiTranscriptionModel: document.getElementById('setGeminiTranscriptionModel').value.trim(),
     cleanupKey: document.getElementById('setCleanupKey').value.trim(),
     cleanupUrl: document.getElementById('setCleanupUrl').value.trim(),
     cleanupModel: document.getElementById('setCleanupModel').value.trim()

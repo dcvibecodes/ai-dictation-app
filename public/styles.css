@@ -487,6 +487,8 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .settings-group label .optional { font-weight: 400; font-style: italic; }
 .settings-group .input { font-size: 0.78rem; padding: 7px 9px; }
 .settings-group .input.input-locked { opacity: 0.5; cursor: not-allowed; background: var(--bg-surface); }
+.engine-fields { display: flex; flex-direction: column; gap: 8px; }
+#engineGemini { display: none; }
 
 /* ── Animation options ── */
 .animation-options { display: flex; flex-direction: column; gap: 8px; }

@@ -44,6 +44,7 @@ function loadSettings() {
     const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     // Decrypt keys so the rest of the app works with plaintext values
     if (raw.TRANSCRIPTION_API_KEY) raw.TRANSCRIPTION_API_KEY = decryptSecret(raw.TRANSCRIPTION_API_KEY);
+    if (raw.GEMINI_TRANSCRIPTION_API_KEY) raw.GEMINI_TRANSCRIPTION_API_KEY = decryptSecret(raw.GEMINI_TRANSCRIPTION_API_KEY);
     if (raw.CLEANUP_API_KEY) raw.CLEANUP_API_KEY = decryptSecret(raw.CLEANUP_API_KEY);
     settingsCache = raw;
   }
@@ -57,6 +58,7 @@ function saveSettings(settings) {
   const toWrite = {
     ...settings,
     TRANSCRIPTION_API_KEY: settings.TRANSCRIPTION_API_KEY ? encryptSecret(settings.TRANSCRIPTION_API_KEY) : '',
+    GEMINI_TRANSCRIPTION_API_KEY: settings.GEMINI_TRANSCRIPTION_API_KEY ? encryptSecret(settings.GEMINI_TRANSCRIPTION_API_KEY) : '',
     CLEANUP_API_KEY: settings.CLEANUP_API_KEY ? encryptSecret(settings.CLEANUP_API_KEY) : ''
   };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(toWrite, null, 2), 'utf8');
@@ -276,11 +278,14 @@ app.get('/', (req, res) => {
 app.get('/api/settings', requireOwner, (req, res) => {
   const s = loadSettings();
   res.json({
+    transcriptionEngine: s.TRANSCRIPTION_ENGINE || 'whisper',
     transcriptionKey: s.TRANSCRIPTION_API_KEY ? '••••' + s.TRANSCRIPTION_API_KEY.slice(-4) : '',
     transcriptionUrl: s.TRANSCRIPTION_BASE_URL || '',
     transcriptionModel: s.TRANSCRIPTION_MODEL || '',
     transcriptionLanguage: s.TRANSCRIPTION_LANGUAGE || '',
     transcriptionHint: s.TRANSCRIPTION_PROMPT || '',
+    geminiTranscriptionKey: s.GEMINI_TRANSCRIPTION_API_KEY ? '••••' + s.GEMINI_TRANSCRIPTION_API_KEY.slice(-4) : '',
+    geminiTranscriptionModel: s.GEMINI_TRANSCRIPTION_MODEL || '',
     cleanupKey: s.CLEANUP_API_KEY ? '••••' + s.CLEANUP_API_KEY.slice(-4) : '',
     cleanupUrl: s.CLEANUP_BASE_URL || '',
     cleanupModel: s.CLEANUP_MODEL || ''
@@ -288,14 +293,17 @@ app.get('/api/settings', requireOwner, (req, res) => {
 });
 
 app.post('/api/settings', requireOwner, (req, res) => {
-  const { transcriptionKey, transcriptionUrl, transcriptionModel, transcriptionLanguage, transcriptionHint, cleanupKey, cleanupUrl, cleanupModel } = req.body;
+  const { transcriptionEngine, transcriptionKey, transcriptionUrl, transcriptionModel, transcriptionLanguage, transcriptionHint, geminiTranscriptionKey, geminiTranscriptionModel, cleanupKey, cleanupUrl, cleanupModel } = req.body;
   const current = loadSettings();
 
+  if (transcriptionEngine !== undefined) current.TRANSCRIPTION_ENGINE = transcriptionEngine;
   if (transcriptionKey) current.TRANSCRIPTION_API_KEY = transcriptionKey;
   if (transcriptionUrl !== undefined) current.TRANSCRIPTION_BASE_URL = transcriptionUrl;
   if (transcriptionModel !== undefined) current.TRANSCRIPTION_MODEL = transcriptionModel;
   if (transcriptionLanguage !== undefined) current.TRANSCRIPTION_LANGUAGE = transcriptionLanguage;
   if (transcriptionHint !== undefined) current.TRANSCRIPTION_PROMPT = transcriptionHint;
+  if (geminiTranscriptionKey) current.GEMINI_TRANSCRIPTION_API_KEY = geminiTranscriptionKey;
+  if (geminiTranscriptionModel !== undefined) current.GEMINI_TRANSCRIPTION_MODEL = geminiTranscriptionModel;
   if (cleanupKey) current.CLEANUP_API_KEY = cleanupKey;
   if (cleanupUrl !== undefined) current.CLEANUP_BASE_URL = cleanupUrl;
   if (cleanupModel !== undefined) current.CLEANUP_MODEL = cleanupModel;
@@ -364,6 +372,86 @@ function getCleanupClient() {
   return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS });
 }
 
+// --- Transcription engine dispatch ---
+// Two transcription engines are supported:
+//   1. "whisper" — any Whisper-compatible API (Mistral Voxtral, OpenAI, Groq, etc.)
+//      via the OpenAI SDK's audio.transcriptions endpoint.
+//   2. "gemini"  — Google's native Gemini API. Gemini is a multimodal LLM, so
+//      audio is sent inline (base64) to the generateContent endpoint with a
+//      "transcribe verbatim" prompt. Google's OpenAI-compatible layer does NOT
+//      expose an /audio/transcriptions endpoint, which is why this uses the
+//      native REST API instead.
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
+// Transcribe an audio file using the configured engine. Returns the raw text.
+async function transcribeAudio(audioPath, mimeType) {
+  const engine = getEffectiveSetting('TRANSCRIPTION_ENGINE') || 'whisper';
+
+  if (engine === 'gemini') {
+    const key = getEffectiveSetting('GEMINI_TRANSCRIPTION_API_KEY');
+    if (!key) throw new Error('Gemini transcription API key not configured. Go to Settings tab.');
+    const model = getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
+    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+
+    // Gemini accepts inline audio up to ~20MB. The app's own upload cap is 50MB,
+    // so a recording between 20–50MB will work with Whisper but fail here.
+    const audioB64 = fs.readFileSync(audioPath).toString('base64');
+    const mime = mimeType || 'audio/webm';
+
+    // Build the transcription instruction. The language/hint are optional and
+    // only included when configured, mirroring the Whisper path.
+    let instruction = 'Transcribe the audio verbatim. Output only the transcribed text with no commentary.';
+    if (language) instruction += ` The audio is in language code: ${language}.`;
+    if (hint) instruction += ` Use this vocabulary for proper nouns and jargon: ${hint}.`;
+
+    const body = {
+      contents: [
+        {
+          parts: [
+            { text: instruction },
+            { inline_data: { mime_type: mime, data: audioB64 } }
+          ]
+        }
+      ]
+    };
+
+    const resp = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      const err = new Error(`Gemini transcription failed (${resp.status}): ${errText.slice(0, 300)}`);
+      err.status = resp.status;
+      throw err;
+    }
+
+    const data = await resp.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    if (!text) throw new Error('Gemini returned an empty transcription.');
+    return text;
+  }
+
+  // Default: Whisper-compatible engine
+  const client = getTranscriptionClient();
+  const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
+  const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+  const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+
+  const params = { file: fs.createReadStream(audioPath), model };
+  // Optional params are only sent when configured — keeps requests identical
+  // to before for providers that reject unknown fields
+  if (language) params.language = language;
+  if (hint) params.prompt = hint;
+
+  const transcription = await client.audio.transcriptions.create(params);
+  return transcription.text;
+}
+
 // Multer error handler — converts file size errors to clean JSON instead of crashing
 function uploadErrorHandler(err, req, res, next) {
   if (err) {
@@ -404,22 +492,13 @@ setInterval(sweepStaleUploads, UPLOAD_SWEEP_INTERVAL_MS).unref(); // unref so th
 app.post('/upload', requireOwner, aiUploadLimiter, upload.single('audio'), uploadErrorHandler, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file received' });
-    const client = getTranscriptionClient();
-    const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
-    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
-    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
     const audioPath = req.file.path;
+    const mimeType = req.file.mimetype;
 
-    const params = { file: fs.createReadStream(audioPath), model };
-    // Optional params are only sent when configured — keeps requests identical
-    // to before for providers that reject unknown fields
-    if (language) params.language = language;
-    if (hint) params.prompt = hint;
-
-    const transcription = await client.audio.transcriptions.create(params);
+    const text = await transcribeAudio(audioPath, mimeType);
 
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-    res.json({ rawTranscript: transcription.text });
+    res.json({ rawTranscript: text });
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     console.error('Upload error:', error.message);
@@ -443,20 +522,13 @@ const aiChunkLimiter = rateLimit({
 app.post('/upload-chunk', requireOwner, aiChunkLimiter, upload.single('audio'), uploadErrorHandler, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio received' });
-    const client = getTranscriptionClient();
-    const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
-    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
-    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
     const audioPath = req.file.path;
+    const mimeType = req.file.mimetype;
 
-    const params = { file: fs.createReadStream(audioPath), model };
-    if (language) params.language = language;
-    if (hint) params.prompt = hint;
-
-    const transcription = await client.audio.transcriptions.create(params);
+    const text = await transcribeAudio(audioPath, mimeType);
 
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-    res.json({ rawTranscript: transcription.text });
+    res.json({ rawTranscript: text });
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     console.error('Chunk upload error:', error.message);
