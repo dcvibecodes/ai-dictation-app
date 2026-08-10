@@ -183,7 +183,7 @@ Configure from the Settings tab. Transcription supports **two engines**, chosen 
 | Engine | What it is | Fields |
 |---|---|---|
 | **Whisper-compatible** | Any provider exposing the OpenAI-style `/audio/transcriptions` endpoint: Mistral Voxtral, OpenAI Whisper, Groq, etc. | API Key, Base URL, Model |
-| **Gemini (Google)** | Google's native Gemini API. Gemini is a multimodal LLM — audio is sent inline and transcribed with a "transcribe verbatim" prompt. Often much cheaper than dedicated speech models. | API Key (separate from cleanup), Model |
+| **Gemini (Google)** | Google's native Gemini API. Gemini is a multimodal LLM — audio is sent inline and transcribed with a "transcribe verbatim" prompt. Often much cheaper than dedicated speech models. | API Key (separate from cleanup), Base URL, Model |
 
 **Key differences:**
 - **Cost** — Gemini bills per token (audio tokenizes very efficiently), so it's typically far cheaper per minute than Whisper-compatible models that bill per minute of audio.
@@ -199,6 +199,7 @@ Configure from the Settings tab. Transcription supports **two engines**, chosen 
 | Transcription Base URL | `https://api.mistral.ai/v1` (required for non-OpenAI) |
 | Transcription Model | `whisper-1`, `voxtral-mini-latest` |
 | Gemini Transcription API Key | Google AI Studio key (Gemini engine) — separate from cleanup, even if it's the same key |
+| Gemini Transcription Base URL | `https://generativelanguage.googleapis.com/v1beta` (defaults to Google's native API; editable for other providers) |
 | Gemini Transcription Model | `gemini-2.5-flash` |
 | Transcription Language | Optional — e.g. `en`; blank = auto-detect |
 | Vocabulary Hint | Optional — names/jargon to bias spelling, e.g. `Acme, Jira, WebM` |
@@ -207,6 +208,10 @@ Configure from the Settings tab. Transcription supports **two engines**, chosen 
 | Cleanup Model | `gpt-4.1-mini`, `mistral-large-latest` |
 
 The base URL must match the provider that issued the key.
+
+### Test connection
+
+Both the **Transcription** and **Cleanup** sections have a **Test connection** button. It verifies the credentials/URL/model currently in the form (before you save) and shows a green ✓ or red ✗ message right next to the button. This lets you confirm your API config works before committing it.
 
 ---
 

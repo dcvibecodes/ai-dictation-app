@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=16">
+  <link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
   <div class="app">
@@ -156,16 +156,25 @@
             </div>
             <div class="engine-fields" id="engineGemini">
               <label>API Key <span class="optional">(separate from cleanup — even if it's the same key)</span><input type="text" id="setGeminiTranscriptionKey" class="input input-masked" placeholder="AIza..." autocomplete="off"></label>
+              <label>Base URL <span class="optional">(defaults to Google's native API)</span><input type="text" id="setGeminiTranscriptionUrl" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta"></label>
               <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash"></label>
             </div>
             <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
             <label>Vocabulary hint <span class="optional">(optional — names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
+            <div class="test-row">
+              <button type="button" class="btn btn-ghost btn-sm" id="testTranscriptionBtn" onclick="testTranscription()">Test connection</button>
+              <span class="test-result" id="testTranscriptionResult"></span>
+            </div>
           </fieldset>
           <fieldset class="settings-group">
             <legend>Cleanup</legend>
             <label>API Key<input type="text" id="setCleanupKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
             <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setCleanupUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
             <label>Model<input type="text" id="setCleanupModel" class="input" placeholder="gpt-4.1-mini"></label>
+            <div class="test-row">
+              <button type="button" class="btn btn-ghost btn-sm" id="testCleanupBtn" onclick="testCleanup()">Test connection</button>
+              <span class="test-result" id="testCleanupResult"></span>
+            </div>
           </fieldset>
         </div>
         <p class="settings-note">Transcription supports two engines: <strong>Whisper-compatible</strong> (Mistral Voxtral, OpenAI, Groq) or <strong>Gemini</strong> (Google). Each uses its own API key. Cleanup is configured separately. Enter a new key to update it.</p>
@@ -470,6 +479,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=16"></script>
+  <script src="script.js?v=17"></script>
 </body>
 </html>

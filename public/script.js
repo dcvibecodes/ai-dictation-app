@@ -1089,6 +1089,7 @@ async function loadSettingsUI() {
     document.getElementById('setTranscriptionModel').value = s.transcriptionModel;
     document.getElementById('setGeminiTranscriptionKey').value = '';
     document.getElementById('setGeminiTranscriptionKey').placeholder = s.geminiTranscriptionKey || 'AIza...';
+    document.getElementById('setGeminiTranscriptionUrl').value = s.geminiTranscriptionUrl || '';
     document.getElementById('setGeminiTranscriptionModel').value = s.geminiTranscriptionModel || '';
     document.getElementById('setTranscriptionLanguage').value = s.transcriptionLanguage || '';
     document.getElementById('setTranscriptionHint').value = s.transcriptionHint || '';
@@ -1103,10 +1104,13 @@ async function loadSettingsUI() {
 }
 
 // Show/hide the engine-specific fields based on the selected transcription engine.
+// Note: we set 'flex' (not '') so the inline style overrides the CSS
+// `#engineGemini { display: none; }` rule. Setting '' would clear the inline
+// style and let the CSS rule hide the fields again.
 function updateEngineFields() {
   const engine = document.getElementById('setTranscriptionEngine').value;
-  document.getElementById('engineWhisper').style.display = engine === 'whisper' ? '' : 'none';
-  document.getElementById('engineGemini').style.display = engine === 'gemini' ? '' : 'none';
+  document.getElementById('engineWhisper').style.display = engine === 'whisper' ? 'flex' : 'none';
+  document.getElementById('engineGemini').style.display = engine === 'gemini' ? 'flex' : 'none';
 }
 
 // Wire up the engine dropdown to toggle its fields.
@@ -1139,6 +1143,7 @@ async function saveSettings() {
     transcriptionLanguage: document.getElementById('setTranscriptionLanguage').value.trim(),
     transcriptionHint: document.getElementById('setTranscriptionHint').value.trim(),
     geminiTranscriptionKey: document.getElementById('setGeminiTranscriptionKey').value.trim(),
+    geminiTranscriptionUrl: document.getElementById('setGeminiTranscriptionUrl').value.trim(),
     geminiTranscriptionModel: document.getElementById('setGeminiTranscriptionModel').value.trim(),
     cleanupKey: document.getElementById('setCleanupKey').value.trim(),
     cleanupUrl: document.getElementById('setCleanupUrl').value.trim(),
@@ -1147,6 +1152,74 @@ async function saveSettings() {
   const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.status === 401) { window.location.href = '/login'; return; }
   if (res.ok) { loadSettingsUI(); }
+}
+
+// ── Test connection ──
+// These read the values currently in the Settings form (not the saved settings),
+// so the user can test before saving. A green/red message appears next to the button.
+async function testTranscription() {
+  const btn = document.getElementById('testTranscriptionBtn');
+  const result = document.getElementById('testTranscriptionResult');
+  btn.disabled = true; btn.textContent = 'Testing…';
+  result.textContent = ''; result.className = 'test-result';
+
+  const engine = document.getElementById('setTranscriptionEngine').value;
+  const body = {
+    engine,
+    key: document.getElementById('setTranscriptionKey').value.trim(),
+    url: document.getElementById('setTranscriptionUrl').value.trim(),
+    model: document.getElementById('setTranscriptionModel').value.trim(),
+    geminiKey: document.getElementById('setGeminiTranscriptionKey').value.trim(),
+    geminiUrl: document.getElementById('setGeminiTranscriptionUrl').value.trim(),
+    geminiModel: document.getElementById('setGeminiTranscriptionModel').value.trim()
+  };
+
+  try {
+    const res = await fetch('/api/test-transcription', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (data.ok) {
+      result.textContent = '✓ ' + (data.message || 'Connected');
+      result.className = 'test-result test-ok';
+    } else {
+      result.textContent = '✗ ' + (data.error || 'Connection failed');
+      result.className = 'test-result test-fail';
+    }
+  } catch (e) {
+    result.textContent = '✗ ' + e.message;
+    result.className = 'test-result test-fail';
+  }
+  btn.disabled = false; btn.textContent = 'Test connection';
+}
+
+async function testCleanup() {
+  const btn = document.getElementById('testCleanupBtn');
+  const result = document.getElementById('testCleanupResult');
+  btn.disabled = true; btn.textContent = 'Testing…';
+  result.textContent = ''; result.className = 'test-result';
+
+  const body = {
+    key: document.getElementById('setCleanupKey').value.trim(),
+    url: document.getElementById('setCleanupUrl').value.trim(),
+    model: document.getElementById('setCleanupModel').value.trim()
+  };
+
+  try {
+    const res = await fetch('/api/test-cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (data.ok) {
+      result.textContent = '✓ ' + (data.message || 'Connected');
+      result.className = 'test-result test-ok';
+    } else {
+      result.textContent = '✗ ' + (data.error || 'Connection failed');
+      result.className = 'test-result test-fail';
+    }
+  } catch (e) {
+    result.textContent = '✗ ' + e.message;
+    result.className = 'test-result test-fail';
+  }
+  btn.disabled = false; btn.textContent = 'Test connection';
 }
 
 // ── Recording ──

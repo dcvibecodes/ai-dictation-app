@@ -486,9 +486,14 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .settings-group label { display: flex; flex-direction: column; gap: 3px; font-size: 0.68rem; font-weight: 500; color: var(--text-faint); }
 .settings-group label .optional { font-weight: 400; font-style: italic; }
 .settings-group .input { font-size: 0.78rem; padding: 7px 9px; }
+.settings-group select.input { height: auto; line-height: 1.6; }
 .settings-group .input.input-locked { opacity: 0.5; cursor: not-allowed; background: var(--bg-surface); }
 .engine-fields { display: flex; flex-direction: column; gap: 8px; }
 #engineGemini { display: none; }
+.test-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.test-result { font-size: 0.7rem; font-weight: 500; }
+.test-ok { color: var(--success); }
+.test-fail { color: var(--danger); }
 
 /* ── Animation options ── */
 .animation-options { display: flex; flex-direction: column; gap: 8px; }

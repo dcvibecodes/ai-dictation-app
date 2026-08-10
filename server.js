@@ -285,6 +285,7 @@ app.get('/api/settings', requireOwner, (req, res) => {
     transcriptionLanguage: s.TRANSCRIPTION_LANGUAGE || '',
     transcriptionHint: s.TRANSCRIPTION_PROMPT || '',
     geminiTranscriptionKey: s.GEMINI_TRANSCRIPTION_API_KEY ? '••••' + s.GEMINI_TRANSCRIPTION_API_KEY.slice(-4) : '',
+    geminiTranscriptionUrl: s.GEMINI_TRANSCRIPTION_BASE_URL || '',
     geminiTranscriptionModel: s.GEMINI_TRANSCRIPTION_MODEL || '',
     cleanupKey: s.CLEANUP_API_KEY ? '••••' + s.CLEANUP_API_KEY.slice(-4) : '',
     cleanupUrl: s.CLEANUP_BASE_URL || '',
@@ -293,7 +294,7 @@ app.get('/api/settings', requireOwner, (req, res) => {
 });
 
 app.post('/api/settings', requireOwner, (req, res) => {
-  const { transcriptionEngine, transcriptionKey, transcriptionUrl, transcriptionModel, transcriptionLanguage, transcriptionHint, geminiTranscriptionKey, geminiTranscriptionModel, cleanupKey, cleanupUrl, cleanupModel } = req.body;
+  const { transcriptionEngine, transcriptionKey, transcriptionUrl, transcriptionModel, transcriptionLanguage, transcriptionHint, geminiTranscriptionKey, geminiTranscriptionUrl, geminiTranscriptionModel, cleanupKey, cleanupUrl, cleanupModel } = req.body;
   const current = loadSettings();
 
   if (transcriptionEngine !== undefined) current.TRANSCRIPTION_ENGINE = transcriptionEngine;
@@ -303,6 +304,7 @@ app.post('/api/settings', requireOwner, (req, res) => {
   if (transcriptionLanguage !== undefined) current.TRANSCRIPTION_LANGUAGE = transcriptionLanguage;
   if (transcriptionHint !== undefined) current.TRANSCRIPTION_PROMPT = transcriptionHint;
   if (geminiTranscriptionKey) current.GEMINI_TRANSCRIPTION_API_KEY = geminiTranscriptionKey;
+  if (geminiTranscriptionUrl !== undefined) current.GEMINI_TRANSCRIPTION_BASE_URL = geminiTranscriptionUrl;
   if (geminiTranscriptionModel !== undefined) current.GEMINI_TRANSCRIPTION_MODEL = geminiTranscriptionModel;
   if (cleanupKey) current.CLEANUP_API_KEY = cleanupKey;
   if (cleanupUrl !== undefined) current.CLEANUP_BASE_URL = cleanupUrl;
@@ -381,7 +383,9 @@ function getCleanupClient() {
 //      "transcribe verbatim" prompt. Google's OpenAI-compatible layer does NOT
 //      expose an /audio/transcriptions endpoint, which is why this uses the
 //      native REST API instead.
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+// Default Gemini base URL (Google's native API). Editable in Settings so users
+// can point at a different Gemini-compatible provider.
+const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
 // Transcribe an audio file using the configured engine. Returns the raw text.
 async function transcribeAudio(audioPath, mimeType) {
@@ -391,6 +395,7 @@ async function transcribeAudio(audioPath, mimeType) {
     const key = getEffectiveSetting('GEMINI_TRANSCRIPTION_API_KEY');
     if (!key) throw new Error('Gemini transcription API key not configured. Go to Settings tab.');
     const model = getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
+    const baseURL = (getEffectiveSetting('GEMINI_TRANSCRIPTION_BASE_URL') || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '');
     const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
     const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
 
@@ -416,7 +421,7 @@ async function transcribeAudio(audioPath, mimeType) {
       ]
     };
 
-    const resp = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+    const resp = await fetch(`${baseURL}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -451,6 +456,72 @@ async function transcribeAudio(audioPath, mimeType) {
   const transcription = await client.audio.transcriptions.create(params);
   return transcription.text;
 }
+
+// --- Test connection endpoints ---
+// These verify the API credentials/URL/model currently in the Settings form
+// (not the saved settings), so the user can test before saving. They use the
+// values sent in the request body, falling back to saved settings if blank.
+app.post('/api/test-transcription', requireOwner, async (req, res) => {
+  try {
+    const { engine, key, url, model, geminiKey, geminiUrl, geminiModel } = req.body;
+    const activeEngine = engine || getEffectiveSetting('TRANSCRIPTION_ENGINE') || 'whisper';
+
+    if (activeEngine === 'gemini') {
+      const testKey = geminiKey || getEffectiveSetting('GEMINI_TRANSCRIPTION_API_KEY');
+      if (!testKey) return res.status(400).json({ ok: false, error: 'Gemini transcription API key is required.' });
+      const testUrl = (geminiUrl || getEffectiveSetting('GEMINI_TRANSCRIPTION_BASE_URL') || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '');
+      const testModel = geminiModel || getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
+
+      // Verify by listing models — confirms the key + base URL are valid.
+      const resp = await fetch(`${testUrl}/models?key=${encodeURIComponent(testKey)}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return res.status(400).json({ ok: false, error: `Gemini connection failed (${resp.status}): ${errText.slice(0, 200)}` });
+      }
+      return res.json({ ok: true, message: `Connected to Gemini (${testModel})` });
+    }
+
+    // Whisper-compatible engine
+    const testKey = key || getEffectiveSetting('TRANSCRIPTION_API_KEY');
+    if (!testKey) return res.status(400).json({ ok: false, error: 'Transcription API key is required.' });
+    const testUrl = url || getEffectiveSetting('TRANSCRIPTION_BASE_URL') || '';
+    const testModel = model || getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
+
+    const client = new OpenAI({ apiKey: testKey, baseURL: testUrl || undefined, timeout: AI_TIMEOUT_MS });
+    // List models — a cheap call that confirms the key + base URL work.
+    await client.models.list();
+    return res.json({ ok: true, message: `Connected (${testModel})` });
+  } catch (error) {
+    console.error('Test transcription error:', error.message);
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/test-cleanup', requireOwner, async (req, res) => {
+  try {
+    const { key, url, model } = req.body;
+    const testKey = key || getEffectiveSetting('CLEANUP_API_KEY');
+    if (!testKey) return res.status(400).json({ ok: false, error: 'Cleanup API key is required.' });
+    const testUrl = url || getEffectiveSetting('CLEANUP_BASE_URL') || '';
+    const testModel = model || getEffectiveSetting('CLEANUP_MODEL') || 'gpt-4.1-mini';
+
+    const client = new OpenAI({ apiKey: testKey, baseURL: testUrl || undefined, timeout: AI_TIMEOUT_MS });
+    // A tiny chat completion confirms the key, URL, and model all work together.
+    const completion = await client.chat.completions.create({
+      model: testModel,
+      temperature: 0,
+      max_tokens: 5,
+      messages: [{ role: 'user', content: 'ping' }]
+    });
+    return res.json({ ok: true, message: `Connected (${testModel})` });
+  } catch (error) {
+    console.error('Test cleanup error:', error.message);
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
 
 // Multer error handler — converts file size errors to clean JSON instead of crashing
 function uploadErrorHandler(err, req, res, next) {
