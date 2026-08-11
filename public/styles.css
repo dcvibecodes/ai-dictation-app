@@ -1,4 +1,5 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { overflow-x: hidden; }
 
 :root[data-theme="dark"] {
   --bg: #0a0a0a; --bg-surface: #141414; --border: #2e2e2e; --border-subtle: #1e1e1e;
@@ -473,15 +474,17 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 .settings-section:last-child { margin-bottom: 0; }
 .settings-desc { font-size: 0.74rem; color: var(--text-muted); line-height: 1.5; }
 .settings-btns { display: flex; gap: 5px; }
 .settings-note { font-size: 0.66rem; color: var(--text-faint); font-style: italic; }
-.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-width: 0; }
 .settings-group {
   border: 1px solid var(--border-subtle); border-radius: 6px; padding: 12px;
   display: flex; flex-direction: column; gap: 8px;
+  min-width: 0;
 }
 .settings-group legend { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 0 4px; }
 .settings-group label { display: flex; flex-direction: column; gap: 3px; font-size: 0.68rem; font-weight: 500; color: var(--text-faint); }
