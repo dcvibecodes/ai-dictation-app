@@ -67,12 +67,17 @@ if (appendToggle) {
   appendToggle.checked = localStorage.getItem('appendMode') === 'true';
   appendToggle.addEventListener('change', () => {
     localStorage.setItem('appendMode', appendToggle.checked);
-    // When enabling append, seed accumulated transcript with current display text
     if (appendToggle.checked) {
+      // When enabling append, seed accumulated transcript with current display text
       const onScreen = getDisplayText();
       if (onScreen.trim() && !getAccumulatedTranscript()) {
         setAccumulatedTranscript(onScreen);
       }
+    } else {
+      // When disabling append, end the accumulation session — clear the buffer so
+      // the next time append is enabled it re-seeds from the current on-screen text
+      // instead of stale accumulated content from a previous session.
+      setAccumulatedTranscript('');
     }
   });
 }
@@ -894,10 +899,9 @@ clearBtn.onclick = async () => {
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
-  // Clear accumulated transcript when in append mode
-  if (isAppendMode()) {
-    setAccumulatedTranscript('');
-  }
+  // Clear accumulated transcript — "Clear" always means start fresh, regardless
+  // of append mode state.
+  setAccumulatedTranscript('');
   updateTranscriptDisplay();
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
