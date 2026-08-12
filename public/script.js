@@ -67,7 +67,6 @@ let isEditingTranscript = false; // true while transcript contentEditable is act
 // below the existing text instead of replacing it. Turning append off stops the
 // appending but leaves the document on screen as a normal transcript.
 const appendToggle = document.getElementById('appendToggle');
-const appendIndicator = document.getElementById('appendIndicator');
 if (appendToggle) {
   appendToggle.checked = localStorage.getItem('appendMode') === 'true';
   appendToggle.addEventListener('change', () => {
@@ -713,18 +712,14 @@ function updateTranscriptDisplay(animate = false) {
     clearStats();
   }
 
-  // Show/hide toggle raw button — show whenever both versions exist
-  if (!isAppendMode() && currentRaw && currentCleaned) {
+  // Show/hide toggle raw button — show whenever both versions exist (raw & cleaned),
+  // including in append mode so you can switch views of the document.
+  if (currentRaw && currentCleaned) {
     toggleRawBtn.style.display = '';
     toggleRawBtn.textContent = showingRaw ? 'Show cleaned' : 'Show raw';
   } else {
     toggleRawBtn.style.display = 'none';
     showingRaw = false;
-  }
-
-  // "Append on" indicator: a subtle badge so you know new recordings will add below.
-  if (appendIndicator) {
-    appendIndicator.style.display = isAppendMode() ? '' : 'none';
   }
 
   updateSendCleanupBtn();
@@ -1325,7 +1320,7 @@ async function transcribeAudioBlob(audioBlob) {
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
         await copyToClipboard(currentCleaned);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = (baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied';
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
@@ -1341,7 +1336,7 @@ async function transcribeAudioBlob(audioBlob) {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
         await copyToClipboard(currentRaw);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = baseRaw ? 'Appended & copied' : 'Raw copied';
       } else {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw); await copyToClipboard(raw);
@@ -1734,7 +1729,7 @@ async function finishLiveRecording() {
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
         await copyToClipboard(currentCleaned);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = (baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied';
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
@@ -1748,7 +1743,7 @@ async function finishLiveRecording() {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
         await copyToClipboard(currentRaw);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = baseRaw ? 'Appended & copied' : 'Raw copied';
       } else {
         currentCleaned = '';
         updateTranscriptDisplay(true);

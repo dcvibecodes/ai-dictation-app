@@ -248,19 +248,6 @@ header {
   white-space: nowrap;
 }
 
-/* "Append on" indicator — a subtle badge in the transcript header when append is active */
-.append-indicator {
-  font-size: 0.6rem;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 .toggle-switch {
   position: relative;
   width: 26px;

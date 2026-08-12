@@ -56,7 +56,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
-- **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits; a subtle "Append on" badge shows when active
+- **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits
+- **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
 - **Live transcription** (optional, off by default) — designed for long dictation sessions: audio is sent in ~10-second chunks and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Toggle it on, or press L.
 - **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
@@ -245,7 +246,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Append mode keeps the growing document as the text on screen — there is no hidden buffer
 - Turning Append **off** stops appending but leaves the document on screen as a normal transcript
 - **Clear always wipes the whole on-screen document in one click** — no two-stage, no hidden state. To start a new appended document, Clear then turn Append on
-- A recording in Append mode shows **"Appended & copied"**; with Append off it's a fresh "Cleaned copied" / "Raw copied"
+- In Append mode, a recording appended to an existing document shows **"Appended & copied"**; a fresh start (empty document) shows "Cleaned copied" / "Raw copied"
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - A one-time status warning appears at 5 minutes of recording, reminding you that long recordings risk hitting the 50 MB upload limit — stop and append instead
