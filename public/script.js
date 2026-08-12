@@ -747,6 +747,14 @@ function updateTranscriptDisplay(animate = false) {
     showingRaw = false;
   }
 
+  // Persistent notice: when append is ON and a buffer exists, tell the user their
+  // next recording will be appended and how to clear the buffer.
+  const appendNotice = document.getElementById('appendNotice');
+  if (appendNotice) {
+    const showNotice = isAppendMode() && !!getAccumulatedTranscript().trim();
+    appendNotice.style.display = showNotice ? '' : 'none';
+  }
+
   updateSendCleanupBtn();
 }
 
@@ -1401,14 +1409,16 @@ async function transcribeAudioBlob(audioBlob) {
       currentCleaned = cleaned;
       showingRaw = false;
 
-      // Append mode handling
+      // Append mode handling. If the buffer was empty before this recording, this
+      // is a fresh transcript — don't label it "Appended".
+      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && cleaned) {
         const accumulated = appendToTranscript(cleaned);
         currentCleaned = accumulated;
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
         await copyToClipboard(accumulated);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = hadBuffer ? 'Appended & copied' : 'Cleaned copied';
       } else {
         updateTranscriptDisplay(true);
         if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
@@ -1418,13 +1428,14 @@ async function transcribeAudioBlob(audioBlob) {
       showingRaw = false;
 
       // Append mode handling for raw
+      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && raw.trim()) {
         const accumulated = appendToTranscript(raw);
         currentRaw = accumulated;
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
         await copyToClipboard(accumulated);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = hadBuffer ? 'Appended & copied' : 'Raw copied';
       } else {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw); await copyToClipboard(raw);
@@ -1803,13 +1814,14 @@ async function finishLiveRecording() {
       }
       currentCleaned = cleaned;
       showingRaw = false;
+      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && cleaned) {
         const accumulated = appendToTranscript(cleaned);
         currentCleaned = accumulated;
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
         await copyToClipboard(accumulated);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = hadBuffer ? 'Appended & copied' : 'Cleaned copied';
       } else {
         updateTranscriptDisplay(true);
         if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
@@ -1817,13 +1829,14 @@ async function finishLiveRecording() {
     } else {
       currentCleaned = '';
       showingRaw = false;
+      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && raw.trim()) {
         const accumulated = appendToTranscript(raw);
         currentRaw = accumulated;
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
         await copyToClipboard(accumulated);
-        copiedLabel = 'Appended & copied';
+        copiedLabel = hadBuffer ? 'Appended & copied' : 'Raw copied';
       } else {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw); await copyToClipboard(raw);
