@@ -341,7 +341,9 @@ cleanToggle.addEventListener('change', () => {
 });
 
 function updateSendCleanupBtn() {
-  sendCleanupBtn.style.display = currentRaw.trim() ? '' : 'none';
+  // In append mode, the button should reflect the accumulated transcript, not just the latest segment.
+  const hasText = isAppendMode() ? getAccumulatedTranscript().trim() : currentRaw.trim();
+  sendCleanupBtn.style.display = hasText ? '' : 'none';
 }
 
 // ── Transcript meta (word count) ──
@@ -617,7 +619,8 @@ async function streamCleanup(raw, prompt, signal) {
 }
 
 async function sendRawForCleanup() {
-  const raw = currentRaw;
+  // In append mode, clean the full accumulated transcript; otherwise the latest segment.
+  const raw = isAppendMode() ? getAccumulatedTranscript() : currentRaw;
   if (!raw) return;
   if (isEditingTranscript) setTranscriptEditing(false);
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
@@ -659,6 +662,11 @@ async function sendRawForCleanup() {
 
     // Manual cleanup: the user asked to clean, so switch to showing the cleaned view.
     showingRaw = false;
+
+    // In append mode, replace the accumulated transcript with the cleaned result.
+    if (isAppendMode()) {
+      setAccumulatedTranscript(cleaned);
+    }
 
     // Manual cleanup is re-processing existing text, not a new segment — don't append
     updateTranscriptDisplay();
@@ -719,8 +727,8 @@ function updateTranscriptDisplay(animate = false) {
     clearStats();
   }
 
-  // Show/hide toggle raw button — show whenever both versions exist
-  if (currentRaw && currentCleaned) {
+  // Show/hide toggle raw button — show whenever both versions exist (not in append mode)
+  if (!isAppendMode() && currentRaw && currentCleaned) {
     toggleRawBtn.style.display = '';
     toggleRawBtn.textContent = showingRaw ? 'Show cleaned' : 'Show raw';
   } else {
@@ -1958,7 +1966,7 @@ document.addEventListener('keydown', e => {
   // Toggle raw/cleaned view
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
+    if (!isAppendMode() && currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
   }
   // Theme toggle (light/dark) — 'M' for Mode/Moon
   if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
