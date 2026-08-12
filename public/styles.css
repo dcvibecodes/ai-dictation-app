@@ -1,5 +1,8 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { overflow-x: hidden; }
+/* overflow-x: clip hides horizontal overflow WITHOUT creating a scroll container —
+   unlike hidden, which computes overflow-y to auto and breaks page wheel-scrolling
+   (a nested scroll-container bug on Windows Chrome/Edge). */
+html { overflow-x: clip; }
 
 :root[data-theme="dark"] {
   --bg: #0a0a0a; --bg-surface: #141414; --border: #2e2e2e; --border-subtle: #1e1e1e;
@@ -25,7 +28,7 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overscroll-behavior-y: none;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 .app { max-width: 820px; margin: auto; }
 
@@ -829,6 +832,18 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   #panel-record.active .transcript-header {
     flex-shrink: 0;
+  }
+
+  /* History & Settings: make each active panel its own scrollable area so they
+     scroll reliably in the mobile locked layout (body.record-active is
+     overflow:hidden). Mirrors the Record tab's scrollable transcript area. */
+  #panel-history.active,
+  #panel-settings.active {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 24px;
   }
 }
 
