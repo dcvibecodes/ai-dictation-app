@@ -78,6 +78,7 @@ if (appendToggle) {
       // the next time append is enabled it re-seeds from the current on-screen text
       // instead of stale accumulated content from a previous session.
       setAccumulatedTranscript('');
+      appendClearArmed = false;
     }
   });
 }
@@ -886,31 +887,63 @@ function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).leng
 
 // ── Undo state ──
 let undoState = null; // { raw, cleaned, accumulated }
+// Two-stage clear: the first Clear wipes the on-screen transcript but keeps the
+// append buffer (so you can still append to it); a second Clear also wipes the
+// append buffer. This flag is armed by the first clear when an append buffer exists.
+let appendClearArmed = false;
 
 // ── Clear ──
 clearBtn.onclick = async () => {
   if (processingAbortController) abortProcessing();
   if (isRecording) stopRecording();
-  // Save state for undo before clearing
+  // Save state for undo before clearing (only on the first clear, so undo
+  // restores everything even after a second clear).
   const displayText = getDisplayText();
-  if (displayText.trim()) {
+  if (displayText.trim() && !undoState) {
     undoState = { raw: currentRaw, cleaned: currentCleaned, accumulated: getAccumulatedTranscript() };
   }
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
-  // Clear accumulated transcript — "Clear" always means start fresh, regardless
-  // of append mode state.
-  setAccumulatedTranscript('');
-  updateTranscriptDisplay();
-  await clearAudioBackup();
-  await clearInMemoryAudioBackup();
-  hideRecoveryRow();
-  clearProcessingUI();
-  setStatus('Cleared — press Z to undo');
-  setTimeout(() => {
-    if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
-  }, 3000);
+
+  const hasAppendBuffer = !!getAccumulatedTranscript().trim();
+
+  if (appendClearArmed) {
+    // Second clear: also wipe the append buffer.
+    setAccumulatedTranscript('');
+    appendClearArmed = false;
+    updateTranscriptDisplay();
+    await clearAudioBackup();
+    await clearInMemoryAudioBackup();
+    hideRecoveryRow();
+    clearProcessingUI();
+    setStatus('Cleared — press Z to undo');
+    setTimeout(() => {
+      if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
+    }, 3000);
+  } else if (hasAppendBuffer) {
+    // First clear with an append buffer present: keep the buffer so the user can
+    // still append to it, and arm the second-stage clear.
+    appendClearArmed = true;
+    updateTranscriptDisplay();
+    await clearAudioBackup();
+    await clearInMemoryAudioBackup();
+    hideRecoveryRow();
+    clearProcessingUI();
+    setStatus('Cleared — press Clear again to also clear the append buffer');
+  } else {
+    // No append buffer: single clear behaves as before.
+    setAccumulatedTranscript('');
+    updateTranscriptDisplay();
+    await clearAudioBackup();
+    await clearInMemoryAudioBackup();
+    hideRecoveryRow();
+    clearProcessingUI();
+    setStatus('Cleared — press Z to undo');
+    setTimeout(() => {
+      if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
+    }, 3000);
+  }
   timerEl.textContent = '00:00';
 };
 
@@ -926,6 +959,7 @@ function undoClear() {
   if (undoState.accumulated) setAccumulatedTranscript(undoState.accumulated);
   showingRaw = false;
   undoState = null;
+  appendClearArmed = false;
   updateTranscriptDisplay();
   setStatus('Restored', 'done');
   setTimeout(() => setStatus('Ready'), 2000);
@@ -1413,6 +1447,7 @@ async function startRecording() {
     visualize();
     startTimer();
     longRecordingWarned = false;
+    appendClearArmed = false; // a new recording is a fresh session
 
     // Haptic feedback on start
     if (navigator.vibrate) navigator.vibrate(10);
