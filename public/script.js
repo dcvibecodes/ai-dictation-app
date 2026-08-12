@@ -62,27 +62,17 @@ let showingRaw = false; // false = showing cleaned (or raw if no cleaned)
 let isEditingTranscript = false; // true while transcript contentEditable is active
 
 // ── Append Mode ──
+// Clean model: there is no hidden buffer. The text on screen (currentRaw /
+// currentCleaned) IS the document. Append mode simply means new recordings add
+// below the existing text instead of replacing it. Turning append off stops the
+// appending but leaves the document on screen as a normal transcript.
 const appendToggle = document.getElementById('appendToggle');
+const appendIndicator = document.getElementById('appendIndicator');
 if (appendToggle) {
   appendToggle.checked = localStorage.getItem('appendMode') === 'true';
   appendToggle.addEventListener('change', () => {
     localStorage.setItem('appendMode', appendToggle.checked);
-    if (appendToggle.checked) {
-      // When enabling append, always seed the accumulated transcript from the
-      // current on-screen text. This prevents stale content from a previous
-      // session from resurrecting, even though the buffer now survives toggle-off.
-      const onScreen = getDisplayText();
-      if (onScreen.trim()) {
-        setAccumulatedTranscript(onScreen);
-      }
-    } else {
-      // When disabling append, keep the buffer so the two-stage clear can still
-      // wipe it. Just reset the armed flag, the display-blank flag, and any
-      // pending clear timer.
-      appendClearArmed = false;
-      appendClearBlankDisplay = false;
-      if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
-    }
+    updateTranscriptDisplay();
   });
 }
 
@@ -117,14 +107,12 @@ if (animationRadios.length) {
 }
 
 function isAppendMode() { return appendToggle ? appendToggle.checked : localStorage.getItem('appendMode') === 'true'; }
-function getAccumulatedTranscript() { return localStorage.getItem('accumulatedTranscript') || ''; }
-function setAccumulatedTranscript(t) { localStorage.setItem('accumulatedTranscript', t); }
 
-function appendToTranscript(newText) {
-  const existing = getAccumulatedTranscript();
-  const updated = existing ? existing + '\n\n' + newText : newText;
-  setAccumulatedTranscript(updated);
-  return updated;
+// Append new segment text to the current document (the on-screen text).
+// Returns a new-line-separated document. If the document is empty, it's the
+// first segment, so just the new text.
+function appendSegment(base, newText) {
+  return base ? base + '\n\n' + newText : newText;
 }
 
 // ── Status helper ──
@@ -350,8 +338,7 @@ cleanToggle.addEventListener('change', () => {
 });
 
 function updateSendCleanupBtn() {
-  // In append mode, the button should reflect the accumulated transcript, not just the latest segment.
-  const hasText = isAppendMode() ? getAccumulatedTranscript().trim() : currentRaw.trim();
+  const hasText = (currentCleaned || currentRaw).trim();
   sendCleanupBtn.style.display = hasText ? '' : 'none';
 }
 
@@ -628,8 +615,8 @@ async function streamCleanup(raw, prompt, signal) {
 }
 
 async function sendRawForCleanup() {
-  // In append mode, clean the full accumulated transcript; otherwise the latest segment.
-  const raw = isAppendMode() ? getAccumulatedTranscript() : currentRaw;
+  // In append mode, clean the whole on-screen document; otherwise the latest segment.
+  const raw = isAppendMode() ? (currentCleaned || currentRaw) : currentRaw;
   if (!raw) return;
   if (isEditingTranscript) setTranscriptEditing(false);
   sendCleanupBtn.disabled = true; sendCleanupBtn.textContent = '…';
@@ -672,14 +659,9 @@ async function sendRawForCleanup() {
     // Manual cleanup: the user asked to clean, so switch to showing the cleaned view.
     showingRaw = false;
 
-    // In append mode, replace the accumulated transcript with the cleaned result.
-    if (isAppendMode()) {
-      setAccumulatedTranscript(cleaned);
-    }
-
-    // Manual cleanup is re-processing existing text, not a new segment — don't append
+    // Manual cleanup re-processes the existing text — no appending.
     updateTranscriptDisplay();
-    const textToCopy = isAppendMode() ? getAccumulatedTranscript() || cleaned : cleaned;
+    const textToCopy = isAppendMode() ? cleaned : cleaned;
     await copyToClipboard(textToCopy);
     clearInterval(procTimer);
     setStatus('Copied ✓', 'done');
@@ -701,13 +683,6 @@ async function sendRawForCleanup() {
 
 // ── Transcript Display ──
 function getDisplayText() {
-  // In append mode, show the full accumulated transcript — unless the two-stage
-  // clear is blanking the display (first clear keeps the buffer but hides it).
-  if (isAppendMode()) {
-    if (appendClearBlankDisplay) return '';
-    const accumulated = getAccumulatedTranscript();
-    if (accumulated) return accumulated;
-  }
   if (showingRaw) return currentRaw;
   if (currentCleaned) return currentCleaned;
   return currentRaw;
@@ -732,26 +707,24 @@ function updateTranscriptDisplay(animate = false) {
     }
     metaWordCount = countWords(text); setTranscriptMeta();
   } else {
-    // When append is on and a buffer exists, replace the generic placeholder with
-    // a notice that new dictation will be appended to the existing transcript and
-    // how to clear the buffer. This reuses the placeholder styling (gray, italic).
-    if (isAppendMode() && getAccumulatedTranscript().trim()) {
-      transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Append buffer active — new recordings will be appended to the existing transcript. To clear it, press Clear twice.</span>';
-    } else {
-      transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
-    }
+    transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
     metaWordCount = 0; setTranscriptMeta();
     editTranscriptBtn.style.display = 'none';
     clearStats();
   }
 
-  // Show/hide toggle raw button — show whenever both versions exist (not in append mode)
+  // Show/hide toggle raw button — show whenever both versions exist
   if (!isAppendMode() && currentRaw && currentCleaned) {
     toggleRawBtn.style.display = '';
     toggleRawBtn.textContent = showingRaw ? 'Show cleaned' : 'Show raw';
   } else {
     toggleRawBtn.style.display = 'none';
     showingRaw = false;
+  }
+
+  // "Append on" indicator: a subtle badge so you know new recordings will add below.
+  if (appendIndicator) {
+    appendIndicator.style.display = isAppendMode() ? '' : 'none';
   }
 
   updateSendCleanupBtn();
@@ -784,10 +757,7 @@ transcriptDisplay.addEventListener('input', () => {
   if (!isEditingTranscript) return;
   const text = transcriptDisplay.innerText;
   metaWordCount = countWords(text); setTranscriptMeta();
-  if (isAppendMode()) {
-    setAccumulatedTranscript(text);
-    if (currentCleaned) currentCleaned = text;
-  } else if (showingRaw) {
+  if (showingRaw) {
     currentRaw = text;
   } else if (currentCleaned) {
     currentCleaned = text;
@@ -898,87 +868,29 @@ function drawIdleLine() {
 function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).length; }
 
 // ── Undo state ──
-let undoState = null; // { raw, cleaned, accumulated }
-// Two-stage clear: the first Clear wipes the on-screen transcript but keeps the
-// append buffer (so you can still append to it); a second Clear within the
-// 5-second window also wipes the append buffer. This flag is armed by the first
-// clear when an append buffer exists, and disarmed after 5 seconds.
-let appendClearArmed = false;
-let appendClearTimer = null;
-// When append is ON, the on-screen text is the buffer itself, so the first clear
-// must blank the display (via this flag) while keeping the buffer in the
-// background. The buffer reappears if the user doesn't confirm the wipe.
-let appendClearBlankDisplay = false;
-const APPEND_CLEAR_WINDOW_MS = 5000; // how long the "clear again" hint stays active
+let undoState = null; // { raw, cleaned }
 
 // ── Clear ──
+// Clear always wipes the on-screen text (which is the whole document). One click.
 clearBtn.onclick = async () => {
   if (processingAbortController) abortProcessing();
   if (isRecording) stopRecording();
-  // Save state for undo before clearing (only on the first clear, so undo
-  // restores everything even after a second clear).
-  const displayText = getDisplayText();
-  if (displayText.trim() && !undoState) {
-    undoState = { raw: currentRaw, cleaned: currentCleaned, accumulated: getAccumulatedTranscript() };
+  // Save state for undo before clearing
+  if (getDisplayText().trim()) {
+    undoState = { raw: currentRaw, cleaned: currentCleaned };
   }
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
-
-  const hasAppendBuffer = !!getAccumulatedTranscript().trim();
-
-  if (appendClearArmed) {
-    // Second clear within the window: also wipe the append buffer.
-    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
-    setAccumulatedTranscript('');
-    appendClearArmed = false;
-    appendClearBlankDisplay = false;
-    updateTranscriptDisplay();
-    await clearAudioBackup();
-    await clearInMemoryAudioBackup();
-    hideRecoveryRow();
-    clearProcessingUI();
-    setStatus('Cleared — press Z to undo');
-    setTimeout(() => {
-      if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
-    }, 3000);
-  } else if (hasAppendBuffer) {
-    // First clear with an append buffer present: keep the buffer so the user can
-    // still append to it, and arm the second-stage clear for 5 seconds. When
-    // append is ON, blank the display so the clear is actually visible.
-    appendClearArmed = true;
-    appendClearBlankDisplay = isAppendMode();
-    updateTranscriptDisplay();
-    await clearAudioBackup();
-    await clearInMemoryAudioBackup();
-    hideRecoveryRow();
-    clearProcessingUI();
-    setStatus('Cleared — press Clear again to also clear the append buffer');
-    appendClearTimer = setTimeout(() => {
-      appendClearArmed = false;
-      appendClearBlankDisplay = false;
-      appendClearTimer = null;
-      updateTranscriptDisplay(); // restore the buffer on screen if not confirmed
-      if (statusEl.textContent === 'Cleared — press Clear again to also clear the append buffer') {
-        setStatus('Ready');
-      }
-    }, APPEND_CLEAR_WINDOW_MS);
-  } else {
-    // No append buffer: single clear behaves as before.
-    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
-    appendClearArmed = false;
-    appendClearBlankDisplay = false;
-    setAccumulatedTranscript('');
-    updateTranscriptDisplay();
-    await clearAudioBackup();
-    await clearInMemoryAudioBackup();
-    hideRecoveryRow();
-    clearProcessingUI();
-    setStatus('Cleared — press Z to undo');
-    setTimeout(() => {
-      if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
-    }, 3000);
-  }
+  updateTranscriptDisplay();
+  await clearAudioBackup();
+  await clearInMemoryAudioBackup();
+  hideRecoveryRow();
+  clearProcessingUI();
+  setStatus('Cleared — press Z to undo');
+  setTimeout(() => {
+    if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
+  }, 3000);
   timerEl.textContent = '00:00';
 };
 
@@ -991,12 +903,8 @@ function undoClear() {
   }
   currentRaw = undoState.raw;
   currentCleaned = undoState.cleaned;
-  if (undoState.accumulated) setAccumulatedTranscript(undoState.accumulated);
   showingRaw = false;
   undoState = null;
-  appendClearArmed = false;
-  appendClearBlankDisplay = false;
-  if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
   updateTranscriptDisplay();
   setStatus('Restored', 'done');
   setTimeout(() => setStatus('Ready'), 2000);
@@ -1358,6 +1266,9 @@ async function transcribeAudioBlob(audioBlob) {
     if (uData.error) throw new Error(uData.error);
 
     const raw = uData.rawTranscript || '';
+    // Keep the existing on-screen document so append mode can add below it.
+    const baseRaw = currentRaw;
+    const baseCleaned = currentCleaned;
     currentRaw = raw;
 
     let copiedLabel = '';
@@ -1382,16 +1293,16 @@ async function transcribeAudioBlob(audioBlob) {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
         if (cRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
         if (!cRes.ok) {
-          currentCleaned = '';
-          updateTranscriptDisplay(true);
-          addToHistory(raw, raw);
-          // Append mode: append raw
+          // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
-            const accumulated = appendToTranscript(raw);
-            await copyToClipboard(accumulated);
+            currentRaw = appendSegment(baseRaw, raw);
+            await copyToClipboard(currentRaw);
           } else {
+            currentCleaned = '';
             await copyToClipboard(raw);
           }
+          updateTranscriptDisplay(true);
+          addToHistory(raw, raw);
           await clearAudioBackup();
           await clearInMemoryAudioBackup();
           hideRecoveryRow();
@@ -1405,20 +1316,18 @@ async function transcribeAudioBlob(audioBlob) {
         cleaned = cData.cleanedTranscript || '';
       }
 
-      currentCleaned = cleaned;
       showingRaw = false;
 
-      // Append mode handling. If the buffer was empty before this recording, this
-      // is a fresh transcript — don't label it "Appended".
-      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && cleaned) {
-        const accumulated = appendToTranscript(cleaned);
-        currentCleaned = accumulated;
+        // Append the new cleaned segment to the document.
+        currentCleaned = appendSegment(baseCleaned, cleaned);
+        currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
-        await copyToClipboard(accumulated);
-        copiedLabel = hadBuffer ? 'Appended & copied' : 'Cleaned copied';
+        await copyToClipboard(currentCleaned);
+        copiedLabel = 'Appended & copied';
       } else {
+        currentCleaned = cleaned;
         updateTranscriptDisplay(true);
         if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
       }
@@ -1426,15 +1335,13 @@ async function transcribeAudioBlob(audioBlob) {
       currentCleaned = '';
       showingRaw = false;
 
-      // Append mode handling for raw
-      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && raw.trim()) {
-        const accumulated = appendToTranscript(raw);
-        currentRaw = accumulated;
+        // Append the new raw segment to the document.
+        currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
-        await copyToClipboard(accumulated);
-        copiedLabel = hadBuffer ? 'Appended & copied' : 'Raw copied';
+        await copyToClipboard(currentRaw);
+        copiedLabel = 'Appended & copied';
       } else {
         updateTranscriptDisplay(true);
         addToHistory(raw, raw); await copyToClipboard(raw);
@@ -1487,9 +1394,6 @@ async function startRecording() {
     visualize();
     startTimer();
     longRecordingWarned = false;
-    appendClearArmed = false; // a new recording is a fresh session
-    appendClearBlankDisplay = false;
-    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
 
     // Haptic feedback on start
     if (navigator.vibrate) navigator.vibrate(10);
@@ -1668,6 +1572,10 @@ function liveSendChunk(force = false) {
 }
 
 // Set up WAV chunk capture on the existing audioContext/source.
+// In append mode, keep a snapshot of the existing document so the live recording
+// can build its own segment and append it at the end.
+let liveSegmentBaseRaw = '';
+let liveSegmentBaseCleaned = '';
 function startLiveCapture(stream) {
   liveStream = stream;
   livePcmSamples = new Float32Array(0);
@@ -1677,6 +1585,9 @@ function startLiveCapture(stream) {
   liveNextSeq = 0;
   livePending.clear();
   livePaused = false;
+  // Snapshot the existing document (used for append mode).
+  liveSegmentBaseRaw = currentRaw;
+  liveSegmentBaseCleaned = currentCleaned;
   currentRaw = '';
   currentCleaned = '';
   showingRaw = false;
@@ -1774,6 +1685,10 @@ async function finishLiveRecording() {
   processingAbortController = abortController;
 
   let copiedLabel = '';
+  // The base document captured at live-recording start (for append mode).
+  const baseRaw = liveSegmentBaseRaw;
+  const baseCleaned = liveSegmentBaseCleaned;
+
   try {
     if (cleanToggle.checked) {
       // Try streaming cleanup first
@@ -1792,15 +1707,16 @@ async function finishLiveRecording() {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
         if (cRes.status === 401) { window.location.href = '/login'; return; }
         if (!cRes.ok) {
-          currentCleaned = '';
-          updateTranscriptDisplay(true);
-          addToHistory(raw, raw);
+          // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
-            const accumulated = appendToTranscript(raw);
-            await copyToClipboard(accumulated);
+            currentRaw = appendSegment(baseRaw, raw);
+            await copyToClipboard(currentRaw);
           } else {
+            currentCleaned = '';
             await copyToClipboard(raw);
           }
+          updateTranscriptDisplay(true);
+          addToHistory(raw, raw);
           setStatus('Cleanup failed — use Clean up to retry', 'error');
           setTimeout(() => setStatus('Ready'), 3000);
           clearProcessingUI();
@@ -1811,32 +1727,30 @@ async function finishLiveRecording() {
         if (cData.error) throw new Error(cData.error);
         cleaned = cData.cleanedTranscript || '';
       }
-      currentCleaned = cleaned;
       showingRaw = false;
-      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && cleaned) {
-        const accumulated = appendToTranscript(cleaned);
-        currentCleaned = accumulated;
+        currentCleaned = appendSegment(baseCleaned, cleaned);
+        currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
-        await copyToClipboard(accumulated);
-        copiedLabel = hadBuffer ? 'Appended & copied' : 'Cleaned copied';
+        await copyToClipboard(currentCleaned);
+        copiedLabel = 'Appended & copied';
       } else {
+        currentCleaned = cleaned;
         updateTranscriptDisplay(true);
         if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
       }
     } else {
       currentCleaned = '';
       showingRaw = false;
-      const hadBuffer = !!getAccumulatedTranscript().trim();
       if (isAppendMode() && raw.trim()) {
-        const accumulated = appendToTranscript(raw);
-        currentRaw = accumulated;
+        currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
-        await copyToClipboard(accumulated);
-        copiedLabel = hadBuffer ? 'Appended & copied' : 'Raw copied';
+        await copyToClipboard(currentRaw);
+        copiedLabel = 'Appended & copied';
       } else {
+        currentCleaned = '';
         updateTranscriptDisplay(true);
         addToHistory(raw, raw); await copyToClipboard(raw);
         copiedLabel = 'Raw copied';
@@ -2044,12 +1958,12 @@ document.addEventListener('keydown', e => {
   // Manual cleanup
   if (e.key === 'k' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (currentRaw.trim()) sendRawForCleanup();
+    if ((currentCleaned || currentRaw).trim()) sendRawForCleanup();
   }
   // Toggle raw/cleaned view
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (!isAppendMode() && currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
+    if (currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
   }
   // Theme toggle (light/dark) — 'M' for Mode/Moon
   if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
@@ -2113,9 +2027,6 @@ renderHistory();
 hideRecoveryRow();
 updateOnlineStatus();
 drawIdleLine();
-// Clear accumulated transcript on fresh page load (new session)
-// Append mode toggle state is preserved, but text starts fresh each session
-setAccumulatedTranscript('');
 updateTranscriptDisplay();
 
 // ── iOS PWA fix: force layout recalculation for env(safe-area-inset-bottom) ──

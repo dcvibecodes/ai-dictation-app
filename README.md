@@ -56,7 +56,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
-- **Append mode** — accumulate multiple dictation segments into one growing transcript; only the new segment uses API credits; starts fresh each session
+- **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits; a subtle "Append on" badge shows when active
 - **Live transcription** (optional, off by default) — designed for long dictation sessions: audio is sent in ~10-second chunks and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Toggle it on, or press L.
 - **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
@@ -242,11 +242,10 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - API keys are **encrypted at rest** (AES-256-GCM) in `data/settings.json` (gitignored). If the server's `data/session.secret` is ever recreated, stored keys can no longer be decrypted — re-enter them in Settings.
 - `data/` directory auto-created on first run, fully gitignored
 - PWA works offline for the UI shell; recording requires network for AI APIs
-- Append mode starts fresh each page load — no stale text from previous sessions
-- Toggling append **off** keeps the buffer (so the two-stage Clear can still wipe it); re-enabling append re-seeds from the current on-screen text instead of resurrecting old accumulated content
-- **Clear is two-stage when an append buffer exists:** the first Clear (or Esc) wipes the on-screen transcript but keeps the append buffer (so you can still append to it) and shows a hint for **5 seconds**; a second Clear within that window also wipes the append buffer. If the hint expires, pressing Clear just re-arms it for another 5 seconds. This works whether Append is on or off — when Append is on, the first Clear blanks the on-screen text (the buffer is kept in the background) and it reappears if you don't confirm. With no append buffer, a single Clear clears everything as before
-- When Append is on and a buffer exists, the placeholder text in the transcript area reads "Append buffer active — new recordings will be appended to the existing transcript. To clear it, press Clear twice." This reminds you a buffer is present and how to clear it
-- The status label is accurate: a recording that starts with an empty buffer (e.g. right after clearing it) shows "Cleaned copied" / "Raw copied", not "Appended & copied" — only a recording appended to an existing buffer shows "Appended & copied"
+- Append mode keeps the growing document as the text on screen — there is no hidden buffer
+- Turning Append **off** stops appending but leaves the document on screen as a normal transcript
+- **Clear always wipes the whole on-screen document in one click** — no two-stage, no hidden state. To start a new appended document, Clear then turn Append on
+- A recording in Append mode shows **"Appended & copied"**; with Append off it's a fresh "Cleaned copied" / "Raw copied"
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - A one-time status warning appears at 5 minutes of recording, reminding you that long recordings risk hitting the 50 MB upload limit — stop and append instead
