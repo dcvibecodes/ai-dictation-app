@@ -243,8 +243,8 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - `data/` directory auto-created on first run, fully gitignored
 - PWA works offline for the UI shell; recording requires network for AI APIs
 - Append mode starts fresh each page load — no stale text from previous sessions
-- Toggling append **off** ends the accumulation session and clears the buffer, so re-enabling append re-seeds from the current on-screen text instead of resurrecting old accumulated content
-- **Clear is two-stage when an append buffer exists:** the first Clear (or Esc) wipes the on-screen transcript but keeps the append buffer (so you can still append to it) and shows a hint; a second Clear also wipes the append buffer. With no append buffer, a single Clear clears everything as before
+- Toggling append **off** keeps the buffer (so the two-stage Clear can still wipe it); re-enabling append re-seeds from the current on-screen text instead of resurrecting old accumulated content
+- **Clear is two-stage when an append buffer exists:** the first Clear (or Esc) wipes the on-screen transcript but keeps the append buffer (so you can still append to it) and shows a hint for **5 seconds**; a second Clear within that window also wipes the append buffer. If the hint expires, pressing Clear just re-arms it for another 5 seconds. This works whether Append is on or off. With no append buffer, a single Clear clears everything as before
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - A one-time status warning appears at 5 minutes of recording, reminding you that long recordings risk hitting the 50 MB upload limit — stop and append instead

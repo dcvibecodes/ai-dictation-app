@@ -264,9 +264,10 @@
               <li>Tap the transcript to copy the <strong>entire accumulated text</strong> to your clipboard.</li>
               <li>The accumulated transcript starts fresh on each page load — no stale text carries over from previous sessions.</li>
               <li>If you toggle Append on mid-session, whatever's currently on screen is captured as the starting point.</li>
-              <li><strong>Clear is two-stage.</strong> The first <strong>Clear</strong> (or <kbd>Esc</kbd>) wipes the on-screen transcript but <em>keeps</em> the append buffer, so you can still append to it. A status hint appears: "Cleared — press Clear again to also clear the append buffer." Press <strong>Clear</strong> a second time to wipe the append buffer too.</li>
+              <li><strong>Clear is two-stage.</strong> The first <strong>Clear</strong> (or <kbd>Esc</kbd>) wipes the on-screen transcript but <em>keeps</em> the append buffer, so you can still append to it. A status hint appears for <strong>5 seconds</strong>: "Cleared — press Clear again to also clear the append buffer." Press <strong>Clear</strong> again <em>while the hint is showing</em> to wipe the append buffer too. If the hint has expired, pressing Clear just re-arms it for another 5 seconds.</li>
+              <li>This works whether Append is on or off — the buffer is kept when you toggle Append off, so you can still clear it with the two-stage Clear.</li>
               <li>If there is no append buffer, a single <strong>Clear</strong> behaves as before — it clears everything at once.</li>
-              <li>Turning off Append switches back to single-segment view and clears the append buffer, so re-enabling it re-seeds from whatever is currently on screen.</li>
+              <li>Turning off Append switches back to single-segment view. Re-enabling it re-seeds from whatever is currently on screen.</li>
             </ul>
           </div>
         </details>
@@ -381,7 +382,7 @@
               </tr>
               <tr>
                 <td>Clearing data</td>
-                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript and any audio backup. If an append buffer exists, the first <strong>Clear</strong> keeps it (so you can still append) and shows a hint; press <strong>Clear</strong> again to also wipe the append buffer. Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
+                <td>Use the <strong>Clear</strong> button on the record bar to clear the current transcript and any audio backup. If an append buffer exists, the first <strong>Clear</strong> keeps it (so you can still append) and shows a hint for 5 seconds; press <strong>Clear</strong> again within that window to also wipe the append buffer. This works whether Append is on or off. Use <strong>Clear All</strong> in History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
               </tr>
             </table>
           </div>

@@ -68,17 +68,18 @@ if (appendToggle) {
   appendToggle.addEventListener('change', () => {
     localStorage.setItem('appendMode', appendToggle.checked);
     if (appendToggle.checked) {
-      // When enabling append, seed accumulated transcript with current display text
+      // When enabling append, always seed the accumulated transcript from the
+      // current on-screen text. This prevents stale content from a previous
+      // session from resurrecting, even though the buffer now survives toggle-off.
       const onScreen = getDisplayText();
-      if (onScreen.trim() && !getAccumulatedTranscript()) {
+      if (onScreen.trim()) {
         setAccumulatedTranscript(onScreen);
       }
     } else {
-      // When disabling append, end the accumulation session — clear the buffer so
-      // the next time append is enabled it re-seeds from the current on-screen text
-      // instead of stale accumulated content from a previous session.
-      setAccumulatedTranscript('');
+      // When disabling append, keep the buffer so the two-stage clear can still
+      // wipe it. Just reset the armed flag and any pending clear timer.
       appendClearArmed = false;
+      if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
     }
   });
 }
@@ -888,9 +889,12 @@ function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).leng
 // ── Undo state ──
 let undoState = null; // { raw, cleaned, accumulated }
 // Two-stage clear: the first Clear wipes the on-screen transcript but keeps the
-// append buffer (so you can still append to it); a second Clear also wipes the
-// append buffer. This flag is armed by the first clear when an append buffer exists.
+// append buffer (so you can still append to it); a second Clear within the
+// 5-second window also wipes the append buffer. This flag is armed by the first
+// clear when an append buffer exists, and disarmed after 5 seconds.
 let appendClearArmed = false;
+let appendClearTimer = null;
+const APPEND_CLEAR_WINDOW_MS = 5000; // how long the "clear again" hint stays active
 
 // ── Clear ──
 clearBtn.onclick = async () => {
@@ -909,7 +913,8 @@ clearBtn.onclick = async () => {
   const hasAppendBuffer = !!getAccumulatedTranscript().trim();
 
   if (appendClearArmed) {
-    // Second clear: also wipe the append buffer.
+    // Second clear within the window: also wipe the append buffer.
+    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
     setAccumulatedTranscript('');
     appendClearArmed = false;
     updateTranscriptDisplay();
@@ -923,7 +928,7 @@ clearBtn.onclick = async () => {
     }, 3000);
   } else if (hasAppendBuffer) {
     // First clear with an append buffer present: keep the buffer so the user can
-    // still append to it, and arm the second-stage clear.
+    // still append to it, and arm the second-stage clear for 5 seconds.
     appendClearArmed = true;
     updateTranscriptDisplay();
     await clearAudioBackup();
@@ -931,8 +936,17 @@ clearBtn.onclick = async () => {
     hideRecoveryRow();
     clearProcessingUI();
     setStatus('Cleared — press Clear again to also clear the append buffer');
+    appendClearTimer = setTimeout(() => {
+      appendClearArmed = false;
+      appendClearTimer = null;
+      if (statusEl.textContent === 'Cleared — press Clear again to also clear the append buffer') {
+        setStatus('Ready');
+      }
+    }, APPEND_CLEAR_WINDOW_MS);
   } else {
     // No append buffer: single clear behaves as before.
+    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
+    appendClearArmed = false;
     setAccumulatedTranscript('');
     updateTranscriptDisplay();
     await clearAudioBackup();
@@ -960,6 +974,7 @@ function undoClear() {
   showingRaw = false;
   undoState = null;
   appendClearArmed = false;
+  if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
   updateTranscriptDisplay();
   setStatus('Restored', 'done');
   setTimeout(() => setStatus('Ready'), 2000);
@@ -1448,6 +1463,7 @@ async function startRecording() {
     startTimer();
     longRecordingWarned = false;
     appendClearArmed = false; // a new recording is a fresh session
+    if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
 
     // Haptic feedback on start
     if (navigator.vibrate) navigator.vibrate(10);
