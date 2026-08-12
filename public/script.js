@@ -732,14 +732,7 @@ function updateTranscriptDisplay(animate = false) {
     }
     metaWordCount = countWords(text); setTranscriptMeta();
   } else {
-    // When append is on and a buffer exists, replace the generic placeholder with
-    // a notice that new dictation will be appended to the existing transcript and
-    // how to clear the buffer. This reuses the placeholder styling (gray, italic).
-    if (isAppendMode() && getAccumulatedTranscript().trim()) {
-      transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Append buffer active — new recordings will be appended to the existing transcript. To clear it, press Clear twice.</span>';
-    } else {
-      transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
-    }
+    transcriptDisplay.innerHTML = '<span class="transcript-placeholder">Your transcript will appear here…</span>';
     metaWordCount = 0; setTranscriptMeta();
     editTranscriptBtn.style.display = 'none';
     clearStats();
@@ -752,6 +745,14 @@ function updateTranscriptDisplay(animate = false) {
   } else {
     toggleRawBtn.style.display = 'none';
     showingRaw = false;
+  }
+
+  // Persistent notice: when append is ON and a buffer exists, tell the user their
+  // next recording will be appended and how to clear the buffer.
+  const appendNotice = document.getElementById('appendNotice');
+  if (appendNotice) {
+    const showNotice = isAppendMode() && !!getAccumulatedTranscript().trim();
+    appendNotice.style.display = showNotice ? '' : 'none';
   }
 
   updateSendCleanupBtn();

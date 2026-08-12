@@ -193,6 +193,14 @@ header {
 .status.done { color: var(--success); }
 .status.error { color: var(--danger); }
 
+/* Persistent notice shown when append mode is on and a buffer exists */
+.append-notice {
+  font-size: 0.72rem; color: var(--warning); font-weight: 500;
+  background: var(--accent-dim); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; margin: 6px 0;
+  line-height: 1.4;
+}
+
 .recovery-row {
   display: flex;
   align-items: center;
