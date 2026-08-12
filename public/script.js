@@ -77,8 +77,10 @@ if (appendToggle) {
       }
     } else {
       // When disabling append, keep the buffer so the two-stage clear can still
-      // wipe it. Just reset the armed flag and any pending clear timer.
+      // wipe it. Just reset the armed flag, the display-blank flag, and any
+      // pending clear timer.
       appendClearArmed = false;
+      appendClearBlankDisplay = false;
       if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
     }
   });
@@ -699,8 +701,10 @@ async function sendRawForCleanup() {
 
 // ── Transcript Display ──
 function getDisplayText() {
-  // In append mode, show the full accumulated transcript
+  // In append mode, show the full accumulated transcript — unless the two-stage
+  // clear is blanking the display (first clear keeps the buffer but hides it).
   if (isAppendMode()) {
+    if (appendClearBlankDisplay) return '';
     const accumulated = getAccumulatedTranscript();
     if (accumulated) return accumulated;
   }
@@ -894,6 +898,10 @@ let undoState = null; // { raw, cleaned, accumulated }
 // clear when an append buffer exists, and disarmed after 5 seconds.
 let appendClearArmed = false;
 let appendClearTimer = null;
+// When append is ON, the on-screen text is the buffer itself, so the first clear
+// must blank the display (via this flag) while keeping the buffer in the
+// background. The buffer reappears if the user doesn't confirm the wipe.
+let appendClearBlankDisplay = false;
 const APPEND_CLEAR_WINDOW_MS = 5000; // how long the "clear again" hint stays active
 
 // ── Clear ──
@@ -917,6 +925,7 @@ clearBtn.onclick = async () => {
     if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
     setAccumulatedTranscript('');
     appendClearArmed = false;
+    appendClearBlankDisplay = false;
     updateTranscriptDisplay();
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
@@ -928,8 +937,10 @@ clearBtn.onclick = async () => {
     }, 3000);
   } else if (hasAppendBuffer) {
     // First clear with an append buffer present: keep the buffer so the user can
-    // still append to it, and arm the second-stage clear for 5 seconds.
+    // still append to it, and arm the second-stage clear for 5 seconds. When
+    // append is ON, blank the display so the clear is actually visible.
     appendClearArmed = true;
+    appendClearBlankDisplay = isAppendMode();
     updateTranscriptDisplay();
     await clearAudioBackup();
     await clearInMemoryAudioBackup();
@@ -938,7 +949,9 @@ clearBtn.onclick = async () => {
     setStatus('Cleared — press Clear again to also clear the append buffer');
     appendClearTimer = setTimeout(() => {
       appendClearArmed = false;
+      appendClearBlankDisplay = false;
       appendClearTimer = null;
+      updateTranscriptDisplay(); // restore the buffer on screen if not confirmed
       if (statusEl.textContent === 'Cleared — press Clear again to also clear the append buffer') {
         setStatus('Ready');
       }
@@ -947,6 +960,7 @@ clearBtn.onclick = async () => {
     // No append buffer: single clear behaves as before.
     if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
     appendClearArmed = false;
+    appendClearBlankDisplay = false;
     setAccumulatedTranscript('');
     updateTranscriptDisplay();
     await clearAudioBackup();
@@ -974,6 +988,7 @@ function undoClear() {
   showingRaw = false;
   undoState = null;
   appendClearArmed = false;
+  appendClearBlankDisplay = false;
   if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
   updateTranscriptDisplay();
   setStatus('Restored', 'done');
@@ -1463,6 +1478,7 @@ async function startRecording() {
     startTimer();
     longRecordingWarned = false;
     appendClearArmed = false; // a new recording is a fresh session
+    appendClearBlankDisplay = false;
     if (appendClearTimer) { clearTimeout(appendClearTimer); appendClearTimer = null; }
 
     // Haptic feedback on start
