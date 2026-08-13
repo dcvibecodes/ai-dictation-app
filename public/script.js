@@ -819,32 +819,10 @@ function visualize() {
   const bufLen = analyser.frequencyBinCount;
   const data = new Uint8Array(bufLen);
 
-  // Smooth the glow level so it "throbs" with speech instead of jumping erratically.
-  let glowLevel = 0;
-
   function draw() {
     animationId = requestAnimationFrame(draw);
     analyser.getByteFrequencyData(data);
     ctx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
-
-    // Compute overall loudness (0..1) from the frequency bins.
-    let sum = 0;
-    for (let i = 0; i < bufLen; i++) sum += data[i];
-    const avg = sum / bufLen / 255;
-
-    // Attack fast, release slow — a "heartbeat" feel.
-    const target = avg * avg * 6; // boost low speech levels, cap at 1
-    glowLevel += (target - glowLevel) * (target > glowLevel ? 0.5 : 0.12);
-    if (glowLevel > 1) glowLevel = 1;
-    // Keep a small minimum so the button never looks dead while recording.
-    const glow = 0.15 + glowLevel * 0.85;
-    toggleBtn.style.setProperty('--glow', glow.toFixed(3));
-
-    if (window.matchMedia('(max-width: 600px)').matches) {
-      // On mobile the waveform is hidden; the glow around the record button is the
-      // recording indicator. Skip canvas drawing entirely.
-      return;
-    }
 
     const barColor = getBarColor();
     const barWidth = 3;
