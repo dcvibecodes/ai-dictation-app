@@ -163,6 +163,10 @@ header {
 .record-btn.recording {
   border-color: var(--danger); background: var(--danger-dim); color: var(--danger);
   animation: pulse-ring 1.5s ease-in-out infinite;
+  /* Speech-reactive glow: --glow is set live by visualize() (0..1) based on mic
+     loudness, so the ring "throbs" as the user speaks. */
+  box-shadow:
+    0 0 calc(6px + var(--glow, 0) * 34px) calc(2px + var(--glow, 0) * 6px) rgba(239,68,68, calc(0.35 + var(--glow, 0) * 0.5));
 }
 .record-btn.recording:hover { background: rgba(239,68,68,0.15); }
 .record-btn.recording:active {
@@ -699,9 +703,10 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     width: 100%;
     transform: translateZ(0);
     display: grid;
+    /* Waveform is hidden on mobile, so the layout is a single compact row:
+       timer (left), record button (center), action buttons (right). */
     grid-template-columns: minmax(64px, 1fr) auto minmax(64px, 1fr);
     grid-template-areas:
-      "wave wave wave"
       "timer record actions";
     align-items: center;
     gap: 8px 12px;
@@ -741,7 +746,10 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     background: var(--danger);
     border-color: var(--danger);
     color: #fff;
-    box-shadow: 0 6px 20px rgba(239,68,68,0.2), inset 0 0 0 6px var(--bg);
+    /* Speech-reactive throb (same as desktop): --glow is set live from mic level. */
+    box-shadow:
+      0 0 calc(6px + var(--glow, 0) * 40px) calc(2px + var(--glow, 0) * 8px) rgba(239,68,68, calc(0.35 + var(--glow, 0) * 0.5)),
+      inset 0 0 0 6px var(--bg);
   }
   .record-btn.recording:hover { background: var(--danger); }
   .record-btn.processing {
@@ -832,6 +840,12 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 
   #panel-record.active .transcript-header {
     flex-shrink: 0;
+  }
+
+  /* On mobile, hide the waveform — the speech-reactive glow around the record
+     button is the recording indicator. The button stays centered. */
+  #waveform {
+    display: none;
   }
 
   /* History & Settings: make each active panel its own scrollable area so they
