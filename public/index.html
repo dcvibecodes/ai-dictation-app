@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#0a0a0a">
-  <script>(function(){var t=localStorage.getItem('dictationTheme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
+  <script>(function(){var t=localStorage.getItem('dictationTheme');if(t){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme',window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}})()</script>
   <link rel="manifest" href="/manifest.json?v=13">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=13">
   <link rel="apple-touch-icon" href="/icon-192.png">

@@ -877,6 +877,13 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     padding-bottom: 120px;
   }
 
+  /* iOS Safari auto-zooms into any editable element with font-size < 16px.
+     Bump to 16px only while editing to prevent the zoom, then return to
+     the normal reading size when editing ends. */
+  #panel-record.active .transcript-display.editing {
+    font-size: 16px;
+  }
+
   #panel-record.active .transcript-header {
     flex-shrink: 0;
   }
