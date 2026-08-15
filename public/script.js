@@ -885,7 +885,9 @@ clearBtn.onclick = async () => {
 
   if (isMobile && hasUndo) {
     // Mobile: show a tappable Undo link in the status line (no keyboard).
-    statusEl.className = 'status active';
+    // Use the default status class so the message text matches the desktop
+    // "Cleared — press Z to undo" color; only "Undo" is accent-styled as a link.
+    statusEl.className = 'status';
     statusEl.innerHTML = 'Cleared · <a href="javascript:void(0)" class="status-link" id="undoStatusLink">Undo</a>';
     const link = document.getElementById('undoStatusLink');
     const clearTimer = setTimeout(() => setStatus('Ready'), 5000);
