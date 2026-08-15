@@ -777,13 +777,6 @@ transcriptDisplay.addEventListener('click', (e) => {
     copyToClipboard(text);
     setStatus('Copied ✓', 'done');
     setTimeout(() => setStatus('Ready'), 1500);
-    // Fade out and back in
-    transcriptDisplay.style.transition = 'opacity 0.15s ease-out';
-    transcriptDisplay.style.opacity = '0.15';
-    setTimeout(() => {
-      transcriptDisplay.style.transition = 'opacity 0.25s ease-in';
-      transcriptDisplay.style.opacity = '1';
-    }, 150);
   }
 });
 
@@ -882,10 +875,31 @@ clearBtn.onclick = async () => {
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
   clearProcessingUI();
-  setStatus('Cleared — press Z to undo');
-  setTimeout(() => {
-    if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
-  }, 3000);
+
+  const isTouch = navigator.maxTouchPoints > 0;
+  const hasUndo = !!undoState;
+
+  if (isTouch && hasUndo) {
+    // Mobile: show a tappable Undo link in the status line (no keyboard).
+    statusEl.className = 'status active';
+    statusEl.innerHTML = 'Cleared · <a href="javascript:void(0)" class="status-link" id="undoStatusLink">Undo</a>';
+    const link = document.getElementById('undoStatusLink');
+    const clearTimer = setTimeout(() => setStatus('Ready'), 3000);
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearTimeout(clearTimer); // don't let the 3s revert overwrite "Restored"
+      undoClear();
+    });
+  } else if (isTouch) {
+    setStatus('Cleared');
+    setTimeout(() => setStatus('Ready'), 3000);
+  } else {
+    setStatus('Cleared — press Z to undo');
+    setTimeout(() => {
+      if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
+    }, 3000);
+  }
+
   timerEl.textContent = '00:00';
 };
 
@@ -2015,8 +2029,33 @@ if (shortcutsBtn && shortcutsPopover) {
   });
 }
 
+// ── First-run hint banner ──
+// One-time, dismissible banner pointing new users at the mic and tap-to-copy.
+// Auto-dismisses once the user starts recording (mic tap or Enter).
+function initOnboarding() {
+  const banner = document.getElementById('onboardingBanner');
+  const closeBtn = document.getElementById('onboardingClose');
+  if (!banner || !closeBtn) return;
+  if (localStorage.getItem('dictationOnboarded')) return;
+
+  banner.style.display = '';
+  const dismiss = () => {
+    banner.style.display = 'none';
+    localStorage.setItem('dictationOnboarded', '1');
+  };
+  closeBtn.onclick = dismiss;
+
+  // Auto-dismiss as soon as the user starts recording.
+  const onFirstStart = () => {
+    dismiss();
+    toggleBtn.removeEventListener('click', onFirstStart);
+  };
+  toggleBtn.addEventListener('click', onFirstStart);
+}
+
 // ── Init ──
 document.body.classList.add('record-active');
+initOnboarding();
 loadPrompts();
 renderHistory();
 hideRecoveryRow();

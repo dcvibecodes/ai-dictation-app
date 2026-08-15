@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
   <div class="app">
@@ -51,6 +51,13 @@
 
     <!-- ═══ RECORD TAB ═══ -->
     <div class="tab-panel active" id="panel-record">
+
+      <!-- First-run hint banner -->
+      <div id="onboardingBanner" class="onboarding-banner" style="display:none">
+        <span class="onboarding-text">Press <kbd>Enter</kbd> or tap the <strong>mic</strong> to start recording — then tap the <strong>transcript</strong> to copy it.</span>
+        <button class="onboarding-close" id="onboardingClose" aria-label="Dismiss">×</button>
+      </div>
+
       <div class="recorder-row" id="recorderRow">
         <button id="toggleBtn" class="record-btn" aria-label="Start recording">
           <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
@@ -230,11 +237,11 @@
           <summary class="help-summary">How recording works</summary>
           <div class="help-content">
             <ol class="help-list">
-              <li><strong>Press Enter</strong> (or tap the mic button) to start recording. The button turns red and shows a waveform.</li>
+              <li><strong>Press Enter</strong> (or tap the mic button) to start recording. The button turns red and shows a waveform. On first use, a hint banner points this out.</li>
               <li><strong>Press Enter again</strong> to stop. The audio is automatically saved to local storage as a backup.</li>
               <li><strong>Transcription</strong> begins immediately — the audio is sent to the server, which forwards it to the configured transcription API (e.g. Whisper).</li>
               <li><strong>Auto-cleanup</strong> (if enabled) sends the raw transcript to a second API for grammar fixing, punctuation, and formatting.</li>
-              <li>The cleaned result is automatically <strong>copied to your clipboard</strong> and saved to history.</li>
+              <li>The cleaned result is automatically <strong>copied to your clipboard</strong> and saved to history. You can also tap the transcript to copy it again at any time — a "Copied ✓" confirmation appears.</li>
             </ol>
           </div>
         </details>
@@ -379,7 +386,7 @@
               </tr>
               <tr>
                 <td>Clearing data</td>
-                <td>Use the <strong>Clear</strong> button on the record bar to wipe the current on-screen transcript (which is the whole append document) and any audio backup — one click. Use <strong>Clear All</strong> in the History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
+                <td>Use the <strong>Clear</strong> button on the record bar to wipe the current on-screen transcript (which is the whole append document) and any audio backup — one click. On desktop you can press <kbd>Z</kbd> to undo a clear; on mobile/touch a tappable <strong>Undo</strong> link appears in the status line. Use <strong>Clear All</strong> in the History tab to remove all saved transcriptions. Server data persists until you overwrite it.</td>
               </tr>
             </table>
           </div>
@@ -478,6 +485,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=17"></script>
+  <script src="script.js?v=18"></script>
 </body>
 </html>

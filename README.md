@@ -63,7 +63,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
-- **Tap to copy** — click/tap the transcript to copy the entire text to clipboard
+- **Tap to copy** — click/tap the transcript to copy the entire text to clipboard (a "Copied ✓" confirmation appears; no fading animation)
+- **First-run hint banner** — a one-time banner on first load points out how to record and how to tap-to-copy
 - **Show raw / Show cleaned toggle** — switch between raw and cleaned versions (shortcut: R)
 - **Manual cleanup** — press K or click Clean up to (re-)process the transcript with the selected prompt at any time
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
@@ -82,6 +83,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
 - **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, N, U, A, T, L, 1–5, M, D, H, S
+- **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails

@@ -637,6 +637,53 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   margin-bottom: 16px;
 }
 
+/* ── First-run hint banner ── */
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--accent-dim);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.onboarding-banner kbd {
+  display: inline-block;
+  padding: 0 4px;
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.onboarding-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.onboarding-close:hover { color: var(--text); background: var(--accent-dim); }
+
+/* ── Clickable status link (mobile undo) ── */
+.status-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.status-link:hover { opacity: 0.85; }
+
 /* ══════════════════════════════════
    MOBILE
    ══════════════════════════════════ */
