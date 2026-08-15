@@ -876,28 +876,32 @@ clearBtn.onclick = async () => {
   hideRecoveryRow();
   clearProcessingUI();
 
-  const isTouch = navigator.maxTouchPoints > 0;
+  // Mobile = viewport is mobile-sized (matches the CSS 600px breakpoint) OR the
+  // device reports touch. Using viewport width is important because desktop
+  // browsers switched to mobile view (e.g. Safari device mode) report maxTouchPoints
+  // as 0, so relying on touch alone would never show the mobile branch.
+  const isMobile = window.matchMedia('(max-width: 600px)').matches || navigator.maxTouchPoints > 0;
   const hasUndo = !!undoState;
 
-  if (isTouch && hasUndo) {
+  if (isMobile && hasUndo) {
     // Mobile: show a tappable Undo link in the status line (no keyboard).
     statusEl.className = 'status active';
     statusEl.innerHTML = 'Cleared · <a href="javascript:void(0)" class="status-link" id="undoStatusLink">Undo</a>';
     const link = document.getElementById('undoStatusLink');
-    const clearTimer = setTimeout(() => setStatus('Ready'), 3000);
+    const clearTimer = setTimeout(() => setStatus('Ready'), 5000);
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      clearTimeout(clearTimer); // don't let the 3s revert overwrite "Restored"
+      clearTimeout(clearTimer); // don't let the 5s revert overwrite "Restored"
       undoClear();
     });
-  } else if (isTouch) {
+  } else if (isMobile) {
     setStatus('Cleared');
-    setTimeout(() => setStatus('Ready'), 3000);
+    setTimeout(() => setStatus('Ready'), 5000);
   } else {
     setStatus('Cleared — press Z to undo');
     setTimeout(() => {
       if (statusEl.textContent === 'Cleared — press Z to undo') setStatus('Ready');
-    }, 3000);
+    }, 5000);
   }
 
   timerEl.textContent = '00:00';
