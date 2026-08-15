@@ -69,7 +69,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Manual cleanup** — press K or click Clean up to (re-)process the transcript with the selected prompt at any time
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
 - **Pause/resume recording** — pause mid-dictation (button or P); timer and waveform freeze; resume where you left off
-- **Editable transcript** — click Edit (or press E) to fix words directly in the transcript before copying; plain-text paste, live word count, syncs with append mode
+- **Editable transcript** — click Edit (or press E) to fix words directly in the transcript before copying; plain-text paste, live word count, syncs with append mode; on mobile the font bumps to 16px while editing to prevent iOS Safari auto-zoom
 - **Language setting** — pin the transcription language (e.g. `en`) instead of auto-detect for better accuracy and speed
 - **Vocabulary hint** — bias the transcription model toward your names, jargon, and uncommon words
 - **Correct audio format handling** — recordings are labeled with their actual format (WebM on Chrome, M4A on Safari/iOS) so transcription APIs accept them
