@@ -843,7 +843,13 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   .recovery-actions { width: 100%; }
   .recovery-actions .btn { flex: 1; }
 
+  /* Match the settings inputs to the transcript's reading size (0.92rem),
+     then bump to 16px only while focused — the same iOS zoom-prevention
+     pattern used for the transcript's editing state. */
   .input, textarea, .settings-group .input {
+    font-size: 0.92rem;
+  }
+  .input:focus, textarea:focus, .settings-group .input:focus {
     font-size: 16px;
   }
 

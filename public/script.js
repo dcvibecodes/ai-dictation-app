@@ -1084,6 +1084,11 @@ function clearHistory() { if (history.length === 0) return; if (!confirm('Clear 
 let settingsLocked = true;
 
 async function loadSettingsUI() {
+  // Lock the settings fields immediately (before the network request) so they
+  // gray out as soon as the tab is clicked, rather than waiting for /api/settings
+  // to respond (which could take a couple of seconds).
+  settingsLocked = true;
+  applySettingsLock();
   try {
     const res = await fetch('/api/settings');
     if (res.status === 401) { window.location.href = '/login'; return; }
@@ -1105,8 +1110,6 @@ async function loadSettingsUI() {
     document.getElementById('setCleanupModel').value = s.cleanupModel;
     updateEngineFields();
   } catch (e) { console.error('loadSettingsUI error:', e); }
-  settingsLocked = true;
-  applySettingsLock();
 }
 
 // Show/hide the engine-specific fields based on the selected transcription engine.
