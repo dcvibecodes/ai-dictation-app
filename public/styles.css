@@ -89,7 +89,7 @@ header {
   font-family: inherit; transition: all 0.15s; white-space: nowrap;
 }
 .tab-btn:hover { color: var(--text); }
-.tab-btn.active { background: var(--accent-dim); color: var(--accent); }
+.tab-btn.active { background: var(--accent); color: var(--accent-contrast); }
 .tab-btn svg { flex-shrink: 0; }
 
 .icon-btn {
