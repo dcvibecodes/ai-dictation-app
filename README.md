@@ -2,6 +2,19 @@
 
 AI-powered voice-to-text for people who can't install software on their computer.
 
+---
+
+## What's New in v6.15.0
+
+### Design Language Update — Matches Expenses+ & Portfolio+
+- **Typography** — body font switched from Inter to **Outfit**; headings now use the **Fraunces** serif, matching the rest of the suite
+- **3-layer color scheme** — applied the same page → cards → inputs layering used by Expenses+/Portfolio+:
+  - **Light (warm sepia)**: `#f5efe6` page / `#faf6ee` cards / `#fcfcfc` inputs
+  - **Dark (pitch black)**: `#000000` page / `#101010` cards / `#1c1c1c` inputs
+- **Monochrome accent** — near-black `#111111` (light) / near-white `#f5f5f5` (dark), replacing the previous accent
+- **Semantic colors** — danger/success/warning updated to the suite's palette
+- **PWA + auth pages** — `manifest.json` theme/background colors and the login/setup pages (`auth.css`) updated to match
+
 If your work machine blocks app installs, doesn't have a Copilot+ PC with fluid dictation, or you're stuck with the basic Windows speech-to-text that can't clean up filler words or fix grammar — this is for you. Host it on your own VPS, open it in your browser, and install it as a PWA. No admin rights, no IT approval, no app store. Just a URL.
 
 Works anywhere your workplace allows internet access to your domain.
@@ -228,7 +241,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 
 | Layer | Technology |
 |---|---|
-| Frontend | Vanilla HTML/CSS/JS, Inter font, PWA |
+| Frontend | Vanilla HTML/CSS/JS, Outfit + Fraunces fonts, PWA |
 | Backend | Node.js, Express |
 | Auth | bcryptjs, cookie-parser, HMAC sessions |
 | AI | Any compatible speech-to-text + chat API |
