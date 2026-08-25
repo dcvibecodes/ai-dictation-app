@@ -264,7 +264,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - In Append mode, a recording appended to an existing document shows **"Appended & copied"**; a fresh start (empty document) shows "Cleaned copied" / "Raw copied"
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
-- A one-time status warning appears at 5 minutes of recording, reminding you that long recordings risk hitting the 50 MB upload limit — stop and append instead
+- Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
 
 ### Configurable rate limits & transcript cap
 

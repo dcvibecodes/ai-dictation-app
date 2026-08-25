@@ -6,7 +6,11 @@ let cancelled = false;
 let history = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
 let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
-let longRecordingWarned = false; // one-time 5-minute recording warning
+let recordingStartedAt = 0;       // Date.now() when the recording began
+let recordingDeadlineAt = 0;      // Date.now() when the recording will auto-stop
+let limitWarned = false;          // whether the auto-stop warning is currently shown
+let autoStopped = false;          // true when the time limit triggered the stop
+let limitCheckTimer = null;       // interval enforcing the auto-stop limit
 
 // --- Live transcription mode ---
 // When enabled, audio is captured in chunks and transcribed as you speak, so
@@ -28,9 +32,17 @@ const CHUNK_DURATION_MS = 10000;  // send a chunk every 10 seconds (for long dic
 const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
 const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
 
+// --- Auto-stop limit ---
+// Recording auto-stops 5 minutes after it starts unless the user clicks Extend.
+// Each Extend adds 5 more minutes and can be used any number of times.
+const MAX_RECORDING_SECONDS = 300; // base limit: auto-stop after 5 minutes
+const EXTEND_SECONDS = 300;        // each Extend click adds 5 more minutes
+const WARNING_LEAD_SECONDS = 60;   // warn + show Extend 1 minute before the deadline
+
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
 const pauseBtn   = document.getElementById('pauseBtn');
+const extendBtn  = document.getElementById('extendBtn');
 const clearBtn   = document.getElementById('clearBtn');
 const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
@@ -787,16 +799,51 @@ sendCleanupBtn.addEventListener('click', sendRawForCleanup);
 function timerTick() {
   secondsElapsed++;
   timerEl.textContent = String(Math.floor(secondsElapsed/60)).padStart(2,'0') + ':' + String(secondsElapsed%60).padStart(2,'0');
-  // Gentle one-time warning at 5 minutes — long recordings risk hitting the 50MB upload cap
-  if (secondsElapsed === 300 && !longRecordingWarned) {
-    longRecordingWarned = true;
-    setStatus('Recording… (5 min — consider stopping & appending)', 'active');
-  }
 }
 function startTimer() { secondsElapsed = 0; timerEl.textContent = '00:00'; timerInterval = setInterval(timerTick, 1000); }
 function stopTimer() { clearInterval(timerInterval); }
 function pauseTimer() { clearInterval(timerInterval); }
 function resumeTimer() { timerInterval = setInterval(timerTick, 1000); }
+
+// ── Auto-stop limit ──
+// Runs on wall-clock time (independent of the display timer, which freezes on
+// pause), so a forgotten recording always stops on schedule. Shows a warning
+// and the Extend button 1 minute before the deadline; Extend adds 5 minutes.
+function showLimitWarning() {
+  limitWarned = true;
+  setStatus('Recording will auto-stop in 1 minute — Extend to continue', 'active');
+  extendBtn.style.display = '';
+}
+function hideLimitWarning() { extendBtn.style.display = 'none'; }
+function startLimitCheck() {
+  recordingStartedAt = Date.now();
+  recordingDeadlineAt = recordingStartedAt + MAX_RECORDING_SECONDS * 1000;
+  limitWarned = false;
+  autoStopped = false;
+  clearLimitCheck();
+  limitCheckTimer = setInterval(() => {
+    const remaining = recordingDeadlineAt - Date.now();
+    if (!limitWarned && remaining <= WARNING_LEAD_SECONDS * 1000) showLimitWarning();
+    if (remaining <= 0) {
+      clearLimitCheck();
+      autoStopped = true;
+      setStatus('Recording auto-stopped — transcribing…', 'active');
+      stopRecording();
+    }
+  }, 1000);
+}
+function clearLimitCheck() {
+  if (limitCheckTimer) { clearInterval(limitCheckTimer); limitCheckTimer = null; }
+  hideLimitWarning();
+}
+extendBtn.onclick = () => {
+  if (!isRecording) return;
+  recordingDeadlineAt += EXTEND_SECONDS * 1000;
+  limitWarned = false;
+  hideLimitWarning();
+  if (navigator.vibrate) navigator.vibrate(10);
+  setStatus('Recording extended by 5 minutes', 'active');
+};
 
 // ── Waveform ──
 let cachedBarColor = null;
@@ -1372,11 +1419,17 @@ async function transcribeAudioBlob(audioBlob) {
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     clearInterval(procTimer);
-    setStatus(copiedLabel, 'done');
-    clearProcessingUI();
-    retryRecordingBtn.disabled = false;
-    resetButton();
-    setTimeout(() => setStatus('Ready'), 2000);
+    if (!autoStopped) {
+      setStatus(copiedLabel, 'done');
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+      setTimeout(() => setStatus('Ready'), 2000);
+    } else {
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+    }
     return;
   } catch (e) {
     clearInterval(procTimer);
@@ -1411,7 +1464,7 @@ async function startRecording() {
     source.connect(analyser);
     visualize();
     startTimer();
-    longRecordingWarned = false;
+    startLimitCheck();
 
     // Haptic feedback on start
     if (navigator.vibrate) navigator.vibrate(10);
@@ -1434,6 +1487,7 @@ async function startRecording() {
       mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
       mediaRecorder.onstop = async () => {
+        clearLimitCheck();
         cancelAnimationFrame(animationId);
         stopTimer(); clearWaveform();
         toggleBtn.classList.remove('recording');
@@ -1459,6 +1513,11 @@ async function startRecording() {
           inMemoryAudioBlob = audioBlob;
         }
         await transcribeAudioBlob(audioBlob);
+        if (autoStopped) {
+          const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
+          setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
+          setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
+        }
       };
       mediaRecorder.start();
     }
@@ -1633,6 +1692,7 @@ function startLiveCapture(stream) {
 
 // Tear down live capture and process the accumulated transcript.
 async function stopLiveRecording() {
+  clearLimitCheck();
   clearInterval(liveChunkTimer);
   liveSendChunk(); // send the final partial chunk
 
@@ -1666,10 +1726,16 @@ async function stopLiveRecording() {
 
   await finishLiveRecording();
   clearInterval(procTimer);
+  if (autoStopped) {
+    const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
+    setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
+    setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
+  }
 }
 
 // Cancel live recording — discard everything, no cleanup.
 async function cancelLiveRecording() {
+  clearLimitCheck();
   clearInterval(liveChunkTimer);
   cancelAnimationFrame(animationId);
   stopTimer(); clearWaveform();
@@ -1786,19 +1852,23 @@ async function finishLiveRecording() {
   processingAbortController = null;
   clearProcessingUI();
   resetButton();
-  setStatus(copiedLabel, 'done');
-  setTimeout(() => setStatus('Ready'), 2000);
+  if (!autoStopped) {
+    setStatus(copiedLabel, 'done');
+    setTimeout(() => setStatus('Ready'), 2000);
+  }
 }
 
 function resetButton() {
   isRecording = false;
   isPaused = false;
   pauseBtn.style.display = 'none';
+  extendBtn.style.display = 'none';
   toggleBtn.classList.remove('recording', 'processing');
   toggleBtn.innerHTML = '<svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>';
 }
 
 function cancelRecording() {
+  if (!isRecording) return;
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
@@ -1806,6 +1876,7 @@ function cancelRecording() {
   cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
 }
 function stopRecording() {
+  if (!isRecording) return;
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;

@@ -16,3 +16,7 @@ prompts.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Agent rules (personal — do not commit)
+AGENTS.md
+.clinerules
