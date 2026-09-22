@@ -927,7 +927,6 @@ function getBarColor() {
 }
 
 function visualize() {
-  analyser.fftSize = 256;
   const bufLen = analyser.frequencyBinCount;
   const data = new Uint8Array(bufLen);
 
@@ -1666,7 +1665,7 @@ async function startRecording() {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch {} }
     analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
+    analyser.fftSize = 2048; // wide window (~43ms) so the silence check sees real audio
     source = audioContext.createMediaStreamSource(stream);
 
     // If the mic track ends mid-session, remember why so we can tell the user.
@@ -1727,24 +1726,39 @@ async function startRecording() {
 }
 
 // ── Mic sanity check ──
-// A flat line for the first couple of seconds means the mic is muted, held by
-// another app, or otherwise silent — warn the user rather than let them think
-// everything is fine. Deliberate silence is still allowed.
+// Only warn after a sustained stretch with essentially no signal. A short
+// snapshot can land in the gap between words, and the frequency-bar waveform
+// looks "alive" even for very quiet input (it maps -100..-30 dB), so we read the
+// time-domain level with a wide window and require several quiet seconds in a row.
+// Once any real signal is seen, the check stops for the rest of the session.
 function startSilenceWatch() {
   stopSilenceWatch();
   if (!analyser) return;
-  const buf = new Uint8Array(analyser.fftSize);
-  let ticks = 0;
+  const useFloat = typeof analyser.getFloatTimeDomainData === 'function';
+  const floatBuf = useFloat ? new Float32Array(analyser.fftSize) : null;
+  const byteBuf = useFloat ? null : new Uint8Array(analyser.fftSize);
+  const SILENCE_THRESHOLD = 0.004; // ~0.5% of full scale — very quiet, but not dead
+  const SILENCE_TICKS = 5;         // ~5s of sustained silence before warning
+  let quietTicks = 0;
   silenceTimer = setInterval(() => {
-    ticks++;
+    if (isPaused) return; // silence is expected while paused
     try {
-      analyser.getByteTimeDomainData(buf);
       let peak = 0;
-      for (let i = 0; i < buf.length; i++) { const d = Math.abs(buf[i] - 128); if (d > peak) peak = d; }
-      if (peak > 3) {
+      if (useFloat) {
+        analyser.getFloatTimeDomainData(floatBuf);
+        for (let i = 0; i < floatBuf.length; i++) { const v = Math.abs(floatBuf[i]); if (v > peak) peak = v; }
+      } else {
+        analyser.getByteTimeDomainData(byteBuf);
+        for (let i = 0; i < byteBuf.length; i++) { const v = Math.abs(byteBuf[i] - 128) / 128; if (v > peak) peak = v; }
+      }
+      if (peak >= SILENCE_THRESHOLD) {
+        // Real audio — never warn again this session.
         stopSilenceWatch();
-        if (!isPaused && isRecording) setStatus('Recording…', 'active');
-      } else if (ticks >= 2) {
+        if (isRecording) setStatus('Recording…', 'active');
+        return;
+      }
+      quietTicks++;
+      if (quietTicks >= SILENCE_TICKS) {
         setStatus('No sound detected — check that your mic is not muted or in use', 'error');
       }
     } catch {}
