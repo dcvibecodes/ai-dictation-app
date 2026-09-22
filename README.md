@@ -4,16 +4,19 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
-## What's New in v6.15.0
+## What's New in v6.17.0
 
-### Design Language Update — Matches Expenses+ & Portfolio+
-- **Typography** — body font switched from Inter to **Outfit**; headings now use the **Fraunces** serif, matching the rest of the suite
-- **3-layer color scheme** — applied the same page → cards → inputs layering used by Expenses+/Portfolio+:
-  - **Light (warm sepia)**: `#f5efe6` page / `#faf6ee` cards / `#fcfcfc` inputs
-  - **Dark (pitch black)**: `#000000` page / `#101010` cards / `#1c1c1c` inputs
-- **Monochrome accent** — near-black `#111111` (light) / near-white `#f5f5f5` (dark), replacing the previous accent
-- **Semantic colors** — danger/success/warning updated to the suite's palette
-- **PWA + auth pages** — `manifest.json` theme/background colors and the login/setup pages (`auth.css`) updated to match
+### Recording can no longer silently lose your audio
+Long recordings used to live only in memory until you pressed stop — if the app was backgrounded, killed, reloaded, or crashed mid-recording, the whole recording (and the downloadable file) was gone with no warning. This release fixes that:
+
+- **Chunked capture + rolling backup** — recordings are captured in 1-second slices and flushed to local storage every few seconds, so an interrupted session is recoverable. If the app closes mid-recording, the next time you open it the recovery strip appears with **Retry / Download / Clear**.
+- **Live mode now keeps an audio backup too** — previously the "Download recording" option could never work in Live mode. It now backs up the full session as a WAV.
+- **Live mode is ON by default** — long dictations are transcribed as you speak, so there's far less to lose if anything interrupts.
+- **Never a false "recording"** — the red recording state, timer, and waveform only appear *after* the recorder has confirmed real audio is arriving. If it can't start, you get a clear error instead of a recording that never happened.
+- **Silence warning** — if the mic produces no sound for the first couple of seconds (muted, in use by another app, wrong device), the status line warns you. Recording continues, since deliberate silence is allowed.
+- **Mic-loss handling** — if the microphone disconnects mid-session, the recording stops cleanly, the audio is saved, and you're told what happened.
+- **Clear now truly cancels** — clearing while recording discards the take instead of clearing and then pasting the transcript back in.
+- **Auto-stop no longer masks failures** — if an auto-stopped recording fails to transcribe, you see the real error, not a green "auto-stopped" message.
 
 If your work machine blocks app installs, doesn't have a Copilot+ PC with fluid dictation, or you're stuck with the basic Windows speech-to-text that can't clean up filler words or fix grammar — this is for you. Host it on your own VPS, open it in your browser, and install it as a PWA. No admin rights, no IT approval, no app store. Just a URL.
 
@@ -71,7 +74,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Password-protected** — owner-only access, bcrypt hashed, 7-day session
 - **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits
 - **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
-- **Live transcription** (optional, off by default) — designed for long dictation sessions: audio is sent in ~10-second chunks and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Toggle it on, or press L.
+- **Live transcription** (on by default) — designed for long dictation sessions: audio is sent in ~10-second chunks and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Turn it off with the Live toggle, or press L.
+- **Recording safety net** — the recorder only shows "recording" once real audio is confirmed; a silence watchdog warns if the mic is muted or in use; mic loss mid-session is caught and the audio is saved; and a rolling backup means an interrupted recording is recoverable on the next open.
 - **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
@@ -99,7 +103,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
-- **Local backup** — recording saved to IndexedDB on stop (with in-memory fallback); retry, download, or clear from the recovery strip if upload fails
+- **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or clear from the recovery strip. Works in both standard and Live mode, and recovers interrupted recordings on the next open.
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
@@ -265,6 +269,9 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
+- **Live mode is on by default** — turn it off with the Live toggle or `L`. In Live mode the transcript fills in as you speak (~10s chunks) and the full session is backed up locally as a WAV.
+- **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Clear**.
+- **Clear during recording cancels the take** (it does not get transcribed back into the document).
 
 ### Configurable rate limits & transcript cap
 

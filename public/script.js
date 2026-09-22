@@ -11,12 +11,18 @@ let recordingDeadlineAt = 0;      // Date.now() when the recording will auto-sto
 let limitWarned = false;          // whether the auto-stop warning is currently shown
 let autoStopped = false;          // true when the time limit triggered the stop
 let limitCheckTimer = null;       // interval enforcing the auto-stop limit
+let isStarting = false;           // true while the mic is being set up and confirmed
+let silenceTimer = null;          // poll that warns if the mic is producing no sound
+let recordingInterrupted = '';    // set if the mic dies mid-recording (track ended)
+let silentCancel = false;         // suppress the "Cancelled" status when Clear stops a recording
+let lastBackupFlush = 0;          // throttle for rolling audio-backup writes
+let backupSession = 0;            // invalidates in-flight backup writes when a recording ends
 
 // --- Live transcription mode ---
 // When enabled, audio is captured in chunks and transcribed as you speak, so
 // long dictations are transcribed during recording instead of all at the end.
-// Default OFF — enable via the Live toggle or the L shortcut.
-let liveMode = localStorage.getItem('liveMode') === 'true'; // default OFF
+// Default ON — the Live toggle or the L shortcut can turn it off.
+let liveMode = localStorage.getItem('liveMode') !== 'false'; // default ON
 let liveStream = null;            // the mic MediaStream while live-recording
 let liveScriptNode = null;        // ScriptProcessorNode capturing raw PCM
 let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
@@ -28,6 +34,11 @@ let liveNextSeq = 0;              // next sequence to append in order
 let livePending = new Map();      // seq -> transcribed text (out-of-order buffer)
 let liveInflight = new Set();     // pending chunk transcription promises
 let livePaused = false;           // true while paused (discard captured audio)
+let liveBackupChunks = [];        // resampled Float32 chunks kept for the local WAV backup
+let liveBackupSamples = 0;        // total samples across liveBackupChunks
+let liveChunkSuccesses = 0;       // chunks transcribed successfully this session
+let liveChunkErrors = 0;          // chunks that failed to transcribe this session
+let liveDocumentCleared = false;  // true while a live start has blanked the on-screen document
 const CHUNK_DURATION_MS = 10000;  // send a chunk every 10 seconds (for long dictation sessions)
 const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
 const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
@@ -198,8 +209,8 @@ async function withAudioStore(mode, fn) {
   });
 }
 
-async function saveAudioBackup(blob) {
-  const record = { id: AUDIO_KEY, blob, type: blob.type || 'audio/webm', size: blob.size, createdAt: Date.now(), seconds: secondsElapsed };
+async function saveAudioBackup(blob, inProgress = false) {
+  const record = { id: AUDIO_KEY, blob, type: blob.type || 'audio/webm', size: blob.size, createdAt: Date.now(), seconds: secondsElapsed, inProgress };
   await withAudioStore('readwrite', store => store.put(record));
   return record;
 }
@@ -216,6 +227,7 @@ async function getAudioBackup() {
 }
 
 async function clearAudioBackup() {
+  backupSession++; // stop any in-flight rolling backup from re-writing it
   await withAudioStore('readwrite', store => store.delete(AUDIO_KEY));
 }
 
@@ -251,13 +263,73 @@ async function clearInMemoryAudioBackup() {
   inMemoryAudioBlob = null;
 }
 
-async function showRecoveryRow() {
+// ── Rolling audio backup ──
+// The recording is kept in memory while it runs, so an interrupted session (app
+// backgrounded and killed, tab reload, crash) would otherwise lose everything —
+// including the downloadable file. We therefore flush what has been captured so
+// far to IndexedDB every few seconds, and recover it on the next app open.
+const BACKUP_FLUSH_MS = 4000;
+
+function concatFloat32(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Float32Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+async function flushRecordingBackup(chunks, isLive, force = false) {
+  const now = Date.now();
+  if (!force && now - lastBackupFlush < BACKUP_FLUSH_MS) return;
+  lastBackupFlush = now;
+  const session = backupSession;
+  try {
+    let blob;
+    if (isLive) {
+      if (!chunks.length) return;
+      blob = encodeWav(concatFloat32(chunks), TARGET_SAMPLE_RATE);
+    } else {
+      if (!chunks.length) return;
+      blob = new Blob(chunks, { type: (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm' });
+    }
+    if (session !== backupSession) return; // recording ended/cleared while building
+    if (blob.size > 0) {
+      await saveAudioBackup(blob, true);
+      if (session !== backupSession) {
+        // The recording ended/cleared while this write was in flight — remove the stale copy.
+        try { await withAudioStore('readwrite', store => store.delete(AUDIO_KEY)); } catch {}
+      }
+    }
+  } catch (e) {
+    // Best effort — a failed backup must never break recording.
+    console.error('Audio backup flush failed:', e);
+  }
+}
+
+// reason: 'failed' (transcription failed) or 'recovered' (interrupted recording
+// found on load). Both reuse the same Retry / Download / Clear strip.
+async function showRecoveryRow(reason = 'failed') {
   try {
     const backup = await getBestAudioBackup();
-    recoveryRow.style.display = backup ? '' : 'none';
-    if (backup) recoveryInfo.textContent = `Transcription failed · ${formatBytes(backup.size)} recording saved for retry`;
+    if (!backup || !backup.size) { recoveryRow.style.display = 'none'; return; }
+    recoveryRow.style.display = '';
+    recoveryInfo.textContent = reason === 'recovered'
+      ? `Unfinished recording recovered · ${formatBytes(backup.size)} saved — Retry or Download`
+      : `Transcription failed · ${formatBytes(backup.size)} recording saved for retry`;
   } catch {
     recoveryRow.style.display = 'none';
+  }
+}
+
+// On load, surface any recording that was in progress when the app last closed.
+async function checkRecoveryOnLoad() {
+  try {
+    const backup = await getBestAudioBackup();
+    if (backup && backup.size > 0) await showRecoveryRow(backup.inProgress ? 'recovered' : 'failed');
+    else hideRecoveryRow();
+  } catch {
+    hideRecoveryRow();
   }
 }
 
@@ -909,7 +981,9 @@ let undoState = null; // { raw, cleaned }
 // Clear always wipes the on-screen text (which is the whole document). One click.
 clearBtn.onclick = async () => {
   if (processingAbortController) abortProcessing();
-  if (isRecording) stopRecording();
+  // Clear stops any in-progress recording by cancelling it (not stopping it),
+  // so the audio isn't transcribed back into the document you just cleared.
+  if (isRecording) { silentCancel = true; cancelRecording(); }
   // Save state for undo before clearing
   if (getDisplayText().trim()) {
     undoState = { raw: currentRaw, cleaned: currentCleaned };
@@ -1374,7 +1448,8 @@ async function transcribeAudioBlob(audioBlob) {
           clearInterval(procTimer);
           setStatus('Cleanup failed — use Clean up to retry', 'error');
           setTimeout(() => setStatus('Ready'), 3000);
-          return;
+          processingAbortController = null;
+          return true;
         }
         const cData = await cRes.json();
         if (cData.error) throw new Error(cData.error);
@@ -1430,7 +1505,8 @@ async function transcribeAudioBlob(audioBlob) {
       retryRecordingBtn.disabled = false;
       resetButton();
     }
-    return;
+    processingAbortController = null;
+    return true;
   } catch (e) {
     clearInterval(procTimer);
     if (e.name === 'AbortError') {
@@ -1445,9 +1521,9 @@ async function transcribeAudioBlob(audioBlob) {
       retryRecordingBtn.disabled = false;
       resetButton();
       setTimeout(() => setStatus('Ready'), 3000);
-      showRecoveryRow();
+      showRecoveryRow('failed');
     }
-    return;
+    return false;
   }
   processingAbortController = null;
   clearProcessingUI();
@@ -1455,20 +1531,162 @@ async function transcribeAudioBlob(audioBlob) {
   resetButton();
 }
 
-async function startRecording() {
+// Standard (non-live) recorder. Starts a 1s-timeslice recording and resolves
+// only once real audio has arrived — this is what lets the UI truthfully say
+// "recording".
+function startStandardRecorder(stream) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const ok = () => { if (settled) return; settled = true; if (timer) clearTimeout(timer); resolve(); };
+    const fail = (err) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); reject(err); };
+
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream);
+    } catch (err) {
+      return reject(new Error('This browser cannot record audio'));
+    }
+    mediaRecorder = recorder;
+    audioChunks = [];
+    lastBackupFlush = 0;
+    backupSession++; // new session — invalidate any earlier in-flight backup writes
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+      if (audioChunks.length) flushRecordingBackup(audioChunks, false);
+      if (e.data && e.data.size > 0) ok();
+    };
+    recorder.onerror = (ev) => {
+      console.error('MediaRecorder error:', ev.error || ev);
+      if (!settled) { fail(new Error('recorder error')); return; }
+      handleRecorderFailure('Recording error — ' + ((ev.error && ev.error.name) || 'unknown'));
+    };
+    recorder.onstop = onStandardRecorderStop;
+
+    // If no audio chunk arrives within 3s, something is wrong — never pretend.
+    timer = setTimeout(() => fail(new Error('no audio was captured')), 3000);
+    try {
+      recorder.start(1000); // 1s timeslice → periodic dataavailable + rolling backup
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
+// Runs when the standard recorder stops (user stop, auto-stop, cancel, or a mic
+// failure). Builds the final blob, saves it, then releases the microphone.
+async function onStandardRecorderStop() {
+  clearLimitCheck();
+  stopSilenceWatch();
+  cancelAnimationFrame(animationId);
+  stopTimer(); clearWaveform();
+  toggleBtn.classList.remove('recording');
+  isPaused = false;
+  pauseBtn.style.display = 'none';
+
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+
+  // Release the microphone only now, after the final data has been flushed.
+  try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch {}
+
+  const interrupted = recordingInterrupted;
+  recordingInterrupted = '';
+
+  if (cancelled) {
+    cancelled = false; audioChunks = [];
+    cancelBtn.style.display = 'none';
+    document.querySelector('.action-btns').style.display = '';
+    resetButton();
+    if (!silentCancel) { setStatus('Cancelled', 'error'); setTimeout(() => setStatus('Ready'), 1200); }
+    silentCancel = false;
+    return;
+  }
+
+  const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  if (!audioBlob.size) {
+    await clearAudioBackup().catch(() => {});
+    await clearInMemoryAudioBackup();
+    resetButton();
+    setStatus('No audio was captured — check your microphone', 'error');
+    setTimeout(() => setStatus('Ready'), 4000);
+    return;
+  }
+
+  // Recording has ended — invalidate any in-flight rolling backup, then save the
+  // complete blob (marked finished) so the recovery row shows the right reason.
+  backupSession++;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new AudioContext();
+    await saveAudioBackup(audioBlob, false);
+    inMemoryAudioBlob = null;
+  } catch {
+    inMemoryAudioBlob = audioBlob;
+  }
+
+  const ok = await transcribeAudioBlob(audioBlob);  if (autoStopped && ok) {
+    const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
+    setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
+    setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
+  } else {
+    autoStopped = false;
+    if (interrupted && ok) {
+      setStatus(interrupted + ' — audio saved', 'error');
+      setTimeout(() => setStatus('Ready'), 4000);
+    }
+  }
+}
+
+// Any unexpected end of a recording (mic unplugged, permission revoked, another
+// app grabbing the device) funnels through here: stop cleanly and keep the audio.
+function handleRecorderFailure(message) {
+  if (!isRecording) return;
+  recordingInterrupted = message;
+  stopRecording();
+}
+
+async function startRecording() {
+  if (isRecording || isStarting) return;
+  isStarting = true;
+  setStatus('Starting mic…');
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    console.error('getUserMedia error:', err);
+    isStarting = false;
+    resetButton();
+    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+    setStatus(denied ? 'Microphone access denied — allow it and try again' : 'Could not access the microphone', 'error');
+    setTimeout(() => setStatus('Ready'), 4000);
+    return;
+  }
+
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch {} }
     analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
     source = audioContext.createMediaStreamSource(stream);
+
+    // If the mic track ends mid-session, remember why so we can tell the user.
+    stream.getAudioTracks().forEach(t => {
+      t.onended = () => { if (isRecording && !cancelled) recordingInterrupted = 'Microphone was disconnected'; };
+    });
+
+    // Confirm the recorder is genuinely capturing audio BEFORE showing "recording".
+    if (liveMode) {
+      await startLiveCapture(stream);
+    } else {
+      await startStandardRecorder(stream);
+    }
+
+    // Only now — after real audio was confirmed — flip the UI to recording.
     source.connect(analyser);
     visualize();
     startTimer();
     startLimitCheck();
-
-    // Haptic feedback on start
     if (navigator.vibrate) navigator.vibrate(10);
-
     toggleBtn.classList.add('recording');
     toggleBtn.innerHTML = '<div class="stop-icon"></div>';
     isPaused = false;
@@ -1478,56 +1696,64 @@ async function startRecording() {
     document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
     setStatus('Recording…', 'active');
-
-    if (liveMode) {
-      startLiveCapture(stream);
-    } else {
-      mediaRecorder = new MediaRecorder(stream);
-      audioChunks = [];
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
-      mediaRecorder.onstop = async () => {
-        clearLimitCheck();
-        cancelAnimationFrame(animationId);
-        stopTimer(); clearWaveform();
-        toggleBtn.classList.remove('recording');
-        isPaused = false;
-        pauseBtn.style.display = 'none';
-
-        if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
-
-        if (cancelled) {
-          cancelled = false; audioChunks = [];
-          cancelBtn.style.display = 'none';
-          document.querySelector('.action-btns').style.display = '';
-          resetButton(); setStatus('Cancelled', 'error');
-          setTimeout(() => setStatus('Ready'), 1200);
-          return;
-        }
-
-        const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-        try {
-          await saveAudioBackup(audioBlob);
-          inMemoryAudioBlob = null;
-        } catch {
-          inMemoryAudioBlob = audioBlob;
-        }
-        await transcribeAudioBlob(audioBlob);
-        if (autoStopped) {
-          const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
-          setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
-          setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
-        }
-      };
-      mediaRecorder.start();
-    }
+    startSilenceWatch();
   } catch (e) {
-    console.error('getUserMedia error:', e);
+    console.error('Recording start error:', e);
+    // Tear down everything so we never leave a false "recording" impression.
+    // Only mark as cancelled if a recorder is actually running (its onstop will
+    // then discard the partial audio); otherwise leave the flag clean for next time.
+    const recorderRunning = mediaRecorder && mediaRecorder.state !== 'inactive';
+    if (recorderRunning) { cancelled = true; silentCancel = true; }
+    try { if (recorderRunning) mediaRecorder.stop(); } catch {}
+    if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} liveScriptNode = null; }
+    if (liveChunkTimer) { clearInterval(liveChunkTimer); liveChunkTimer = null; }
+    if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
+    // If a live start blanked the document, put the user's text back.
+    if (liveDocumentCleared) {
+      currentRaw = liveSegmentBaseRaw;
+      currentCleaned = liveSegmentBaseCleaned;
+      showingRaw = false;
+      liveDocumentCleared = false;
+      updateTranscriptDisplay();
+    }
+    clearLimitCheck();
+    stream.getTracks().forEach(t => t.stop());
+    if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
     resetButton();
-    setStatus('Microphone access denied or unavailable', 'error');
-    setTimeout(() => setStatus('Ready'), 2500);
+    setStatus('Could not start recording — ' + e.message, 'error');
+    setTimeout(() => setStatus('Ready'), 4000);
   }
+  isStarting = false;
 }
+
+// ── Mic sanity check ──
+// A flat line for the first couple of seconds means the mic is muted, held by
+// another app, or otherwise silent — warn the user rather than let them think
+// everything is fine. Deliberate silence is still allowed.
+function startSilenceWatch() {
+  stopSilenceWatch();
+  if (!analyser) return;
+  const buf = new Uint8Array(analyser.fftSize);
+  let ticks = 0;
+  silenceTimer = setInterval(() => {
+    ticks++;
+    try {
+      analyser.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) { const d = Math.abs(buf[i] - 128); if (d > peak) peak = d; }
+      if (peak > 3) {
+        stopSilenceWatch();
+        if (!isPaused && isRecording) setStatus('Recording…', 'active');
+      } else if (ticks >= 2) {
+        setStatus('No sound detected — check that your mic is not muted or in use', 'error');
+      }
+    } catch {}
+  }, 1000);
+}
+function stopSilenceWatch() {
+  if (silenceTimer) { clearInterval(silenceTimer); silenceTimer = null; }
+}
+
 
 // ── Live transcription helpers ──
 // Encode a mono Float32Array (values -1..1) into a WAV Blob. WAV is accepted by
@@ -1583,14 +1809,17 @@ function liveTranscribeChunk(wavBlob, seq) {
       if (res.status === 401) { window.location.href = '/login'; return; }
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setStatus('Chunk error: ' + (d.error || res.status), 'error');
+        liveChunkErrors++;
+        setStatus('Chunk error: ' + (d.error || res.status) + ' — audio is saved locally', 'error');
         return;
       }
       const data = await res.json();
+      liveChunkSuccesses++;
       livePending.set(seq, (data.rawTranscript || '').trim());
     } catch (e) {
       console.error('chunk error', e);
-      setStatus('Chunk upload failed: ' + e.message, 'error');
+      liveChunkErrors++;
+      setStatus('Chunk upload failed: ' + e.message + ' — audio is saved locally', 'error');
     } finally {
       liveFlushPending();
     }
@@ -1636,6 +1865,12 @@ function liveSendChunk(force = false) {
   const minSamples = TARGET_SAMPLE_RATE * MIN_CHUNK_SAMPLES_FACTOR;
   if (resampled.length < minSamples && !force) return;
 
+  // Keep this chunk for the local WAV backup, so a failed or interrupted live
+  // session is still recoverable, then transcribe it.
+  liveBackupChunks.push(resampled);
+  liveBackupSamples += resampled.length;
+  flushRecordingBackup(liveBackupChunks, true);
+
   const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
   const seq = liveChunkSeq++;
   liveTranscribeChunk(wav, seq);
@@ -1654,45 +1889,71 @@ function liveSendChunk(force = false) {
 let liveSegmentBaseRaw = '';
 let liveSegmentBaseCleaned = '';
 function startLiveCapture(stream) {
-  liveStream = stream;
-  livePcmSamples = new Float32Array(0);
-  liveWriteIndex = 0;
-  liveLastChunkEndIndex = 0;
-  liveChunkSeq = 0;
-  liveNextSeq = 0;
-  livePending.clear();
-  livePaused = false;
-  // Snapshot the existing document (used for append mode).
-  liveSegmentBaseRaw = currentRaw;
-  liveSegmentBaseCleaned = currentCleaned;
-  currentRaw = '';
-  currentCleaned = '';
-  showingRaw = false;
+  return new Promise((resolve, reject) => {
+    liveStream = stream;
+    livePcmSamples = new Float32Array(0);
+    liveWriteIndex = 0;
+    liveLastChunkEndIndex = 0;
+    liveChunkSeq = 0;
+    liveNextSeq = 0;
+    livePending.clear();
+    liveInflight.clear();
+    livePaused = false;
+    liveBackupChunks = [];
+    liveBackupSamples = 0;
+    liveChunkSuccesses = 0;
+    liveChunkErrors = 0;
+    lastBackupFlush = 0;
+    backupSession++; // new session — invalidate any earlier in-flight backup writes
+    // Snapshot the existing document (used for append mode).
+    liveSegmentBaseRaw = currentRaw;
+    liveSegmentBaseCleaned = currentCleaned;
+    currentRaw = '';
+    currentCleaned = '';
+    showingRaw = false;
+    liveDocumentCleared = true;
 
-  liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-  liveScriptNode.onaudioprocess = (e) => {
-    const channel = e.inputBuffer.getChannelData(0);
-    // Grow the buffer only when needed (amortized O(1) per sample). This avoids
-    // copying the whole recording on every callback, which is slow on iPhones.
-    if (liveWriteIndex + channel.length > livePcmSamples.length) {
-      const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
-      const nb = new Float32Array(newLen);
-      nb.set(livePcmSamples.subarray(0, liveWriteIndex), 0);
-      livePcmSamples = nb;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('no audio was captured'));
+    }, 3000);
+
+    try {
+      liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+    } catch (err) {
+      clearTimeout(timer);
+      reject(new Error('live capture is not supported by this browser'));
+      return;
     }
-    livePcmSamples.set(channel, liveWriteIndex);
-    liveWriteIndex += channel.length;
-  };
-  source.connect(liveScriptNode);
-  liveScriptNode.connect(audioContext.destination);
+    liveScriptNode.onaudioprocess = (e) => {
+      const channel = e.inputBuffer.getChannelData(0);
+      // Grow the buffer only when needed (amortized O(1) per sample). This avoids
+      // copying the whole recording on every callback, which is slow on iPhones.
+      if (liveWriteIndex + channel.length > livePcmSamples.length) {
+        const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
+        const nb = new Float32Array(newLen);
+        nb.set(livePcmSamples.subarray(0, liveWriteIndex), 0);
+        livePcmSamples = nb;
+      }
+      livePcmSamples.set(channel, liveWriteIndex);
+      liveWriteIndex += channel.length;
+      // First real audio callback = capture is genuinely running.
+      if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
+    };
+    source.connect(liveScriptNode);
+    liveScriptNode.connect(audioContext.destination);
 
-  liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
-  updateTranscriptDisplay();
+    liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+    updateTranscriptDisplay();
+  });
 }
 
 // Tear down live capture and process the accumulated transcript.
 async function stopLiveRecording() {
   clearLimitCheck();
+  stopSilenceWatch();
   clearInterval(liveChunkTimer);
   liveSendChunk(); // send the final partial chunk
 
@@ -1707,6 +1968,10 @@ async function stopLiveRecording() {
   liveScriptNode = null;
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
+
+  // Make sure everything captured so far is on disk before we tear anything down.
+  backupSession++; // recording ended — invalidate any in-flight rolling backup
+  await flushRecordingBackup(liveBackupChunks, true, true);
 
   // Recording has stopped — show a "Transcribing…" status with elapsed seconds
   // while the final chunks are processed, instead of leaving it on "Recording…".
@@ -1724,18 +1989,21 @@ async function stopLiveRecording() {
   } catch {}
   liveFlushPending();
 
-  await finishLiveRecording();
+  const ok = await finishLiveRecording();
   clearInterval(procTimer);
-  if (autoStopped) {
+  if (autoStopped && ok) {
     const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
     setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
     setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
+  } else {
+    autoStopped = false;
   }
 }
 
 // Cancel live recording — discard everything, no cleanup.
 async function cancelLiveRecording() {
   clearLimitCheck();
+  stopSilenceWatch();
   clearInterval(liveChunkTimer);
   cancelAnimationFrame(animationId);
   stopTimer(); clearWaveform();
@@ -1749,18 +2017,34 @@ async function cancelLiveRecording() {
   liveStream = null;
   cancelBtn.style.display = 'none';
   document.querySelector('.action-btns').style.display = '';
-  resetButton(); setStatus('Cancelled', 'error');
-  setTimeout(() => setStatus('Ready'), 1200);
+  // A cancel discards the session — remove the rolling backup too.
+  await clearAudioBackup().catch(() => {});
+  await clearInMemoryAudioBackup();
+  hideRecoveryRow();
+  resetButton();
+  if (!silentCancel) { setStatus('Cancelled', 'error'); setTimeout(() => setStatus('Ready'), 1200); }
+  silentCancel = false;
 }
 
 // On stop: clean up the accumulated live raw text (or keep raw), update history, copy.
+// Returns true when the session produced text, false otherwise.
 async function finishLiveRecording() {
   const raw = currentRaw;
   if (!raw.trim()) {
     clearProcessingUI();
     resetButton();
-    setStatus('Ready');
-    return;
+    if (liveBackupSamples > 0 || liveChunkErrors > 0) {
+      // Audio was captured but nothing was transcribed — keep it for recovery.
+      setStatus('Nothing was transcribed — audio saved for recovery', 'error');
+      await showRecoveryRow('failed');
+    } else {
+      await clearAudioBackup().catch(() => {});
+      await clearInMemoryAudioBackup();
+      hideRecoveryRow();
+      setStatus('No audio was captured — check your microphone', 'error');
+    }
+    setTimeout(() => setStatus('Ready'), 4000);
+    return false;
   }
 
   toggleBtn.classList.add('processing');
@@ -1781,7 +2065,7 @@ async function finishLiveRecording() {
       try {
         ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
       } catch (streamErr) {
-        if (streamErr.name === 'UnauthorizedError') { window.location.href = '/login'; return; }
+        if (streamErr.name === 'UnauthorizedError') { window.location.href = '/login'; return false; }
         if (streamErr.name === 'AbortError') throw streamErr;
         cleaned = '';
         streamSuccess = false;
@@ -1789,7 +2073,7 @@ async function finishLiveRecording() {
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-        if (cRes.status === 401) { window.location.href = '/login'; return; }
+        if (cRes.status === 401) { window.location.href = '/login'; return false; }
         if (!cRes.ok) {
           // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
@@ -1801,11 +2085,15 @@ async function finishLiveRecording() {
           }
           updateTranscriptDisplay(true);
           addToHistory(raw, raw);
-          setStatus('Cleanup failed — use Clean up to retry', 'error');
-          setTimeout(() => setStatus('Ready'), 3000);
+          await clearAudioBackup();
+          await clearInMemoryAudioBackup();
+          hideRecoveryRow();
+          processingAbortController = null;
           clearProcessingUI();
           resetButton();
-          return;
+          setStatus('Cleanup failed — use Clean up to retry', 'error');
+          setTimeout(() => setStatus('Ready'), 3000);
+          return true;
         }
         const cData = await cRes.json();
         if (cData.error) throw new Error(cData.error);
@@ -1840,6 +2128,19 @@ async function finishLiveRecording() {
         copiedLabel = 'Raw copied';
       }
     }
+
+    // Success — the transcript is safe, drop the audio backup.
+    await clearAudioBackup();
+    await clearInMemoryAudioBackup();
+    hideRecoveryRow();
+    processingAbortController = null;
+    clearProcessingUI();
+    resetButton();
+    if (!autoStopped) {
+      setStatus(copiedLabel, 'done');
+      setTimeout(() => setStatus('Ready'), 2000);
+    }
+    return true;
   } catch (e) {
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
@@ -1848,19 +2149,17 @@ async function finishLiveRecording() {
       setStatus('Error: ' + e.message, 'error');
       setTimeout(() => setStatus('Ready'), 3000);
     }
-  }
-  processingAbortController = null;
-  clearProcessingUI();
-  resetButton();
-  if (!autoStopped) {
-    setStatus(copiedLabel, 'done');
-    setTimeout(() => setStatus('Ready'), 2000);
+    processingAbortController = null;
+    clearProcessingUI();
+    resetButton();
+    return false;
   }
 }
 
 function resetButton() {
   isRecording = false;
   isPaused = false;
+  stopSilenceWatch();
   pauseBtn.style.display = 'none';
   extendBtn.style.display = 'none';
   toggleBtn.classList.remove('recording', 'processing');
@@ -1872,16 +2171,21 @@ function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  stopSilenceWatch();
   if (liveMode) { cancelLiveRecording(); return; }
-  cancelled = true; mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  cancelled = true;
+  try { mediaRecorder.stop(); } catch (e) {}
+  // The mic track is released inside onstop, after the final data is flushed.
 }
 function stopRecording() {
   if (!isRecording) return;
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  stopSilenceWatch();
   if (liveMode) { stopLiveRecording(); return; }
-  mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  try { mediaRecorder.stop(); } catch (e) {}
+  // The mic track is released inside onstop, after the final data is flushed.
 }
 
 // Safari/iOS MediaRecorder.pause()/resume() is broken: the functions exist but
@@ -2094,6 +2398,23 @@ function updateOnlineStatus() {
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
+// ── Flush the rolling backup when the app is hidden ──
+// Mobile OSes may freeze or kill a backgrounded page, so persist the newest audio
+// the moment we lose visibility rather than waiting for the next backup tick.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden || !isRecording) return;
+  try {
+    if (liveMode) {
+      liveSendChunk(); // include the current partial chunk
+      flushRecordingBackup(liveBackupChunks, true, true);
+    } else {
+      flushRecordingBackup(audioChunks, false, true);
+    }
+  } catch (e) {
+    console.error('Backup-on-hide failed:', e);
+  }
+});
+
 // ── Shortcuts popover ──
 const shortcutsBtn = document.getElementById('shortcutsBtn');
 const shortcutsPopover = document.getElementById('shortcutsPopover');
@@ -2138,7 +2459,7 @@ document.body.classList.add('record-active');
 initOnboarding();
 loadPrompts();
 renderHistory();
-hideRecoveryRow();
+checkRecoveryOnLoad();
 updateOnlineStatus();
 drawIdleLine();
 updateTranscriptDisplay();
