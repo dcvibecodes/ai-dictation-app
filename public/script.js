@@ -210,7 +210,11 @@ async function withAudioStore(mode, fn) {
 }
 
 async function saveAudioBackup(blob, inProgress = false) {
-  const record = { id: AUDIO_KEY, blob, type: blob.type || 'audio/webm', size: blob.size, createdAt: Date.now(), seconds: secondsElapsed, inProgress };
+  // A finished recording is saved at stop time, when the elapsed counter is
+  // accurate. A rolling/in-progress backup is saved *during* recording, so derive
+  // its duration from the audio itself instead of the counter at flush time.
+  const seconds = (!inProgress && secondsElapsed > 0) ? secondsElapsed : estimateBackupSeconds(blob);
+  const record = { id: AUDIO_KEY, blob, type: blob.type || 'audio/webm', size: blob.size, createdAt: Date.now(), seconds, inProgress };
   await withAudioStore('readwrite', store => store.put(record));
   return record;
 }
@@ -248,13 +252,33 @@ function audioExtension(mime) {
   return 'webm';
 }
 
+// Estimate a recording's length in seconds from its byte size and MIME type,
+// used when restoring a recovered recording (the live elapsed counter no longer
+// reflects the original session by then).
+function estimateBackupSeconds(blob) {
+  if (!blob || !blob.size) return 0;
+  const type = (blob.type || '').toLowerCase();
+  // Bytes per second of speech, by container/codec. WAV is 16-bit mono @16kHz.
+  let bps = 4000; // default: WebM/Opus
+  if (type.includes('wav')) bps = 32000;
+  else if (type.includes('mp4') || type.includes('aac') || type.includes('m4a')) bps = 4000;
+  else if (type.includes('mpeg') || type.includes('mp3')) bps = 4000;
+  else if (type.includes('ogg')) bps = 4000;
+  return Math.round(blob.size / bps);
+}
+
+function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
 async function getBestAudioBackup() {
   try {
     const dbRecord = await getAudioBackup();
     if (dbRecord) return dbRecord;
   } catch {}
   if (inMemoryAudioBlob) {
-    return { id: AUDIO_KEY, blob: inMemoryAudioBlob, type: inMemoryAudioBlob.type || 'audio/webm', size: inMemoryAudioBlob.size, createdAt: Date.now(), seconds: secondsElapsed };
+    return { id: AUDIO_KEY, blob: inMemoryAudioBlob, type: inMemoryAudioBlob.type || 'audio/webm', size: inMemoryAudioBlob.size, createdAt: Date.now(), seconds: estimateBackupSeconds(inMemoryAudioBlob), inProgress: false, estimated: true };
   }
   return null;
 }
@@ -314,9 +338,12 @@ async function showRecoveryRow(reason = 'failed') {
     const backup = await getBestAudioBackup();
     if (!backup || !backup.size) { recoveryRow.style.display = 'none'; return; }
     recoveryRow.style.display = '';
+    // Only show a duration if we actually have one worth trusting.
+    const secs = backup.seconds > 0 ? backup.seconds : (backup.estimated ? estimateBackupSeconds(backup.blob) : 0);
+    const durPart = secs > 0 ? ` · ~${formatDuration(secs)}` : '';
     recoveryInfo.textContent = reason === 'recovered'
-      ? `Unfinished recording recovered · ${formatBytes(backup.size)} saved — Retry or Download`
-      : `Transcription failed · ${formatBytes(backup.size)} recording saved for retry`;
+      ? `Unfinished recording recovered${durPart} · ${formatBytes(backup.size)} saved — Retry or Download`
+      : `Transcription failed${durPart} · ${formatBytes(backup.size)} recording saved for retry`;
   } catch {
     recoveryRow.style.display = 'none';
   }
@@ -978,7 +1005,7 @@ let undoState = null; // { raw, cleaned }
 
 // ── Clear ──
 // Clear always wipes the on-screen text (which is the whole document). One click.
-clearBtn.onclick = async () => {
+async function clearDocument() {
   if (processingAbortController) abortProcessing();
   // Clear stops any in-progress recording by cancelling it (not stopping it),
   // so the audio isn't transcribed back into the document you just cleared.
@@ -1027,7 +1054,9 @@ clearBtn.onclick = async () => {
   }
 
   timerEl.textContent = '00:00';
-};
+}
+
+clearBtn.onclick = () => { clearDocument(); };
 
 function undoClear() {
   if (!undoState) {
@@ -2355,7 +2384,11 @@ document.addEventListener('keydown', e => {
   // New recording (clear + start)
   if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (!isRecording && !processingAbortController) { clearBtn.click(); startRecording(); }
+    if (!isRecording && !processingAbortController && !isStarting) {
+      // Await the clear (which may cancel a live session) before starting, so the
+      // new recording isn't tangled with the document/backup being torn down.
+      (async () => { await clearDocument(); await startRecording(); })();
+    }
   }
   // Upload audio file
   if (e.key === 'u' && !e.ctrlKey && !e.metaKey) {

@@ -4,7 +4,16 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
-## What's New in v6.17.0
+## What's New in v6.17.2
+
+### Follow-up fixes
+- **`N` (new recording) fixed with Live mode on** — pressing `N` now clears the document and then starts cleanly, instead of tangling the new live recording with the teardown of the old one (and potentially wiping the recovery strip).
+- **Accurate recovered-recording duration** — the recovery strip now shows an estimated length derived from the audio itself (e.g. "Unfinished recording recovered · ~3:40"), instead of the elapsed counter from whenever it happened to be saved.
+
+### v6.17.1
+- **Fixed a false "No sound detected" warning** — the mic check now reads a wide time-domain window with a very low threshold and only warns after ~5 seconds of sustained silence, then stops for the session once any real audio is heard. (It previously sampled ~5 ms once a second, so normal speech gaps could trigger it even while the waveform moved.)
+
+### v6.17.0
 
 ### Recording can no longer silently lose your audio
 Long recordings used to live only in memory until you pressed stop — if the app was backgrounded, killed, reloaded, or crashed mid-recording, the whole recording (and the downloadable file) was gone with no warning. This release fixes that:
