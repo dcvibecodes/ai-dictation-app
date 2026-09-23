@@ -2581,6 +2581,48 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 }
 
 // ── Service Worker (PWA) ──
+// IMPORTANT: an old active service worker can keep serving stale script.js even
+// after a deploy. To guarantee the app runs the freshly-deployed code:
+//   1. Poll for updates.
+//   2. When a new worker takes control, reload once (guarded against loops).
+//   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
+const APP_VERSION = '6.17.4'; // keep in sync with package.json at release time
+window.__APP_VERSION = APP_VERSION;
+// Always log the running build so `__APP_VERSION` in the console tells us which
+// code a browser is actually executing (no UI change).
+console.log('%cAI Dictation ' + APP_VERSION, 'color:#888');
+
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // Escape hatch: load with ?sw=reset to nuke caches + registrations, then reload clean.
+  const swReset = new URLSearchParams(location.search).get('sw') === 'reset';
+  if (swReset) {
+    (async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+        if (window.caches) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        }
+      } catch (e) { console.error('SW reset failed:', e); }
+      // Clean the query param and reload once.
+      const clean = location.pathname + location.hash;
+      location.replace(clean);
+    })();
+  } else {
+    // Reload exactly once when a new service worker takes control, so the page
+    // stops running the previously-cached app code. Guarded so it never loops.
+    let refreshed = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshed) return;
+      refreshed = true;
+      if (!isRecording && !isStarting) location.reload();
+    });
+
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      reg.update().catch(() => {});
+      // Re-check for a new deploy every few minutes while the tab stays open.
+      setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
+    }).catch(() => {});
+  }
 }
