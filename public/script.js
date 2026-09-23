@@ -1390,23 +1390,29 @@ async function testCleanup() {
 }
 
 // ── Recording ──
-async function transcribeAudioBlob(audioBlob) {
-  if (isEditingTranscript) setTranscriptEditing(false);
-  toggleBtn.classList.add('processing');
-  toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
-  retryRecordingBtn.disabled = true;
+// Transcribe a blob. With { silent: true } it only uploads and returns the raw
+// text — no status changes, cleanup, history, or clipboard — used internally to
+// re-transcribe a live session after chunk failures.
+async function transcribeAudioBlob(audioBlob, opts = {}) {
+  const silent = !!opts.silent;
+  if (!silent && isEditingTranscript) setTranscriptEditing(false);
+  if (!silent) {
+    toggleBtn.classList.add('processing');
+    toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
+    retryRecordingBtn.disabled = true;
+  }
 
   const abortController = new AbortController();
-  processingAbortController = abortController;
+  if (!silent) processingAbortController = abortController;
 
   // Elapsed time counter during processing
   let procSeconds = 0;
-  const procTimer = setInterval(() => {
+  const procTimer = silent ? null : setInterval(() => {
     procSeconds++;
     statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
   }, 1000);
 
-  setStatusProcessing('Transcribing…');
+  if (!silent) setStatusProcessing('Transcribing…');
 
   try {
     // Upload with automatic retry on transient failures (5xx / 429 / network glitch).
@@ -1427,12 +1433,12 @@ async function transcribeAudioBlob(audioBlob) {
         lastUploadErr = fetchErr;
       }
       if (attempt < UPLOAD_RETRIES) {
-        setStatusProcessing(`Transcribing… (retry ${attempt})`);
+        if (!silent) setStatusProcessing(`Transcribing… (retry ${attempt})`);
         await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, 2s backoff
       }
     }
     if (!uRes) throw lastUploadErr;
-    if (uRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+    if (uRes.status === 401) { if (procTimer) clearInterval(procTimer); window.location.href = '/login'; return silent ? '' : undefined; }
     if (uRes.status === 413) {
       const errData = await uRes.json().catch(() => ({}));
       throw new Error(errData.error || 'Audio file too large for the server. Try a shorter recording or check your reverse proxy (nginx) client_max_body_size setting.');
@@ -1442,6 +1448,7 @@ async function transcribeAudioBlob(audioBlob) {
     if (uData.error) throw new Error(uData.error);
 
     const raw = uData.rawTranscript || '';
+    if (silent) { if (procTimer) clearInterval(procTimer); return raw; }
     // Keep the existing on-screen document so append mode can add below it.
     const baseRaw = currentRaw;
     const baseCleaned = currentCleaned;
@@ -1526,6 +1533,8 @@ async function transcribeAudioBlob(audioBlob) {
       }
     }
 
+    if (silent) { clearInterval(procTimer); return raw; }
+
     processingAbortController = null;
     await clearAudioBackupIfIdle();
     await clearInMemoryAudioBackup();
@@ -1545,7 +1554,8 @@ async function transcribeAudioBlob(audioBlob) {
     processingAbortController = null;
     return true;
   } catch (e) {
-    clearInterval(procTimer);
+    if (procTimer) clearInterval(procTimer);
+    if (silent) return false; // caller decides what to do; leave audio/backups intact
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
       clearProcessingUI();
@@ -1853,29 +1863,43 @@ function liveFlushPending() {
 }
 
 // Transcribe a chunk and track the promise so stopLiveRecording can wait for it.
-function liveTranscribeChunk(wavBlob, seq) {
+// Each chunk retries on transient failures so one network/provider blip doesn't
+// silently drop ten seconds of speech. The leftover audio is always in the local
+// backup, and the session-level transcription is reconciled on stop.
+const CHUNK_RETRIES = 3;          // total attempts per chunk
+async function liveTranscribeChunk(wavBlob, seq) {
   const promise = (async () => {
-    try {
-      const fd = new FormData();
-      fd.append('audio', wavBlob, 'chunk.wav');
-      const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
-      if (res.status === 401) { window.location.href = '/login'; return; }
-      if (!res.ok) {
+    let lastErr = '';
+    for (let attempt = 1; attempt <= CHUNK_RETRIES; attempt++) {
+      try {
+        const fd = new FormData();
+        fd.append('audio', wavBlob, 'chunk.wav');
+        const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        if (res.ok) {
+          const data = await res.json();
+          liveChunkSuccesses++;
+          livePending.set(seq, (data.rawTranscript || '').trim());
+          liveFlushPending();
+          return;
+        }
         const d = await res.json().catch(() => ({}));
-        liveChunkErrors++;
-        setStatus('Chunk error: ' + (d.error || res.status) + ' — audio is saved locally', 'error');
-        return;
+        lastErr = d.error || ('HTTP ' + res.status);
+        // 4xx (except 429) won't improve on retry — give up immediately.
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+      } catch (e) {
+        lastErr = e.message;
       }
-      const data = await res.json();
-      liveChunkSuccesses++;
-      livePending.set(seq, (data.rawTranscript || '').trim());
-    } catch (e) {
-      console.error('chunk error', e);
-      liveChunkErrors++;
-      setStatus('Chunk upload failed: ' + e.message + ' — audio is saved locally', 'error');
-    } finally {
-      liveFlushPending();
+      if (attempt < CHUNK_RETRIES) {
+        setStatus(`Chunk retry ${attempt}/${CHUNK_RETRIES - 1}…`, 'processing');
+        await new Promise(r => setTimeout(r, 800 * attempt));
+      }
     }
+    // All attempts failed — record it, but say what's true: the audio is safe locally.
+    liveChunkErrors++;
+    console.error('chunk failed after retries:', lastErr);
+    setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
+    liveFlushPending();
   })();
   liveInflight.add(promise);
   promise.finally(() => liveInflight.delete(promise));
@@ -2126,7 +2150,27 @@ async function cancelLiveRecording() {
 // On stop: clean up the accumulated live raw text (or keep raw), update history, copy.
 // Returns true when the session produced text, false otherwise.
 async function finishLiveRecording() {
-  const raw = currentRaw;
+  let raw = currentRaw;
+
+  // If any chunk failed during the session, some speech was never transcribed.
+  // Since the full session is in the local backup, re-transcribe the whole thing
+  // through the standard /upload path and prefer that result — a few failed chunks
+  // must not cost the user those minutes.
+  if (liveChunkErrors > 0 && liveBackupChunks.length) {
+    setStatusProcessing('Recovering failed chunks…');
+    try {
+      const fullBlob = encodeWav(concatFloat32(liveBackupChunks), TARGET_SAMPLE_RATE);
+      const recovered = await transcribeAudioBlob(fullBlob, { silent: true });
+      if (recovered && recovered.trim()) {
+        raw = recovered;
+        currentRaw = raw;
+        console.log('Recovered full live session after chunk failures.');
+      }
+    } catch (e) {
+      console.error('Full-session recovery failed:', e);
+    }
+  }
+
   if (!raw.trim()) {
     clearProcessingUI();
     resetButton();
@@ -2586,7 +2630,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.17.4'; // keep in sync with package.json at release time
+const APP_VERSION = '6.18.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

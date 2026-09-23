@@ -4,7 +4,25 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
-## What's New in v6.17.3
+## What's New in v6.18.0
+
+### Root cause of the recurring live-chunk failures: a non-replayable upload stream
+The server log showed `Chunk upload error: Connection error.` — the OpenAI SDK's generic network error. The cause was the Whisper upload path:
+
+```js
+const params = { file: fs.createReadStream(audioPath), model };
+```
+
+A file read stream **cannot be replayed**. When the SDK retried a transient socket hiccup (its default is 2 retries), the second attempt tried to re-send an already-consumed stream and failed with `Connection error.` — losing that 10-second chunk, over and over.
+
+Fixes:
+- **Buffer the audio instead of streaming it** (`toFile(buffer, …)`) so retries are safe and the SDK can transparently recover from a dropped connection.
+- **Explicit `maxRetries: 2`** on the transcription and cleanup clients.
+- **Chunk-level retries on the client** — each ~10s chunk now retries up to 3 times with backoff before giving up, so one blip doesn't drop ten seconds of speech.
+- **Full-session recovery on stop** — if any chunk failed, the complete audio (always retained in the local backup) is re-transcribed through the standard `/upload` path and used as the result. Failed chunks can no longer cost you those minutes.
+- **Honest status messages** — a failed chunk now says "audio saved locally, will retry on stop" instead of implying the text is safe.
+
+
 
 ### Diagnosed from real server logs: provider failures no longer lose recordings
 Server logs from a failed session showed the root cause: the **Gemini** transcription endpoint was rejecting audio with `"Invalid audio format \"aac\"... Valid formats are: [wav, mp3]"`, then returning `"Gemini returned an empty transcription."`, and finally `"Connection error."` — every chunk failed, so nothing was transcribed and, because the live backup was never finalized, there was nothing to recover.

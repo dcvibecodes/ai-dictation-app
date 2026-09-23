@@ -7,6 +7,7 @@ const crypto  = require('crypto');
 const bcrypt  = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const OpenAI  = require('openai');
+const { toFile } = require('openai');
 const rateLimit = require('express-rate-limit');
 
 const app    = express();
@@ -364,14 +365,16 @@ function getTranscriptionClient() {
   const key = getEffectiveSetting('TRANSCRIPTION_API_KEY');
   const baseURL = getEffectiveSetting('TRANSCRIPTION_BASE_URL');
   if (!key) throw new Error('Transcription API key not configured. Go to Settings tab.');
-  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS });
+  // maxRetries is explicit: with a buffered (replayable) body the SDK can safely
+  // retry transient socket/timeout failures instead of surfacing "Connection error."
+  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS, maxRetries: 2 });
 }
 
 function getCleanupClient() {
   const key = getEffectiveSetting('CLEANUP_API_KEY');
   const baseURL = getEffectiveSetting('CLEANUP_BASE_URL');
   if (!key) throw new Error('Cleanup API key not configured. Go to Settings tab.');
-  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS });
+  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS, maxRetries: 2 });
 }
 
 // --- Transcription engine dispatch ---
@@ -404,16 +407,22 @@ function whisperConfigured() {
   return !!getEffectiveSetting('TRANSCRIPTION_API_KEY');
 }
 
-// Transcribe a file with the Whisper-compatible engine.
+// Transcribe a file with the Whisper-compatible engine. Retries safely by
+// buffering the audio into a Buffer (a file stream cannot be replayed, which is
+// what produced spurious "Connection error." messages when the SDK retried).
 async function transcribeWithWhisper(audioPath) {
   const client = getTranscriptionClient();
   const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
   const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
   const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
 
-  const params = { file: fs.createReadStream(audioPath), model };
-  // Optional params are only sent when configured — keeps requests identical
-  // to before for providers that reject unknown fields
+  const audioBuffer = fs.readFileSync(audioPath);
+  const params = {
+    // Buffer the audio (do NOT use a read stream) so the SDK can safely retry —
+    // a consumed stream cannot be replayed, which caused spurious "Connection error."
+    file: await toFile(audioBuffer, path.basename(audioPath) || 'audio.wav', { type: 'audio/wav' }),
+    model
+  };
   if (language) params.language = language;
   if (hint) params.prompt = hint;
 
