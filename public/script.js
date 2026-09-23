@@ -235,6 +235,14 @@ async function clearAudioBackup() {
   await withAudioStore('readwrite', store => store.delete(AUDIO_KEY));
 }
 
+// Safely remove the local backup unless a recording is still in progress. Used
+// after a transcript has been produced, so we never delete audio we might still
+// need if a stop/finalize is mid-flight.
+async function clearAudioBackupIfIdle() {
+  if (isRecording || isStarting) return;
+  await clearAudioBackup();
+}
+
 function formatBytes(bytes) {
   if (!bytes) return '0 KB';
   const mb = bytes / 1024 / 1024;
@@ -350,6 +358,8 @@ async function showRecoveryRow(reason = 'failed') {
 }
 
 // On load, surface any recording that was in progress when the app last closed.
+// Any backup with actual audio is shown — in-progress or finished — because the
+// only unacceptable outcome is losing the recording.
 async function checkRecoveryOnLoad() {
   try {
     const backup = await getBestAudioBackup();
@@ -359,7 +369,6 @@ async function checkRecoveryOnLoad() {
     hideRecoveryRow();
   }
 }
-
 function hideRecoveryRow() {
   recoveryRow.style.display = 'none';
 }
@@ -1518,7 +1527,7 @@ async function transcribeAudioBlob(audioBlob) {
     }
 
     processingAbortController = null;
-    await clearAudioBackup();
+    await clearAudioBackupIfIdle();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     clearInterval(procTimer);
@@ -1830,13 +1839,14 @@ function encodeWav(samples, sampleRate) {
 }
 
 // Append transcribed chunks in order, even if responses arrive out of order.
+// Wrapped defensively: a UI-render error must never poison the chunk pipeline.
 function liveFlushPending() {
   while (livePending.has(liveNextSeq)) {
     const t = livePending.get(liveNextSeq);
     livePending.delete(liveNextSeq);
     if (t) {
       currentRaw += (currentRaw ? ' ' : '') + t;
-      updateTranscriptDisplay();
+      try { updateTranscriptDisplay(); } catch (e) { console.error('liveFlushPending render error:', e); }
     }
     liveNextSeq++;
   }
@@ -1926,6 +1936,46 @@ function liveSendChunk(force = false) {
   }
 }
 
+// Copy the newly captured PCM (since the last snapshot) into a bounded rolling
+// backup list and flush it to IndexedDB. Called on every audio callback — throttled
+// internally — so the local copy always tracks the recording, including pauses and
+// while the user is speaking between chunk sends.
+const LIVE_BACKUP_MAX_SAMPLES = 16000 * 60 * 15; // cap ~15 min of 16kHz audio in RAM
+function captureLiveBackupIncremental() {
+  if (liveWriteIndex <= liveLastChunkEndIndex) return;
+  const start = liveLastChunkEndIndex;
+  const len = liveWriteIndex - start;
+  // Already inside the backup? Then just flush (throttled) and return.
+  if (start < (captureLiveBackupIncremental.captured || 0)) {
+    flushRecordingBackup(liveBackupChunks, true);
+    return;
+  }
+  const raw = livePcmSamples.subarray(start, liveWriteIndex);
+  const resampled = resample(raw, audioContext.sampleRate, TARGET_SAMPLE_RATE);
+  liveBackupChunks.push(resampled);
+  liveBackupSamples += resampled.length;
+  captureLiveBackupIncremental.captured = liveWriteIndex;
+  // Bound memory: drop the oldest chunks once the cap is exceeded (keeps the tail,
+  // which is the part a recovery most needs).
+  while (liveBackupSamples > LIVE_BACKUP_MAX_SAMPLES && liveBackupChunks.length > 1) {
+    liveBackupSamples -= liveBackupChunks.shift().length;
+  }
+  flushRecordingBackup(liveBackupChunks, true);
+}
+
+// Write the complete live session (or everything still buffered) as a finished
+// WAV backup. Called on every exit path so recovery always has usable audio.
+async function finalizeLiveBackup() {
+  try {
+    if (!liveBackupChunks.length) return;
+    backupSession++; // stop in-flight rolling writes from racing us
+    const blob = encodeWav(concatFloat32(liveBackupChunks), TARGET_SAMPLE_RATE);
+    if (blob.size > 0) await saveAudioBackup(blob, false);
+  } catch (e) {
+    console.error('finalizeLiveBackup failed:', e);
+  }
+}
+
 // Set up WAV chunk capture on the existing audioContext/source.
 // In append mode, keep a snapshot of the existing document so the live recording
 // can build its own segment and append it at the end.
@@ -1947,6 +1997,7 @@ function startLiveCapture(stream) {
     liveChunkSuccesses = 0;
     liveChunkErrors = 0;
     lastBackupFlush = 0;
+    captureLiveBackupIncremental.captured = 0;
     backupSession++; // new session — invalidate any earlier in-flight backup writes
     // Snapshot the existing document (used for append mode).
     liveSegmentBaseRaw = currentRaw;
@@ -1982,6 +2033,10 @@ function startLiveCapture(stream) {
       }
       livePcmSamples.set(channel, liveWriteIndex);
       liveWriteIndex += channel.length;
+      // Keep the local backup current: snapshot everything captured so far into a
+      // bounded rolling list, so an interruption can never lose the audio. This is
+      // throttled (BACKUP_FLUSH_MS) and safe to call on every callback.
+      captureLiveBackupIncremental();
       // First real audio callback = capture is genuinely running.
       if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
     };
@@ -2012,9 +2067,8 @@ async function stopLiveRecording() {
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
 
-  // Make sure everything captured so far is on disk before we tear anything down.
-  backupSession++; // recording ended — invalidate any in-flight rolling backup
-  await flushRecordingBackup(liveBackupChunks, true, true);
+  // Make sure the complete session is on disk before we tear anything down.
+  await finalizeLiveBackup();
 
   // Recording has stopped — show a "Transcribing…" status with elapsed seconds
   // while the final chunks are processed, instead of leaving it on "Recording…".
@@ -2077,11 +2131,12 @@ async function finishLiveRecording() {
     clearProcessingUI();
     resetButton();
     if (liveBackupSamples > 0 || liveChunkErrors > 0) {
-      // Audio was captured but nothing was transcribed — keep it for recovery.
-      setStatus('Nothing was transcribed — audio saved for recovery', 'error');
+      // Audio was captured but nothing was transcribed — finalize it and keep it.
+      await finalizeLiveBackup();
+      setStatus('Nothing was transcribed — audio saved. Use Retry or Download.', 'error');
       await showRecoveryRow('failed');
     } else {
-      await clearAudioBackup().catch(() => {});
+      await clearAudioBackupIfIdle().catch(() => {});
       await clearInMemoryAudioBackup();
       hideRecoveryRow();
       setStatus('No audio was captured — check your microphone', 'error');
@@ -2128,7 +2183,7 @@ async function finishLiveRecording() {
           }
           updateTranscriptDisplay(true);
           addToHistory(raw, raw);
-          await clearAudioBackup();
+          await clearAudioBackupIfIdle();
           await clearInMemoryAudioBackup();
           hideRecoveryRow();
           processingAbortController = null;
@@ -2173,7 +2228,7 @@ async function finishLiveRecording() {
     }
 
     // Success — the transcript is safe, drop the audio backup.
-    await clearAudioBackup();
+    await clearAudioBackupIfIdle();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     processingAbortController = null;
@@ -2445,21 +2500,28 @@ function updateOnlineStatus() {
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
-// ── Flush the rolling backup when the app is hidden ──
-// Mobile OSes may freeze or kill a backgrounded page, so persist the newest audio
-// the moment we lose visibility rather than waiting for the next backup tick.
+// ── Flush & finalize the rolling backup when the app is hidden ──
+// Desktop and mobile browsers can freeze or discard a backgrounded page, so
+// persist (and finish) the newest audio the moment we lose visibility rather
+// than waiting for the next backup tick or a clean stop.
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden || !isRecording) return;
   try {
     if (liveMode) {
-      liveSendChunk(); // include the current partial chunk
-      flushRecordingBackup(liveBackupChunks, true, true);
+      liveSendChunk(); // include the current partial chunk for transcription
+      captureLiveBackupIncremental();
+      finalizeLiveBackup(); // write a complete, recoverable WAV
     } else {
       flushRecordingBackup(audioChunks, false, true);
     }
   } catch (e) {
     console.error('Backup-on-hide failed:', e);
   }
+});
+// Last-chance synchronous-ish flush on page teardown.
+window.addEventListener('pagehide', () => {
+  if (!isRecording) return;
+  try { if (!liveMode) flushRecordingBackup(audioChunks, false, true); } catch {}
 });
 
 // ── Shortcuts popover ──

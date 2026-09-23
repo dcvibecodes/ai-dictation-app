@@ -377,7 +377,8 @@ function getCleanupClient() {
 // --- Transcription engine dispatch ---
 // Two transcription engines are supported:
 //   1. "whisper" — any Whisper-compatible API (Mistral Voxtral, OpenAI, Groq, etc.)
-//      via the OpenAI SDK's audio.transcriptions endpoint.
+//      via the OpenAI SDK's audio.transcriptions endpoint. This is the recommended
+//      path and the fallback when Gemini fails.
 //   2. "gemini"  — Google's OpenAI-compatible layer. Gemini is a multimodal LLM,
 //      so audio is sent as an OpenAI-style `input_audio` content part to the
 //      `/chat/completions` endpoint with a "transcribe verbatim" prompt. The
@@ -387,77 +388,24 @@ function getCleanupClient() {
 // Default Gemini base URL (Google's OpenAI-compatible layer). Editable in Settings.
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
-// Map a MIME type to the audio format Google's OpenAI-compatible layer accepts.
-// Supported: wav, mp3, aiff, aac, ogg, flac. WebM is NOT in Google's list, so
-// fall back to 'wav' (Live mode already sends WAV, which is fully supported).
+// Gemini's audio endpoint accepts a narrow set of formats (per the API's own
+// error: "Valid formats are: [wav, mp3]"). Browser recordings are WebM (Chrome)
+// or MP4/AAC (Safari), which Gemini rejects. So we only send audio to Gemini when
+// we can honestly label it as wav/mp3; anything else goes to the Whisper engine.
 function geminiAudioFormat(mimeType) {
   const m = (mimeType || '').toLowerCase();
   if (m.includes('mp3') || m.includes('mpeg')) return 'mp3';
-  if (m.includes('aac') || m.includes('m4a') || m.includes('mp4')) return 'aac';
-  if (m.includes('ogg')) return 'ogg';
-  if (m.includes('flac')) return 'flac';
-  if (m.includes('aiff')) return 'aiff';
-  return 'wav'; // default — covers webm and wav
+  if (m.includes('wav') || m.includes('x-wav')) return 'wav';
+  return null; // webm / aac / mp4 / ogg / flac — not accepted
 }
 
-// Transcribe an audio file using the configured engine. Returns the raw text.
-async function transcribeAudio(audioPath, mimeType) {
-  const engine = getEffectiveSetting('TRANSCRIPTION_ENGINE') || 'whisper';
+// Whether the Whisper engine is actually usable (key configured).
+function whisperConfigured() {
+  return !!getEffectiveSetting('TRANSCRIPTION_API_KEY');
+}
 
-  if (engine === 'gemini') {
-    const key = getEffectiveSetting('GEMINI_TRANSCRIPTION_API_KEY');
-    if (!key) throw new Error('Gemini transcription API key not configured. Go to Settings tab.');
-    const model = getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
-    const baseURL = (getEffectiveSetting('GEMINI_TRANSCRIPTION_BASE_URL') || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '');
-    const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
-    const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
-
-    // Gemini accepts inline audio up to ~20MB. The app's own upload cap is 50MB,
-    // so a recording between 20–50MB will work with Whisper but fail here.
-    const audioB64 = fs.readFileSync(audioPath).toString('base64');
-    const format = geminiAudioFormat(mimeType);
-
-    // Build the transcription instruction. The language/hint are optional and
-    // only included when configured, mirroring the Whisper path.
-    let instruction = 'Transcribe the audio verbatim. Output only the transcribed text with no commentary.';
-    if (language) instruction += ` The audio is in language code: ${language}.`;
-    if (hint) instruction += ` Use this vocabulary for proper nouns and jargon: ${hint}.`;
-
-    // OpenAI-compatible chat request with an audio content part.
-    const body = {
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: instruction },
-            { type: 'input_audio', input_audio: { data: audioB64, format } }
-          ]
-        }
-      ]
-    };
-
-    const resp = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS)
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      const err = new Error(`Gemini transcription failed (${resp.status}): ${errText.slice(0, 300)}`);
-      err.status = resp.status;
-      throw err;
-    }
-
-    const data = await resp.json();
-    const text = data?.choices?.[0]?.message?.content || '';
-    if (!text) throw new Error('Gemini returned an empty transcription.');
-    return text;
-  }
-
-  // Default: Whisper-compatible engine
+// Transcribe a file with the Whisper-compatible engine.
+async function transcribeWithWhisper(audioPath) {
   const client = getTranscriptionClient();
   const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
   const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
@@ -470,7 +418,99 @@ async function transcribeAudio(audioPath, mimeType) {
   if (hint) params.prompt = hint;
 
   const transcription = await client.audio.transcriptions.create(params);
-  return transcription.text;
+  return (transcription && transcription.text) || '';
+}
+
+// Transcribe a file with Gemini. Throws on provider error.
+async function transcribeWithGemini(audioPath, mimeType, format) {
+  const key = getEffectiveSetting('GEMINI_TRANSCRIPTION_API_KEY');
+  if (!key) throw new Error('Gemini transcription API key not configured. Go to Settings tab.');
+  const model = getEffectiveSetting('GEMINI_TRANSCRIPTION_MODEL') || 'gemini-2.5-flash';
+  const baseURL = (getEffectiveSetting('GEMINI_TRANSCRIPTION_BASE_URL') || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '');
+  const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+  const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+
+  // Gemini accepts inline audio up to ~20MB. The app's own upload cap is 50MB,
+  // so a recording between 20–50MB will work with Whisper but fail here.
+  const audioB64 = fs.readFileSync(audioPath).toString('base64');
+
+  // Build the transcription instruction. The language/hint are optional and
+  // only included when configured, mirroring the Whisper path.
+  let instruction = 'Transcribe the audio verbatim. Output only the transcribed text with no commentary.';
+  if (language) instruction += ` The audio is in language code: ${language}.`;
+  if (hint) instruction += ` Use this vocabulary for proper nouns and jargon: ${hint}.`;
+
+  // OpenAI-compatible chat request with an audio content part.
+  const body = {
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: instruction },
+          { type: 'input_audio', input_audio: { data: audioB64, format } }
+        ]
+      }
+    ]
+  };
+
+  const resp = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    const err = new Error(`Gemini transcription failed (${resp.status}): ${errText.slice(0, 300)}`);
+    err.status = resp.status;
+    throw err;
+  }
+
+  const data = await resp.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+// Transcribe an audio file using the configured engine, with automatic fallback.
+// A provider hiccup (bad format, empty response, connection error) must not lose
+// the recording — so if Gemini fails and Whisper is configured, we retry Whisper
+// before giving up. Returns the raw text (may be empty if the audio is silence).
+async function transcribeAudio(audioPath, mimeType) {
+  const engine = getEffectiveSetting('TRANSCRIPTION_ENGINE') || 'whisper';
+
+  if (engine === 'gemini') {
+    const format = geminiAudioFormat(mimeType);
+    if (!format) {
+      // Audio is WebM/MP4/etc., which Gemini cannot accept. Prefer Whisper when
+      // available; otherwise fail with a clear, actionable message.
+      if (whisperConfigured()) {
+        console.warn(`Gemini cannot accept ${mimeType || 'unknown'} audio — using Whisper instead.`);
+        return transcribeWithWhisper(audioPath);
+      }
+      throw new Error('This audio format is not supported by Gemini (only wav/mp3). Switch to the Whisper engine or configure a Whisper API key.');
+    }
+    try {
+      const text = await transcribeWithGemini(audioPath, mimeType, format);
+      // An empty response usually just means "no speech", not a failure. Only fall
+      // back when Whisper is available and Gemini came back completely empty.
+      if (!text.trim() && whisperConfigured()) {
+        console.warn('Gemini returned no text — retrying with Whisper.');
+        return transcribeWithWhisper(audioPath);
+      }
+      return text;
+    } catch (err) {
+      // Any Gemini failure (auth, connection, 5xx) falls back to Whisper when possible.
+      if (whisperConfigured()) {
+        console.warn(`Gemini failed (${err.message}) — retrying with Whisper.`);
+        return transcribeWithWhisper(audioPath);
+      }
+      throw err;
+    }
+  }
+
+  // Default: Whisper-compatible engine
+  return transcribeWithWhisper(audioPath);
 }
 
 // --- Test connection endpoints ---

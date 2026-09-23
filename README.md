@@ -4,7 +4,20 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
-## What's New in v6.17.2
+## What's New in v6.17.3
+
+### Diagnosed from real server logs: provider failures no longer lose recordings
+Server logs from a failed session showed the root cause: the **Gemini** transcription endpoint was rejecting audio with `"Invalid audio format \"aac\"... Valid formats are: [wav, mp3]"`, then returning `"Gemini returned an empty transcription."`, and finally `"Connection error."` — every chunk failed, so nothing was transcribed and, because the live backup was never finalized, there was nothing to recover.
+
+- **Provider fallback** — if Gemini rejects the audio format, returns an empty transcription, or throws (auth/connection/5xx), the server now **automatically retries with the Whisper-compatible engine** when it's configured. A provider hiccup is no longer a lost recording.
+- **Honest format handling** — Gemini is only ever sent genuine `wav`/`mp3`. WebM (Chrome) and MP4/AAC (Safari) audio goes straight to Whisper instead of being mislabeled and rejected.
+- **Live backup is finalized on every exit path** — stop, error, "nothing transcribed", tab hidden, and page unload all write a complete, recoverable WAV, so the recovery strip always has real audio to offer.
+- **Recovery on load is unconditional** — any backup with audio is surfaced, in-progress or finished.
+- **Chunk pipeline is error-proof** — a UI-render error during chunk handling can no longer poison later chunks.
+
+**Recommended setup:** use the **Whisper engine** for transcription (e.g. Mistral `voxtral-mini-latest`); keep Gemini for text cleanup only. That path already works reliably.
+
+
 
 ### Follow-up fixes
 - **`N` (new recording) fixed with Live mode on** — pressing `N` now clears the document and then starts cleanly, instead of tangling the new live recording with the teardown of the old one (and potentially wiping the recovery strip).
