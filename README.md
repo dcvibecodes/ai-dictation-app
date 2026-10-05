@@ -4,6 +4,14 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.19.0
+
+### No-expiry session + a dead session can never kill a recording
+- **Session no longer expires** — the server accepts the signed cookie indefinitely (10-year cookie + sliding refresh on visits, so the browser cap never logs out an active user). One login lasts years instead of 7 days.
+- **401s never navigate away mid-recording/transcribing** — all logout triggers go through a central handler: while recording or transcribing it keeps the audio (memory + IndexedDB backup) and on-screen text, shows the recovery strip, and says "Session expired — open /login in a new tab, then press Retry." Idle 401s (settings/prompts when not recording) still redirect to `/login`.
+- **Live chunks survive expiry** — a 401 on `/upload-chunk` no longer redirects; it marks the chunk failed, keeps capturing locally, and the full session is retried on stop.
+- **Fail-fast pre-record auth check** — starting a recording first pings `/api/settings`; if the session is dead you're sent to login *before* you speak, not after.
+
 ## What's New in v6.18.0
 
 ### Root cause of the recurring live-chunk failures: a non-replayable upload stream
@@ -111,7 +119,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 ## Features
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
-- **Password-protected** — owner-only access, bcrypt hashed, 7-day session
+- **Password-protected** — owner-only access, bcrypt hashed, no-expiry session (10-year cookie + sliding refresh)
 - **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits
 - **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
 - **Live transcription** (on by default) — designed for long dictation sessions: audio is sent in ~10-second chunks and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Turn it off with the Live toggle, or press L.
@@ -169,7 +177,8 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 - First visit → `/setup` to create a password (min 8 characters)
 - Subsequent visits → `/login`
-- 7-day session cookie
+- No-expiry session cookie (10-year + sliding refresh on visits)
+- A dead session never interrupts recording/transcribing — re-login in a new tab, then Retry; idle pages still redirect to `/login`
 - All API routes protected
 - To change password: click "Change password" on the login screen
 - To reset if you've forgotten it: delete `data/owner.hash` and restart

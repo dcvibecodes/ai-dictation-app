@@ -26,7 +26,12 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
 const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
 const BCRYPT_ROUNDS = 12;
-const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+// No-expiry session: server accepts the signed cookie indefinitely (no age
+// upper bound in isAuthenticated). The cookie itself carries a long maxAge
+// (browsers cap persistent cookies at ~400 days), and the middleware below
+// re-issues it on visits so active users never hit the browser cap.
+const SESSION_COOKIE_MAX_AGE = 10 * 365 * 24 * 60 * 60 * 1000; // 10 years
+const SESSION_REFRESH_AFTER = 30 * 24 * 60 * 60 * 1000; // re-issue if older than 30 days
 const MAX_CUSTOM_PROMPTS = 4;
 const AI_TIMEOUT_MS = 120_000; // 2 minutes
 
@@ -129,8 +134,10 @@ function isAuthenticated(req) {
   const parts = token.split(':');
   if (parts.length !== 2) return false;
   const [timestamp, hmac] = parts;
+  // No expiry: any timestamp signed with the current secret is accepted.
+  // Only reject malformed timestamps or ones from the future (server clock moved).
   const age = Date.now() - parseInt(timestamp, 10);
-  if (isNaN(age) || age > SESSION_MAX_AGE || age < 0) return false;
+  if (isNaN(age) || age < 0) return false;
   const expected = crypto.createHmac('sha256', getSessionSecret()).update(timestamp).digest('hex');
   // timingSafeEqual throws if buffer lengths differ; guard against malformed tokens
   try {
@@ -155,7 +162,22 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(getSessionSecret()));
 
-app.use((req, res, next) => { req.isOwner = isAuthenticated(req); next(); });
+app.use((req, res, next) => {
+  req.isOwner = isAuthenticated(req);
+  // Sliding refresh: re-issue the cookie when the token is older than
+  // SESSION_REFRESH_AFTER, so the browser-side expiry never logs out an
+  // active user (browsers cap persistent cookies at ~400 days).
+  if (req.isOwner) {
+    try {
+      const token = req.signedCookies && req.signedCookies.session;
+      const ts = token ? parseInt(token.split(':')[0], 10) : NaN;
+      if (!isNaN(ts) && Date.now() - ts > SESSION_REFRESH_AFTER) {
+        res.cookie('session', createSessionToken(), { signed: true, httpOnly: true, sameSite: 'strict', maxAge: SESSION_COOKIE_MAX_AGE });
+      }
+    } catch {}
+  }
+  next();
+});
 
 function requireOwner(req, res, next) {
   if (!req.isOwner) return res.status(401).json({ error: 'Unauthorized' });
@@ -230,7 +252,7 @@ app.post('/setup', authLimiter, async (req, res) => {
 
   fs.writeFileSync(HASH_FILE, await bcrypt.hash(password, BCRYPT_ROUNDS), 'utf8');
   const token = createSessionToken();
-  res.cookie('session', token, { signed: true, httpOnly: true, sameSite: 'strict', maxAge: SESSION_MAX_AGE });
+  res.cookie('session', token, { signed: true, httpOnly: true, sameSite: 'strict', maxAge: SESSION_COOKIE_MAX_AGE });
   res.redirect('/');
 });
 
@@ -248,7 +270,7 @@ app.post('/login', authLimiter, async (req, res) => {
   if (!(await bcrypt.compare(password, hash))) return res.redirect('/login?error=1');
 
   const token = createSessionToken();
-  res.cookie('session', token, { signed: true, httpOnly: true, sameSite: 'strict', maxAge: SESSION_MAX_AGE });
+  res.cookie('session', token, { signed: true, httpOnly: true, sameSite: 'strict', maxAge: SESSION_COOKIE_MAX_AGE });
   res.redirect('/');
 });
 

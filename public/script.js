@@ -481,6 +481,24 @@ class UnauthorizedError extends Error {
   constructor() { super('unauthorized'); this.name = 'UnauthorizedError'; }
 }
 
+// Central 401 handler: never navigate away while audio or transcript text is
+// at stake. While recording or transcribing, keep everything (audio stays in
+// memory + IndexedDB backup, on-screen text stays) and tell the user to
+// re-login in a NEW tab, then press Retry — no reload, nothing lost.
+// Returns true if it redirected (idle), false if it stayed (busy).
+function handleUnauthorized() {
+  const busy = isRecording || isStarting || !!processingAbortController;
+  if (busy) {
+    try { showRecoveryRow('failed'); } catch {}
+    try { clearProcessingUI(); } catch {}
+    try { retryRecordingBtn.disabled = false; } catch {}
+    setStatus('Session expired — open /login in a new tab, then press Retry. Recording saved locally.', 'error');
+    return false;
+  }
+  handleUnauthorized();
+  return true;
+}
+
 // MILESTONE: "Chomp" animation — the raw transcript is replaced word-by-word by
 // the cleaned text. Preserved for rollback; the active animation is the shatter
 // version in streamCleanup below.
@@ -757,7 +775,7 @@ async function sendRawForCleanup() {
     try {
       ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
     } catch (streamErr) {
-      if (streamErr.name === 'UnauthorizedError') { clearInterval(procTimer); window.location.href = '/login'; return; }
+      if (streamErr.name === 'UnauthorizedError') { clearInterval(procTimer); handleUnauthorized(); return; }
       if (streamErr.name === 'AbortError') throw streamErr;
       cleaned = '';
       streamSuccess = false;
@@ -766,7 +784,7 @@ async function sendRawForCleanup() {
     // Fallback to non-streaming
     if (!streamSuccess || !cleaned) {
       const res = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-      if (res.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+      if (res.status === 401) { clearInterval(procTimer); handleUnauthorized(); return; }
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -1131,7 +1149,7 @@ let prompts = [], defaultOverride = null, activePromptId = 'default', editingPro
 async function loadPrompts() {
   try {
     const res = await fetch('/prompts');
-    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.status === 401) { handleUnauthorized(); return; }
     const data = await res.json();
     defaultOverride = data.find(p => p.id === 'default') || null;
     prompts = data.filter(p => p.id !== 'default');
@@ -1177,7 +1195,7 @@ function renderPromptsList() {
 
 async function restoreDefault() {
   const res = await fetch('/prompts/default', { method: 'DELETE' });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) { handleUnauthorized(); return; }
   defaultOverride = null; await loadPrompts();
 }
 function openAddPromptModal() { editingPromptId = null; document.getElementById('modalTitle').textContent = 'New Prompt'; document.getElementById('promptNameInput').value = ''; document.getElementById('promptNameInput').disabled = false; document.getElementById('promptTextInput').value = ''; document.getElementById('modalOverlay').classList.add('open'); }
@@ -1195,7 +1213,7 @@ async function savePrompt() {
   document.getElementById('promptTextInput').classList.remove('input-error');
   const id = isD ? 'default' : (editingPromptId || 'p_' + Date.now());
   const res = await fetch('/prompts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: isD ? 'Default' : name, text }) });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) { handleUnauthorized(); return; }
   const data = await res.json();
   if (data.error) { return; }
   if (!editingPromptId) { activePromptId = id; localStorage.setItem('activePromptId', id); }
@@ -1204,7 +1222,7 @@ async function savePrompt() {
 async function deletePrompt(id) {
   if (!confirm('Delete this prompt? This cannot be undone.')) return;
   const res = await fetch(`/prompts/${id}`, { method: 'DELETE' });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) { handleUnauthorized(); return; }
   if (activePromptId === id) { activePromptId = 'default'; localStorage.setItem('activePromptId', 'default'); }
   await loadPrompts();
 }
@@ -1249,7 +1267,7 @@ async function loadSettingsUI() {
   applySettingsLock();
   try {
     const res = await fetch('/api/settings');
-    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.status === 401) { handleUnauthorized(); return; }
     const s = await res.json();
     document.getElementById('setTranscriptionEngine').value = s.transcriptionEngine || 'whisper';
     document.getElementById('setTranscriptionKey').value = '';
@@ -1317,7 +1335,7 @@ async function saveSettings() {
     cleanupModel: document.getElementById('setCleanupModel').value.trim()
   };
   const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) { handleUnauthorized(); return; }
   if (res.ok) { loadSettingsUI(); }
 }
 
@@ -1343,7 +1361,7 @@ async function testTranscription() {
 
   try {
     const res = await fetch('/api/test-transcription', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.status === 401) { handleUnauthorized(); return; }
     const data = await res.json();
     if (data.ok) {
       result.textContent = '✓ ' + (data.message || 'Connected');
@@ -1373,7 +1391,7 @@ async function testCleanup() {
 
   try {
     const res = await fetch('/api/test-cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.status === 401) { handleUnauthorized(); return; }
     const data = await res.json();
     if (data.ok) {
       result.textContent = '✓ ' + (data.message || 'Connected');
@@ -1438,7 +1456,12 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
       }
     }
     if (!uRes) throw lastUploadErr;
-    if (uRes.status === 401) { if (procTimer) clearInterval(procTimer); window.location.href = '/login'; return silent ? '' : undefined; }
+    if (uRes.status === 401) {
+      if (procTimer) clearInterval(procTimer);
+      handleUnauthorized();
+      if (!silent) { showRecoveryRow('failed'); retryRecordingBtn.disabled = false; resetButton(); }
+      return silent ? '' : undefined;
+    }
     if (uRes.status === 413) {
       const errData = await uRes.json().catch(() => ({}));
       throw new Error(errData.error || 'Audio file too large for the server. Try a shorter recording or check your reverse proxy (nginx) client_max_body_size setting.');
@@ -1464,7 +1487,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
       try {
         ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
       } catch (streamErr) {
-        if (streamErr.name === 'UnauthorizedError') { clearInterval(procTimer); window.location.href = '/login'; return; }
+        if (streamErr.name === 'UnauthorizedError') { clearInterval(procTimer); handleUnauthorized(); return; }
         if (streamErr.name === 'AbortError') throw streamErr;
         // Fallback to non-streaming
         cleaned = '';
@@ -1474,7 +1497,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-        if (cRes.status === 401) { clearInterval(procTimer); window.location.href = '/login'; return; }
+        if (cRes.status === 401) { clearInterval(procTimer); handleUnauthorized(); return; }
         if (!cRes.ok) {
           // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
@@ -1696,6 +1719,13 @@ async function startRecording() {
   isStarting = true;
   setStatus('Starting mic…');
 
+  // Fail fast on expired session BEFORE the user speaks: if auth is gone,
+  // redirect now rather than after a long recording.
+  try {
+    const authCheck = await fetch('/api/settings');
+    if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
+  } catch {}
+
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1875,7 +1905,14 @@ async function liveTranscribeChunk(wavBlob, seq) {
         const fd = new FormData();
         fd.append('audio', wavBlob, 'chunk.wav');
         const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
-        if (res.status === 401) { window.location.href = '/login'; return; }
+        if (res.status === 401) {
+          // Never redirect mid-recording: keep capturing locally, mark the
+          // chunk as failed (full session is retried on stop from local backup).
+          liveChunkErrors++;
+          setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
+          try { showRecoveryRow('failed'); } catch {}
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           liveChunkSuccesses++;
@@ -2207,7 +2244,7 @@ async function finishLiveRecording() {
       try {
         ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
       } catch (streamErr) {
-        if (streamErr.name === 'UnauthorizedError') { window.location.href = '/login'; return false; }
+        if (streamErr.name === 'UnauthorizedError') { handleUnauthorized(); return false; }
         if (streamErr.name === 'AbortError') throw streamErr;
         cleaned = '';
         streamSuccess = false;
@@ -2215,7 +2252,7 @@ async function finishLiveRecording() {
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-        if (cRes.status === 401) { window.location.href = '/login'; return false; }
+        if (cRes.status === 401) { handleUnauthorized(); return false; }
         if (!cRes.ok) {
           // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
