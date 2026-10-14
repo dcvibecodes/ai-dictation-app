@@ -110,9 +110,10 @@ if (liveToggle) {
 }
 
 // ── Animation preference ──
-// 'none', 'shatter' (default), or 'wordbyword'.
+// 'none' (default), 'shatter', or 'wordbyword'. Persisted in localStorage,
+// so the choice survives logout/login on this browser.
 function getAnimationPref() {
-  return localStorage.getItem('dictationAnimation') || 'shatter';
+  return localStorage.getItem('dictationAnimation') || 'none';
 }
 function setAnimationPref(v) {
   localStorage.setItem('dictationAnimation', v);
