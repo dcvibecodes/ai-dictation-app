@@ -24,7 +24,8 @@ let backupSession = 0;            // invalidates in-flight backup writes when a 
 // Default ON — the Live toggle or the L shortcut can turn it off.
 let liveMode = localStorage.getItem('liveMode') !== 'false'; // default ON
 let liveStream = null;            // the mic MediaStream while live-recording
-let liveScriptNode = null;        // ScriptProcessorNode capturing raw PCM
+let liveScriptNode = null;        // ScriptProcessorNode fallback capturing raw PCM
+let liveWorkletNode = null;       // AudioWorkletNode (preferred — off main thread)
 let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
 let liveWriteIndex = 0;           // how many samples written into livePcmSamples
 let liveLastChunkEndIndex = 0;    // absolute sample index of the last sent chunk
@@ -1783,6 +1784,7 @@ async function startRecording() {
     if (recorderRunning) { cancelled = true; silentCancel = true; }
     try { if (recorderRunning) mediaRecorder.stop(); } catch {}
     if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} liveScriptNode = null; }
+    if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} liveWorkletNode = null; }
     if (liveChunkTimer) { clearInterval(liveChunkTimer); liveChunkTimer = null; }
     if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
     // If a live start blanked the document, put the user's text back.
@@ -2075,15 +2077,9 @@ function startLiveCapture(stream) {
       reject(new Error('no audio was captured'));
     }, 3000);
 
-    try {
-      liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-    } catch (err) {
-      clearTimeout(timer);
-      reject(new Error('live capture is not supported by this browser'));
-      return;
-    }
-    liveScriptNode.onaudioprocess = (e) => {
-      const channel = e.inputBuffer.getChannelData(0);
+    // Shared handler for one block of mono PCM samples. Used by both the
+    // AudioWorklet path and the ScriptProcessor fallback.
+    const handleLiveBlock = (channel) => {
       // Grow the buffer only when needed (amortized O(1) per sample). This avoids
       // copying the whole recording on every callback, which is slow on iPhones.
       if (liveWriteIndex + channel.length > livePcmSamples.length) {
@@ -2101,11 +2097,60 @@ function startLiveCapture(stream) {
       // First real audio callback = capture is genuinely running.
       if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
     };
-    source.connect(liveScriptNode);
-    liveScriptNode.connect(audioContext.destination);
 
-    liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
-    updateTranscriptDisplay();
+    // Preferred path: AudioWorklet runs off the main thread (no UI jank) and
+    // needs no connection to the destination (unlike ScriptProcessor).
+    try {
+      if (audioContext.audioWorklet) {
+        audioContext.audioWorklet.addModule('/live-capture-worklet.js').then(() => {
+          if (settled && liveWriteIndex === 0 && !liveWorkletNode) {
+            // Timed out while loading the module — startRecording's catch tears down.
+            return;
+          }
+          try {
+            const node = new AudioWorkletNode(audioContext, 'live-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
+            liveWorkletNode = node;
+            node.port.onmessage = (e) => handleLiveBlock(e.data);
+            source.connect(node);
+            liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+            updateTranscriptDisplay();
+          } catch (err) {
+            console.warn('AudioWorklet node failed, falling back to ScriptProcessor:', err.message);
+            startScriptProcessorFallback();
+          }
+        }).catch((err) => {
+          console.warn('AudioWorklet module failed, falling back to ScriptProcessor:', err.message);
+          startScriptProcessorFallback();
+        });
+      } else {
+        startScriptProcessorFallback();
+      }
+    } catch (err) {
+      startScriptProcessorFallback();
+    }
+
+    // Legacy path: ScriptProcessorNode runs on the main thread (can jank long
+    // sessions) and only runs while connected to the destination. Kept as an
+    // automatic fallback for browsers without AudioWorklet.
+    function startScriptProcessorFallback() {
+      if (settled) return; // already resolved (worklet running) or rejected (timed out)
+      if (liveWorkletNode || liveScriptNode) return;
+      try {
+        liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+      } catch (err) {
+        clearTimeout(timer);
+        reject(new Error('live capture is not supported by this browser'));
+        return;
+      }
+      liveScriptNode.onaudioprocess = (e) => {
+        handleLiveBlock(e.inputBuffer.getChannelData(0));
+      };
+      source.connect(liveScriptNode);
+      liveScriptNode.connect(audioContext.destination);
+
+      liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+      updateTranscriptDisplay();
+    }
   });
 }
 
@@ -2123,8 +2168,10 @@ async function stopLiveRecording() {
   pauseBtn.style.display = 'none';
 
   if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} }
   if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
   liveScriptNode = null;
+  liveWorkletNode = null;
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
 
@@ -2169,8 +2216,10 @@ async function cancelLiveRecording() {
   isPaused = false;
   pauseBtn.style.display = 'none';
   if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
+  if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} }
   if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
   liveScriptNode = null;
+  liveWorkletNode = null;
   if (liveStream) liveStream.getTracks().forEach(t => t.stop());
   liveStream = null;
   cancelBtn.style.display = 'none';

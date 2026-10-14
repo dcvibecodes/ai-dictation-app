@@ -4,6 +4,14 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.20.0
+
+### Live capture moved off the main thread (AudioWorklet)
+- **Smoother UI on long Live recordings** — mic capture now runs in an `AudioWorklet` (`public/live-capture-worklet.js`) instead of the deprecated `ScriptProcessorNode`, which ran on the same thread as the waveform, timer, and buttons and could make them hitch. Same 4096-sample blocks, same ~10s chunks, same backup and pause behavior — just no UI jank.
+- **No more speaker connection hack** — the old node only ran while connected to `audioContext.destination`; the worklet has zero outputs, so the mic no longer routes through the speaker path.
+- **Automatic fallback** — browsers without AudioWorklet silently use the old ScriptProcessor path. A console warning tells you which path is active.
+- Mic-start delay is unchanged: the red recording state still appears only after real audio is confirmed.
+
 ## What's New in v6.19.0
 
 ### No-expiry session + a dead session can never kill a recording
@@ -223,6 +231,7 @@ dictation-app/
 │   ├── setup.html         # First-time setup
 │   ├── auth.css           # Auth page styles
 │   ├── script.js          # Frontend logic
+│   │   ├── live-capture-worklet.js  # Live-mode mic capture (AudioWorklet)
 │   ├── styles.css         # Main styles
 │   ├── sw.js              # Service worker (PWA)
 │   ├── manifest.json      # PWA manifest
@@ -298,7 +307,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 | Backend | Node.js, Express |
 | Auth | bcryptjs, cookie-parser, HMAC sessions |
 | AI | Any compatible speech-to-text + chat API |
-| Audio | Web Audio API, MediaRecorder |
+| Audio | Web Audio API (AudioWorklet live capture), MediaRecorder |
 | Streaming | Server-Sent Events |
 
 ---
