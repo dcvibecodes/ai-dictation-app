@@ -4,6 +4,12 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.20.1
+
+### No animation is now the default
+- The cleanup animation default changed from Shatter to **No animation** — the cleaned transcript simply replaces the raw one. Less motion, faster to read.
+- Your saved choice is untouched: it lives in browser localStorage and survives logout/login, so anyone who picked Shatter or Word-by-word keeps it.
+
 ## What's New in v6.20.0
 
 ### Live capture moved off the main thread (AudioWorklet)
