@@ -531,6 +531,10 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .animation-option-name { font-size: 0.8rem; font-weight: 600; }
 .animation-option-desc { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
 
+/* ── Live transcription interval ── */
+.live-chunk-label { display: flex; flex-direction: column; gap: 4px; max-width: 220px; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+.live-chunk-input { max-width: 120px; }
+
 /* ── Prompts list ── */
 .prompts-list { display: flex; flex-direction: column; gap: 8px; }
 .prompt-item { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }

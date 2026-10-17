@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=19">
+  <link rel="stylesheet" href="styles.css?v=20">
 </head>
 <body>
   <div class="app">
@@ -230,6 +230,17 @@
         </div>
       </div>
 
+      <!-- Live transcription settings -->
+      <div class="settings-section">
+        <div class="tab-panel-header">
+          <h2>Live transcription</h2>
+        </div>
+        <p class="settings-desc">How often Live mode transcribes audio while you speak. Lower = text appears sooner, but each chunk carries less context, so <strong>accuracy drops</strong> (words split at chunk edges get misheard) and more API calls are made. <strong>Keep 10 seconds or higher</strong> unless you really need faster previews. Applies from the next recording.</p>
+        <label class="live-chunk-label">Chunk interval (seconds)
+          <input type="number" id="setLiveChunkSeconds" class="input live-chunk-input" min="3" max="60" step="1" placeholder="10">
+        </label>
+      </div>
+
     </div>
 
     <!-- Edit Prompt Modal -->
@@ -275,6 +286,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=25"></script>
+  <script src="script.js?v=26"></script>
 </body>
 </html>

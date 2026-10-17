@@ -3,7 +3,14 @@ let timerInterval, secondsElapsed = 0;
 let isRecording = false;
 let isPaused = false;
 let cancelled = false;
-let history = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
+// Load history defensively: a corrupted/partial value must never throw at startup
+// (that would kill the whole app before anything initializes).
+let history = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+})();
 let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
 let recordingStartedAt = 0;       // Date.now() when the recording began
@@ -40,7 +47,26 @@ let liveBackupSamples = 0;        // total samples across liveBackupChunks
 let liveChunkSuccesses = 0;       // chunks transcribed successfully this session
 let liveChunkErrors = 0;          // chunks that failed to transcribe this session
 let liveDocumentCleared = false;  // true while a live start has blanked the on-screen document
-const CHUNK_DURATION_MS = 10000;  // send a chunk every 10 seconds (for long dictation sessions)
+// Live chunk interval — how often Live mode sends audio to be transcribed, and
+// therefore how soon text appears while dictating. Configurable in Settings,
+// persisted in localStorage; default 10s. Applies from the next recording.
+const LIVE_CHUNK_SECONDS_DEFAULT = 10;
+const LIVE_CHUNK_SECONDS_MIN = 3;
+const LIVE_CHUNK_SECONDS_MAX = 60;
+function getLiveChunkSeconds() {
+  const raw = localStorage.getItem('dictationLiveChunkSeconds');
+  if (raw === null) return LIVE_CHUNK_SECONDS_DEFAULT;
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return LIVE_CHUNK_SECONDS_DEFAULT;
+  return Math.min(LIVE_CHUNK_SECONDS_MAX, Math.max(LIVE_CHUNK_SECONDS_MIN, Math.round(v)));
+}
+function setLiveChunkSeconds(v) {
+  const n = Number(v);
+  const clamped = Math.min(LIVE_CHUNK_SECONDS_MAX, Math.max(LIVE_CHUNK_SECONDS_MIN, Number.isFinite(n) ? Math.round(n) : LIVE_CHUNK_SECONDS_DEFAULT));
+  localStorage.setItem('dictationLiveChunkSeconds', clamped);
+  return clamped;
+}
+function getChunkDurationMs() { return getLiveChunkSeconds() * 1000; }
 const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
 const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
 
@@ -127,6 +153,16 @@ if (animationRadios.length) {
     r.addEventListener('change', () => {
       if (r.checked) setAnimationPref(r.value);
     });
+  });
+}
+
+// ── Live chunk interval preference (Settings) ──
+// Persisted in localStorage; applied when the next recording starts.
+const liveChunkSecondsInput = document.getElementById('setLiveChunkSeconds');
+if (liveChunkSecondsInput) {
+  liveChunkSecondsInput.value = getLiveChunkSeconds();
+  liveChunkSecondsInput.addEventListener('change', () => {
+    liveChunkSecondsInput.value = setLiveChunkSeconds(liveChunkSecondsInput.value);
   });
 }
 
@@ -497,7 +533,8 @@ function handleUnauthorized() {
     setStatus('Session expired — open /login in a new tab, then press Retry. Recording saved locally.', 'error');
     return false;
   }
-  handleUnauthorized();
+  // Nothing at stake (not recording/processing) — safe to send the user to login.
+  location.href = '/login';
   return true;
 }
 
@@ -1230,7 +1267,7 @@ async function deletePrompt(id) {
 }
 
 // ── History ──
-function saveHistory() { localStorage.setItem('dictationHistory', JSON.stringify(history.slice(0, 20))); }
+function saveHistory() { try { localStorage.setItem('dictationHistory', JSON.stringify(history.slice(0, 20))); } catch (e) { console.warn('history save failed (storage full or unavailable):', e); } }
 function addToHistory(raw, cleaned) { history.unshift({ raw, cleaned, timestamp: new Date().toLocaleString() }); saveHistory(); renderHistory(); }
 
 function renderHistory() {
@@ -1914,6 +1951,9 @@ async function liveTranscribeChunk(wavBlob, seq) {
           liveChunkErrors++;
           setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
           try { showRecoveryRow('failed'); } catch {}
+          // Fill the sequence hole so later chunks can still render on screen.
+          livePending.set(seq, '');
+          liveFlushPending();
           return;
         }
         if (res.ok) {
@@ -1939,6 +1979,9 @@ async function liveTranscribeChunk(wavBlob, seq) {
     liveChunkErrors++;
     console.error('chunk failed after retries:', lastErr);
     setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
+    // Fill the sequence hole (empty text) so liveFlushPending can advance and later
+    // chunks keep appearing. The stop-time full re-transcribe supplies the real text.
+    livePending.set(seq, '');
     liveFlushPending();
   })();
   liveInflight.add(promise);
@@ -1997,6 +2040,9 @@ function liveSendChunk(force = false) {
     livePcmSamples = new Float32Array(0);
     liveWriteIndex = 0;
     liveLastChunkEndIndex = 0;
+    // The buffer indices restart at 0 — reset the incremental-backup cursor too,
+    // otherwise the `start < captured` guard permanently disables tail capture.
+    captureLiveBackupIncremental.captured = 0;
   }
 }
 
@@ -2113,7 +2159,7 @@ function startLiveCapture(stream) {
             liveWorkletNode = node;
             node.port.onmessage = (e) => handleLiveBlock(e.data);
             source.connect(node);
-            liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+            liveChunkTimer = setInterval(liveSendChunk, getChunkDurationMs());
             updateTranscriptDisplay();
           } catch (err) {
             console.warn('AudioWorklet node failed, falling back to ScriptProcessor:', err.message);
@@ -2149,7 +2195,7 @@ function startLiveCapture(stream) {
       source.connect(liveScriptNode);
       liveScriptNode.connect(audioContext.destination);
 
-      liveChunkTimer = setInterval(liveSendChunk, CHUNK_DURATION_MS);
+      liveChunkTimer = setInterval(liveSendChunk, getChunkDurationMs());
       updateTranscriptDisplay();
     }
   });
@@ -2694,6 +2740,18 @@ function initOnboarding() {
   toggleBtn.addEventListener('click', onFirstStart);
 }
 
+// ── Global error safety net ──
+// Many async flows run without a .catch; without these, a rejection is silent and
+// the UI can sit on "Transcribing…" forever. These only surface the problem — they
+// never alter normal behavior (no preventDefault, so default logging still happens).
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled rejection:', e.reason);
+  try { setStatus('Something went wrong — you can retry.', 'error'); } catch {}
+});
+window.addEventListener('error', (e) => {
+  console.error('Uncaught error:', e.error || e.message);
+});
+
 // ── Init ──
 document.body.classList.add('record-active');
 initOnboarding();
@@ -2717,7 +2775,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.18.0'; // keep in sync with package.json at release time
+const APP_VERSION = '6.21.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
