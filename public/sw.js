@@ -1,6 +1,6 @@
 // Cache version is bumped on every release. It only exists to purge old shells;
 // app code is always fetched network-first so a deploy is live on the next load.
-const CACHE_NAME = 'dictation-v28';
+const CACHE_NAME = 'dictation-v29';
 const APP_SHELL = [
   '/',
   '/styles.css',

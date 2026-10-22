@@ -170,7 +170,7 @@
               <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash-lite"></label>
             </div>
             <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
-            <label>Vocabulary hint <span class="optional">(optional — names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
+            <label>Vocabulary hint <span class="optional">(optional — recognition bias for names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
             <div class="test-row">
               <button type="button" class="btn btn-ghost btn-sm" id="testTranscriptionBtn" onclick="testTranscription()">Test connection</button>
               <span class="test-result" id="testTranscriptionResult"></span>
@@ -206,7 +206,7 @@
           <h2>Corrections</h2>
           <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add</button>
         </div>
-        <p class="settings-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone. This is different from the vocabulary hint: the hint guides recognition, while these rules guarantee a replacement. The original text stays available via <strong>Show original</strong>.</p>
+        <p class="settings-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone. These rules run locally on the returned text: they do not change how audio is recognized and make no extra API calls. The original text stays available via <strong>Show original</strong>.</p>
         <div id="correctionsList" class="corrections-list"></div>
         <div class="test-row">
           <button type="button" class="btn btn-ghost btn-sm" id="saveCorrectionsBtn">Save corrections</button>
@@ -304,6 +304,6 @@
 
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
-  <script src="script.js?v=31"></script>
+  <script src="script.js?v=32"></script>
 </body>
 </html>

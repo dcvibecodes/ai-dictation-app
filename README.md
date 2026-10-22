@@ -4,6 +4,12 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.23.1
+
+### Clearer distinction between corrections and recognition
+- **Corrections now describe themselves accurately** — Settings → Corrections explains that rules run locally on the returned text, do not change recognition, and make no extra API calls.
+- **The optional Vocabulary hint remains available** — it provides advisory recognition bias for names and jargon; use Corrections for spellings that must be exact. Both features are complementary, not replacements.
+
 ## What's New in v6.23.0
 
 ### Work glossary: exact corrections that stick
@@ -11,7 +17,7 @@ AI-powered voice-to-text for people who can't install software on their computer
 - **Rules survive cleanup** — the same exact rules are applied again to the cleaned text, because a cleanup model can reintroduce the original spelling. Rules are word-boundary aware across Unicode text, longest phrase first, and applied once per pass so replacements cannot cascade.
 - **Original is never lost** — when a rule changed the text, a **Show original / Show corrected** button appears next to the raw/cleaned toggle. History and Undo remember the provider's original wording too.
 - **Stored server-side** — the glossary lives in `data/settings.json` under `GLOSSARY` and is managed with `GET/POST /api/glossary`; the browser keeps a localStorage cache so a reload does not flash the defaults. Validation rejects duplicate aliases, rules whose canonical form would cascade, and over-limit rule sets (200 rules / 20 aliases per rule / 100 characters per phrase).
-- **Vocabulary hint stays separate** — the hint biases recognition but cannot guarantee a spelling. Correction rules are deterministic and apply to both raw and cleaned output.
+- **Recognition and correction are separate** — the optional Vocabulary hint biases recognition; correction rules are deterministic, run locally afterwards, and guarantee known spellings in both raw and cleaned output.
 - **Tests** — `npm test` now covers normalization, boundary matching, longest-first replacement, idempotence, cascades, and Unicode aliases.
 
 ## What's New in v6.22.0
