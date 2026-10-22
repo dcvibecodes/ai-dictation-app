@@ -4,6 +4,20 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.22.0
+
+### Reliability pass: every sample accounted for, partial takes never lose audio
+- **New independent audio ledger** (`public/lib/audio-ledger.js`) — Live mode now records every captured sample exactly once into immutable 250 ms PCM blocks. Persistence and transcription have separate cursors, so audio captured between sends is no longer skipped or duplicated, and the old 15-minute in-RAM cap is gone. Blocks are stored incrementally in IndexedDB; only the small session manifest is rewritten.
+- **Partial is partial** — if any chunk fails and the whole-session recovery also fails, the transcript is clearly marked **Partial**, the full audio is kept, and nothing is auto-copied. Use **Retry / Download / Discard**; Discard asks first. Storage-quota failures are reported honestly, and the in-memory blocks stay available in the open tab.
+- **Stop no longer loses the tail** — Stop drains the worklet's partial block, sends the final fragment, and merges short tails instead of consuming speech that was never sent. Pause flushes the last spoken fragment before discarding pause audio.
+- **Stale sessions can't touch a new take** — capture mode and config are frozen at Start; every session has an ID; cancelled/old replies are ignored; requests are abortable. Live chunks use a bounded queue (**2 in flight, 6 queued**) with **2 browser attempts**; the server no longer retries chunks, so there is one retry owner.
+- **Cleanup called once** — the word-by-word animation renders the result already received instead of issuing a second `/cleanup-stream` request.
+- **Interrupted SSE never commits a half-rewrite** — cleanup requires the explicit `done` marker; the server aborts upstream generation when the browser disconnects.
+- **Clipboard status is truthful** — "Copied" only appears when the copy actually succeeded; otherwise the app says the copy was blocked.
+- **Faster, safer start** — record-start auth now hits the tiny authenticated `GET /api/status` with a 1.5 s client deadline instead of downloading all settings.
+- **Truthful audio labels** — Whisper-compatible uploads now receive the real MIME type and filename instead of pretending every file is `audio/wav`.
+- **Tests** — `npm test` runs Node tests for the resampler and ledger (coverage, gaps/overlaps, storage failure, recovery, discard).
+
 ## What's New in v6.21.0
 
 ### Configurable Live chunk interval + failure-proofing fixes
@@ -80,7 +94,7 @@ Server logs from a failed session showed the root cause: the **Gemini** transcri
 ### Recording can no longer silently lose your audio
 Long recordings used to live only in memory until you pressed stop — if the app was backgrounded, killed, reloaded, or crashed mid-recording, the whole recording (and the downloadable file) was gone with no warning. This release fixes that:
 
-- **Chunked capture + rolling backup** — recordings are captured in 1-second slices and flushed to local storage every few seconds, so an interrupted session is recoverable. If the app closes mid-recording, the next time you open it the recovery strip appears with **Retry / Download / Clear**.
+- **Chunked capture + rolling backup** — recordings are captured in 1-second slices and flushed to local storage every few seconds, so an interrupted session is recoverable. If the app closes mid-recording, the next time you open it the recovery strip appears with **Retry / Download / Discard**.
 - **Live mode now keeps an audio backup too** — previously the "Download recording" option could never work in Live mode. It now backs up the full session as a WAV.
 - **Live mode is ON by default** — long dictations are transcribed as you speak, so there's far less to lose if anything interrupts.
 - **Never a false "recording"** — the red recording state, timer, and waveform only appear *after* the recorder has confirmed real audio is arriving. If it can't start, you get a clear error instead of a recording that never happened.
@@ -174,7 +188,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
-- **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or clear from the recovery strip. Works in both standard and Live mode, and recovers interrupted recordings on the next open.
+- **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or discard from the recovery strip. Works in both standard and Live mode, and recovers interrupted recordings on the next open.
 - **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
@@ -343,7 +357,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
 - **Live mode is on by default** — turn it off with the Live toggle or `L`. In Live mode the transcript fills in as you speak (chunks default to 10 s; configurable 3–60 s in Settings → Live transcription) and the full session is backed up locally as a WAV.
-- **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Clear**.
+- **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Discard**.
 - **Clear during recording cancels the take** (it does not get transcribed back into the document).
 
 ### Configurable rate limits & transcript cap

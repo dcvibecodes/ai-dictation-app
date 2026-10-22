@@ -1,6 +1,8 @@
 let mediaRecorder, audioChunks = [], audioContext, analyser, source, animationId;
 let timerInterval, secondsElapsed = 0;
 let isRecording = false;
+let recordingCaptureMode = 'standard'; // frozen at record start; Stop uses this, not the live toggle
+let liveStopping = false;          // true while a live take is draining/finishing
 let isPaused = false;
 let cancelled = false;
 // Load history defensively: a corrupted/partial value must never throw at startup
@@ -34,19 +36,15 @@ let liveStream = null;            // the mic MediaStream while live-recording
 let liveScriptNode = null;        // ScriptProcessorNode fallback capturing raw PCM
 let liveWorkletNode = null;       // AudioWorkletNode (preferred — off main thread)
 let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
-let liveWriteIndex = 0;           // how many samples written into livePcmSamples
-let liveLastChunkEndIndex = 0;    // absolute sample index of the last sent chunk
-let liveChunkTimer = null;        // interval that sends chunks
-let liveChunkSeq = 0;             // incrementing sequence for chunks
-let liveNextSeq = 0;              // next sequence to append in order
-let livePending = new Map();      // seq -> transcribed text (out-of-order buffer)
-let liveInflight = new Set();     // pending chunk transcription promises
-let livePaused = false;           // true while paused (discard captured audio)
-let liveBackupChunks = [];        // resampled Float32 chunks kept for the local WAV backup
-let liveBackupSamples = 0;        // total samples across liveBackupChunks
-let liveChunkSuccesses = 0;       // chunks transcribed successfully this session
-let liveChunkErrors = 0;          // chunks that failed to transcribe this session
+let liveWriteIndex = 0;           // samples written into livePcmSamples
+let liveCaptureBaseSample = 0;    // absolute mic-sample index of livePcmSamples[0]
+let liveSession = null;           // frozen state for the active live recording
+let liveLedger = null;            // AudioLedger (independent persistence cursor)
+let recoveryLedger = null;        // ledger kept in memory when IndexedDB failed
+let liveResampler = null;         // StreamingResampler mic rate -> 16 kHz, chunk-stable
 let liveDocumentCleared = false;  // true while a live start has blanked the on-screen document
+const LIVE_MAX_INFLIGHT = 2;      // bound concurrent chunk requests
+const LIVE_MAX_QUEUE = 6;         // bound unsent chunks waiting for a slot
 // Live chunk interval — how often Live mode sends audio to be transcribed, and
 // therefore how soon text appears while dictating. Configurable in Settings,
 // persisted in localStorage; default 10s. Applies from the next recording.
@@ -102,8 +100,12 @@ const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 const editTranscriptBtn = document.getElementById('editTranscriptBtn');
 
 const AUDIO_DB = 'dictationAudioBackup';
+const AUDIO_DB_VERSION = 2;
 const AUDIO_STORE = 'recordings';
+const AUDIO_BLOCK_STORE = 'blocks';
+const AUDIO_SESSION_STORE = 'sessions';
 const AUDIO_KEY = 'latest';
+const LedgerLib = window.AudioLedgerLib;
 
 // Transcript state
 let currentRaw = '';
@@ -210,17 +212,17 @@ async function copyToClipboard(text) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      return true;
     }
-    return true;
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok === true;
   } catch (e) {
     console.error('Clipboard error:', e);
     return false;
@@ -229,23 +231,92 @@ async function copyToClipboard(text) {
 
 function openAudioDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(AUDIO_DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+    const req = indexedDB.open(AUDIO_DB, AUDIO_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(AUDIO_STORE)) {
+        db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(AUDIO_BLOCK_STORE)) {
+        const blocks = db.createObjectStore(AUDIO_BLOCK_STORE, { keyPath: 'id' });
+        blocks.createIndex('sessionId', 'sessionId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(AUDIO_SESSION_STORE)) {
+        db.createObjectStore(AUDIO_SESSION_STORE, { keyPath: 'id' });
+      }
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
 async function withAudioStore(mode, fn) {
-  const db = await openAudioDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(AUDIO_STORE, mode);
-    const store = tx.objectStore(AUDIO_STORE);
-    const result = fn(store);
+  return withStoreRequest(AUDIO_STORE, mode, fn);
+}
+
+// Run one IndexedDB request against any store and resolve with its result.
+// Existing withAudioStore callers only need the transaction to complete; this
+// variant also returns request results (used for get/getAll).
+function withStoreRequest(storeName, mode, fn) {
+  return openAudioDb().then(db => new Promise((resolve, reject) => {
+    let result;
+    let request;
+    let tx;
+    try {
+      tx = db.transaction(storeName, mode);
+      request = fn(tx.objectStore(storeName));
+    } catch (e) {
+      db.close();
+      reject(e);
+      return;
+    }
+    if (request) request.onsuccess = () => { result = request.result; };
     tx.oncomplete = () => { db.close(); resolve(result); };
     tx.onerror = () => { db.close(); reject(tx.error); };
-  });
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('transaction aborted')); };
+  }));
 }
+
+// IndexedDB adapter used by the audio ledger. Blocks are immutable and numbered;
+// the session manifest is the only thing rewritten.
+const liveLedgerAdapter = {
+  async putBlock(block) {
+    const pcm = block.pcm;
+    const record = {
+      id: block.id,
+      sessionId: block.sessionId,
+      seq: block.seq,
+      startSample: block.startSample,
+      sampleCount: block.sampleCount,
+      createdAt: block.createdAt,
+      pcm: pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength)
+    };
+    await withStoreRequest(AUDIO_BLOCK_STORE, 'readwrite', store => store.put(record));
+  },
+  async getBlocks(sessionId) {
+    const rows = await withStoreRequest(AUDIO_BLOCK_STORE, 'readonly', store => store.index('sessionId').getAll(sessionId));
+    return (rows || []).map(r => ({ ...r, pcm: new Int16Array(r.pcm) }));
+  },
+  async putSession(session) {
+    await withStoreRequest(AUDIO_SESSION_STORE, 'readwrite', store => store.put(session));
+  },
+  async getSession(id) {
+    return withStoreRequest(AUDIO_SESSION_STORE, 'readonly', store => store.get(id));
+  },
+  async getSessions() {
+    return withStoreRequest(AUDIO_SESSION_STORE, 'readonly', store => store.getAll());
+  },
+  async deleteSession(id) {
+    const keys = await withStoreRequest(AUDIO_BLOCK_STORE, 'readonly', store => store.index('sessionId').getAllKeys(id));
+    if (keys && keys.length) {
+      await withStoreRequest(AUDIO_BLOCK_STORE, 'readwrite', store => {
+        for (const key of keys) store.delete(key);
+        return null;
+      });
+    }
+    await withStoreRequest(AUDIO_SESSION_STORE, 'readwrite', store => store.delete(id));
+  }
+};
 
 async function saveAudioBackup(blob, inProgress = false) {
   // A finished recording is saved at stop time, when the elapsed counter is
@@ -318,15 +389,110 @@ function formatDuration(totalSeconds) {
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
+// The most recent immutable-block live session, if any. Recovery only builds a
+// WAV when Retry/Download actually needs it.
+async function getLatestLiveBackup() {
+  const sessions = await liveLedgerAdapter.getSessions();
+  const usable = (sessions || [])
+    .filter(s => s && (s.persistedSamples || 0) > 0)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (!usable.length) return null;
+  const s = usable[0];
+  // After a reload only persisted blocks exist. Do not advertise in-memory
+  // samples that this page no longer has.
+  const persisted = s.persistedSamples || 0;
+  const seconds = persisted / (s.sampleRate || TARGET_SAMPLE_RATE);
+  return {
+    source: 'ledger',
+    sessionId: s.id,
+    size: 44 + persisted * 2,
+    seconds,
+    createdAt: s.startedAt,
+    inProgress: !s.complete,
+    complete: !!s.complete,
+    partial: !!s.partial,
+    storageFailed: !!s.storageFailed,
+    gaps: s.gaps || 0,
+    overlaps: s.overlaps || 0,
+    getBlob: async () => {
+      const recovered = await LedgerLib.loadSessionAudio(liveLedgerAdapter, s.id, s.sampleRate || TARGET_SAMPLE_RATE);
+      return recovered.blob;
+    }
+  };
+}
+
+function legacyBackupDescriptor(record) {
+  return {
+    ...record,
+    source: 'recording',
+    getBlob: async () => record.blob
+  };
+}
+
 async function getBestAudioBackup() {
+  if (recoveryLedger) {
+    const ledger = recoveryLedger;
+    const s = ledger.session;
+    return {
+      source: 'memory-ledger',
+      sessionId: s.id,
+      size: 44 + s.flushedSamples * 2,
+      seconds: s.flushedSamples / (s.sampleRate || TARGET_SAMPLE_RATE),
+      createdAt: s.startedAt,
+      inProgress: !s.complete,
+      complete: !!s.complete,
+      partial: true,
+      storageFailed: true,
+      gaps: s.gaps || 0,
+      overlaps: s.overlaps || 0,
+      getBlob: async () => (await ledger.buildWav()).blob
+    };
+  }
+
+  let live = null;
+  try { live = await getLatestLiveBackup(); } catch {}
+
+  let legacy = null;
   try {
     const dbRecord = await getAudioBackup();
-    if (dbRecord) return dbRecord;
+    if (dbRecord) legacy = legacyBackupDescriptor(dbRecord);
   } catch {}
-  if (inMemoryAudioBlob) {
-    return { id: AUDIO_KEY, blob: inMemoryAudioBlob, type: inMemoryAudioBlob.type || 'audio/webm', size: inMemoryAudioBlob.size, createdAt: Date.now(), seconds: estimateBackupSeconds(inMemoryAudioBlob), inProgress: false, estimated: true };
+  if (!legacy && inMemoryAudioBlob) {
+    legacy = {
+      id: AUDIO_KEY,
+      blob: inMemoryAudioBlob,
+      type: inMemoryAudioBlob.type || 'audio/webm',
+      size: inMemoryAudioBlob.size,
+      createdAt: Date.now(),
+      seconds: estimateBackupSeconds(inMemoryAudioBlob),
+      inProgress: false,
+      estimated: true,
+      source: 'memory',
+      getBlob: async () => inMemoryAudioBlob
+    };
   }
-  return null;
+
+  if (live && legacy) {
+    // Never let an older Live session hide the recording that just failed.
+    return (live.createdAt || 0) >= (legacy.createdAt || 0) ? live : legacy;
+  }
+  return live || legacy || null;
+}
+
+async function deleteLiveSession(sessionId) {
+  if (!sessionId) return;
+  try { await liveLedgerAdapter.deleteSession(sessionId); } catch {}
+}
+
+function parkLedgerForRecovery(ledger) {
+  if (!ledger) return null;
+  if (ledger.session.storageFailed) {
+    // Blocks that never reached IndexedDB live only in memory. Keep the ledger
+    // object alive so Retry/Download still work in this tab.
+    recoveryLedger = ledger;
+    return null;
+  }
+  return ledger;
 }
 
 async function clearInMemoryAudioBackup() {
@@ -377,38 +543,51 @@ async function flushRecordingBackup(chunks, isLive, force = false) {
   }
 }
 
-// reason: 'failed' (transcription failed) or 'recovered' (interrupted recording
-// found on load). Both reuse the same Retry / Download / Clear strip.
-async function showRecoveryRow(reason = 'failed') {
+// reason: 'incomplete' (partial transcript), 'recovered' (interrupted session
+// found on load) or 'failed' (transcription failed). All reuse the same
+// Retry / Download / Discard strip.
+let recoveryBackup = null;
+
+async function showRecoveryRow(reason = 'failed', descriptor = null) {
   try {
-    const backup = await getBestAudioBackup();
-    if (!backup || !backup.size) { recoveryRow.style.display = 'none'; return; }
+    const backup = descriptor || await getBestAudioBackup();
+    if (!backup || !backup.size) { recoveryRow.style.display = 'none'; recoveryBackup = null; return; }
+    recoveryBackup = backup;
     recoveryRow.style.display = '';
     // Only show a duration if we actually have one worth trusting.
-    const secs = backup.seconds > 0 ? backup.seconds : (backup.estimated ? estimateBackupSeconds(backup.blob) : 0);
+    const secs = backup.seconds > 0 ? backup.seconds : 0;
     const durPart = secs > 0 ? ` · ~${formatDuration(secs)}` : '';
-    recoveryInfo.textContent = reason === 'recovered'
-      ? `Unfinished recording recovered${durPart} · ${formatBytes(backup.size)} saved — Retry or Download`
-      : `Transcription failed${durPart} · ${formatBytes(backup.size)} recording saved for retry`;
+    const storagePart = backup.storageFailed ? ' · browser storage failed, keep this tab open' : '';
+    const sizePart = formatBytes(backup.size);
+    if (reason === 'incomplete') {
+      recoveryInfo.textContent = `Partial transcript — full recording saved${durPart} · ${sizePart}${storagePart} — Retry full session or Download`;
+    } else if (reason === 'recovered') {
+      recoveryInfo.textContent = `Unfinished recording recovered${durPart} · ${sizePart} saved${storagePart} — Retry or Download`;
+    } else {
+      recoveryInfo.textContent = `Transcription failed${durPart} · ${sizePart} recording saved for retry${storagePart}`;
+    }
   } catch {
     recoveryRow.style.display = 'none';
+    recoveryBackup = null;
   }
 }
 
-// On load, surface any recording that was in progress when the app last closed.
-// Any backup with actual audio is shown — in-progress or finished — because the
-// only unacceptable outcome is losing the recording.
+// On load, surface any recording that was in progress or only partially
+// transcribed when the app last closed. Any audio-bearing session is shown —
+// the only unacceptable outcome is losing the recording.
 async function checkRecoveryOnLoad() {
   try {
     const backup = await getBestAudioBackup();
-    if (backup && backup.size > 0) await showRecoveryRow(backup.inProgress ? 'recovered' : 'failed');
-    else hideRecoveryRow();
+    if (!backup || !backup.size) { hideRecoveryRow(); return; }
+    const reason = backup.partial ? 'incomplete' : backup.inProgress ? 'recovered' : 'failed';
+    await showRecoveryRow(reason, backup);
   } catch {
     hideRecoveryRow();
   }
 }
 function hideRecoveryRow() {
   recoveryRow.style.display = 'none';
+  recoveryBackup = null;
 }
 
 // ── Tabs ──
@@ -538,148 +717,47 @@ function handleUnauthorized() {
   return true;
 }
 
-// MILESTONE: "Chomp" animation — the raw transcript is replaced word-by-word by
-// the cleaned text. Preserved for rollback; the active animation is the shatter
-// version in streamCleanup below.
-async function streamCleanupChomp(raw, prompt, signal) {
-  const sRes = await fetch('/cleanup-stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rawTranscript: raw, prompt }),
-    signal
-  });
-  if (sRes.status === 401) throw new UnauthorizedError();
-  if (!sRes.ok) return { cleaned: '', streamSuccess: false };
+// Word-by-word animation. It renders an already-received cleaned result; it must
+// never issue a provider request. The old version made a second /cleanup-stream
+// call here, which doubled cost and could show a different answer.
+function renderChomp(raw, cleaned) {
+  return new Promise(resolve => {
+    const rawWords = raw.trim() ? raw.trim().split(/\s+/) : [];
+    const tokens = cleaned.split(/(\s+)/).filter(Boolean);
+    let rawIdx = 0;
+    let revealed = '';
+    let i = 0;
 
-  // Keep the raw transcript visible while cleaning, then "replace" it word by
-  // word: as each cleaned word appears, the corresponding raw word at the front
-  // is removed. The box always shows [cleaned so far] + [remaining raw], so the
-  // raw never blinks out — it's progressively consumed by the cleaned version.
-  let cleaned = '';
-  let started = false;
-  const pendingWords = [];     // cleaned words/whitespace waiting to be revealed
-  let cleanedRevealed = '';    // cleaned text revealed so far
-  let revealScheduled = false;
-  let revealResolve = null;
-  const REVEAL_MS = 19;        // reveal one word every 19ms (~30% faster than 27ms)
-
-  // Split the raw into words so we can remove them from the front as cleaned words appear.
-  const rawWords = raw.trim().split(/\s+/);
-  let rawWordIndex = 0;        // how many raw words have been consumed
-
-  // Re-render the box: [cleaned so far, newest word popped] + [remaining raw].
-  function render() {
-    const cleanedHtml = escapeHtml(cleanedRevealed);
-    const remainingRaw = rawWords.slice(rawWordIndex).join(' ');
-    const rawHtml = remainingRaw ? ' ' + escapeHtml(remainingRaw) : '';
-    // Wrap only the newest cleaned word in a pop span so it animates in.
-    const newest = pendingWords[0] || '';
-    if (newest.trim()) {
-      const newestHtml = `<span class="clean-pop">${escapeHtml(newest)}</span>`;
-      transcriptDisplay.innerHTML = cleanedHtml + ' ' + newestHtml + rawHtml;
-    } else if (newest) {
-      transcriptDisplay.innerHTML = cleanedHtml + ' ' + newest + rawHtml;
-    } else {
-      transcriptDisplay.innerHTML = cleanedHtml + rawHtml;
+    function render() {
+      const remaining = rawWords.slice(rawIdx).join(' ');
+      transcriptDisplay.innerHTML = escapeHtml(revealed) + (remaining ? ' ' + escapeHtml(remaining) : '');
+      metaWordCount = countWords(revealed);
+      setTranscriptMeta();
     }
-    metaWordCount = countWords(cleaned); setTranscriptMeta();
-  }
 
-  // Reveal one buffered cleaned word, consuming one raw word from the front.
-  function scheduleReveal() {
-    if (revealScheduled) return;
-    revealScheduled = true;
-    setTimeout(() => {
-      revealScheduled = false;
-      if (pendingWords.length > 0) {
-        const part = pendingWords.shift();
-        if (part.trim()) {
-          cleanedRevealed += (cleanedRevealed ? ' ' : '') + part;
-          if (rawWordIndex < rawWords.length) rawWordIndex++;
-        }
-        render();
-        scheduleReveal();
-      } else if (revealResolve) {
-        revealResolve();
-        revealResolve = null;
-      }
-    }, REVEAL_MS);
-  }
-
-  // Queue newly arrived text for sequential reveal.
-  function feed(text) {
-    for (const t of text.split(/(\s+)/)) {
-      if (t) pendingWords.push(t);
-    }
-    scheduleReveal();
-  }
-
-  // Resolves once all buffered words have been revealed.
-  function waitForReveal() {
-    return new Promise(resolve => {
-      if (pendingWords.length === 0 && !revealScheduled) resolve();
-      else revealResolve = resolve;
-    });
-  }
-
-  transcriptDisplay.classList.remove('transcript-placeholder');
-  transcriptDisplay.classList.add('cleaning', 'streaming');
-
-  try {
-    // Show the full raw text in the box while cleaning (dimmed by .cleaning).
+    transcriptDisplay.classList.remove('transcript-placeholder');
+    transcriptDisplay.classList.add('streaming');
     transcriptDisplay.innerHTML = escapeHtml(raw);
 
-    const reader = sRes.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let streamDone = false;
-
-    while (!streamDone) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const json = JSON.parse(line.slice(6));
-          if (json.error) throw new Error(json.error);
-          if (json.done) { streamDone = true; break; }
-          if (json.text) {
-            if (!started) {
-              // First cleaned text: stop dimming the raw and start replacing it.
-              started = true;
-              transcriptDisplay.classList.remove('cleaning');
-            }
-            cleaned += json.text;
-            feed(json.text);
-            metaWordCount = countWords(cleaned); setTranscriptMeta();
-          }
-        } catch (parseErr) {
-          // If it's a real error (not a JSON parse issue), re-throw
-          if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
-          // Otherwise skip malformed SSE lines
-          continue;
-        }
+    const REVEAL_MS = 19; // reveal one word every 19ms
+    const timer = setInterval(() => {
+      if (i >= tokens.length) {
+        clearInterval(timer);
+        transcriptDisplay.textContent = cleaned;
+        transcriptDisplay.classList.remove('streaming');
+        metaWordCount = countWords(cleaned);
+        setTranscriptMeta();
+        resolve();
+        return;
       }
-    }
-
-    // Wait for the word-by-word reveal to finish.
-    await waitForReveal();
-
-    // Clean up: any raw words not consumed by a shorter cleaned text fade out.
-    if (rawWordIndex < rawWords.length) {
-      transcriptDisplay.innerHTML = escapeHtml(cleanedRevealed);
-    }
-
-    transcriptDisplay.classList.remove('streaming');
-    return { cleaned, streamSuccess: true };
-  } catch (streamErr) {
-    revealResolve = null;
-    transcriptDisplay.classList.remove('streaming', 'cleaning');
-    throw streamErr;
-  }
+      const token = tokens[i++];
+      if (token.trim()) {
+        revealed += (revealed ? ' ' : '') + token.trim();
+        if (rawIdx < rawWords.length) rawIdx++;
+      }
+      render();
+    }, REVEAL_MS);
+  });
 }
 
 // ── Shatter & Feed animation (active) ──
@@ -737,6 +815,7 @@ async function streamCleanup(raw, prompt, signal) {
     const decoder = new TextDecoder();
     let buffer = '';
     let streamDone = false;
+    let sawDone = false;
 
     while (!streamDone) {
       const { done, value } = await reader.read();
@@ -749,7 +828,7 @@ async function streamCleanup(raw, prompt, signal) {
         try {
           const json = JSON.parse(line.slice(6));
           if (json.error) throw new Error(json.error);
-          if (json.done) { streamDone = true; break; }
+          if (json.done) { sawDone = true; streamDone = true; break; }
           if (json.text) {
             cleaned += json.text;
             metaWordCount = countWords(cleaned); setTranscriptMeta();
@@ -762,6 +841,10 @@ async function streamCleanup(raw, prompt, signal) {
         }
       }
     }
+
+    // A connection can close cleanly mid-answer. Without the explicit `done`
+    // marker the text is partial, so never commit it as a finished cleanup.
+    if (!sawDone) throw new Error('Cleanup stream ended before completion');
 
     // If nothing was cleaned, leave the raw and let the caller fall back.
     if (!cleaned.trim()) {
@@ -776,8 +859,8 @@ async function streamCleanup(raw, prompt, signal) {
       // No animation — show the cleaned text directly.
       transcriptDisplay.textContent = cleaned;
     } else if (anim === 'wordbyword') {
-      // Word-by-word — the cleaned text replaces the raw progressively.
-      await streamCleanupChomp(raw, prompt, signal);
+      // Word-by-word — render the result we already have, with no second call.
+      await renderChomp(raw, cleaned);
     } else {
       // Shatter (default) — the raw shatters while the cleaned text fades in.
       await shatterAndFade(raw, cleaned);
@@ -838,9 +921,9 @@ async function sendRawForCleanup() {
     // Manual cleanup re-processes the existing text — no appending.
     updateTranscriptDisplay();
     const textToCopy = isAppendMode() ? cleaned : cleaned;
-    await copyToClipboard(textToCopy);
+    const copied = await copyToClipboard(textToCopy);
     clearInterval(procTimer);
-    setStatus('Copied ✓', 'done');
+    setStatus(copied ? 'Copied ✓' : 'Copy blocked — tap the transcript to copy', copied ? 'done' : 'error');
     setTimeout(() => setStatus('Ready'), 2000);
   } catch (e) {
     clearInterval(procTimer);
@@ -951,9 +1034,10 @@ transcriptDisplay.addEventListener('click', (e) => {
   if (isEditingTranscript) return; // clicks place the caret while editing
   const text = getDisplayText();
   if (text.trim()) {
-    copyToClipboard(text);
-    setStatus('Copied ✓', 'done');
-    setTimeout(() => setStatus('Ready'), 1500);
+    copyToClipboard(text).then(copied => {
+      setStatus(copied ? 'Copied ✓' : 'Copy blocked — select the text and copy manually', copied ? 'done' : 'error');
+      setTimeout(() => setStatus('Ready'), 1800);
+    });
   }
 });
 
@@ -1075,7 +1159,21 @@ async function clearDocument() {
   if (processingAbortController) abortProcessing();
   // Clear stops any in-progress recording by cancelling it (not stopping it),
   // so the audio isn't transcribed back into the document you just cleared.
-  if (isRecording) { silentCancel = true; cancelRecording(); }
+  if (isRecording) { silentCancel = true; await cancelRecording(); }
+  // An explicit Clear during stop/cleanup is a discard: never let a stale
+  // session write its text back into the cleared document.
+  if (liveSession) {
+    liveSession.cancelled = true;
+    liveSession = null;
+  }
+  if (liveLedger) {
+    try { await liveLedger.discard(); } catch {}
+    liveLedger = null;
+  }
+  if (recoveryLedger) {
+    try { await recoveryLedger.discard(); } catch {}
+    recoveryLedger = null;
+  }
   // Save state for undo before clearing
   if (getDisplayText().trim()) {
     undoState = { raw: currentRaw, cleaned: currentCleaned };
@@ -1290,7 +1388,10 @@ function restoreHistory(i) {
 async function copyHistoryItem(i) {
   const item = history[i];
   const text = item.cleaned || item.raw || '';
-  if (text) await copyToClipboard(text);
+  if (!text) return;
+  const copied = await copyToClipboard(text);
+  setStatus(copied ? 'Copied ✓' : 'Copy blocked — select the text and copy manually', copied ? 'done' : 'error');
+  setTimeout(() => setStatus('Ready'), 1800);
 }
 function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); }
 function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
@@ -1461,6 +1562,12 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
 
   const abortController = new AbortController();
   if (!silent) processingAbortController = abortController;
+  // A silent recovery still needs to obey Clear/Cancel. Forward an external
+  // signal instead of leaving an un-abortable provider call running.
+  if (opts.signal) {
+    if (opts.signal.aborted) abortController.abort();
+    else opts.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+  }
 
   // Elapsed time counter during processing
   let procSeconds = 0;
@@ -1517,6 +1624,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
     currentRaw = raw;
 
     let copiedLabel = '';
+    let copyFailed = false;
     if (cleanToggle.checked && raw.trim()) {
       setStatusProcessing('Cleaning up…');
 
@@ -1541,10 +1649,10 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
           // Cleanup failed — keep the raw. In append mode, append it to the document.
           if (isAppendMode()) {
             currentRaw = appendSegment(baseRaw, raw);
-            await copyToClipboard(currentRaw);
+            copyFailed = !(await copyToClipboard(currentRaw));
           } else {
             currentCleaned = '';
-            await copyToClipboard(raw);
+            copyFailed = !(await copyToClipboard(raw));
           }
           updateTranscriptDisplay(true);
           addToHistory(raw, raw);
@@ -1570,12 +1678,16 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
-        await copyToClipboard(currentCleaned);
-        copiedLabel = (baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied';
+        copyFailed = !(await copyToClipboard(currentCleaned));
+        copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied');
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
-        if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+        if (cleaned) {
+          addToHistory(raw, cleaned);
+          copyFailed = !(await copyToClipboard(cleaned));
+          copiedLabel = copyFailed ? 'Cleaned — copy blocked, tap the transcript' : 'Cleaned copied';
+        }
       }
     } else {
       currentCleaned = '';
@@ -1586,12 +1698,13 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
-        await copyToClipboard(currentRaw);
-        copiedLabel = baseRaw ? 'Appended & copied' : 'Raw copied';
+        copyFailed = !(await copyToClipboard(currentRaw));
+        copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : (baseRaw ? 'Appended & copied' : 'Raw copied');
       } else {
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw); await copyToClipboard(raw);
-        copiedLabel = 'Raw copied';
+        addToHistory(raw, raw);
+        copyFailed = !(await copyToClipboard(raw));
+        copiedLabel = copyFailed ? 'Raw — copy blocked, tap the transcript' : 'Raw copied';
       }
     }
 
@@ -1603,7 +1716,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
     hideRecoveryRow();
     clearInterval(procTimer);
     if (!autoStopped) {
-      setStatus(copiedLabel, 'done');
+      setStatus(copiedLabel, copyFailed ? 'error' : 'done');
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
@@ -1754,16 +1867,34 @@ function handleRecorderFailure(message) {
 }
 
 async function startRecording() {
-  if (isRecording || isStarting) return;
+  if (isRecording || isStarting || liveStopping) return;
+  if (processingAbortController) {
+    setStatus('Still processing the last take — press Escape to cancel it first', 'error');
+    setTimeout(() => setStatus('Ready'), 3000);
+    return;
+  }
   isStarting = true;
   setStatus('Starting mic…');
 
   // Fail fast on expired session BEFORE the user speaks: if auth is gone,
-  // redirect now rather than after a long recording.
+  // redirect now rather than after a long recording. This is a tiny status
+  // endpoint, not the full settings payload, and it is bounded so a hung
+  // network cannot stall the mic forever.
   try {
-    const authCheck = await fetch('/api/settings');
+    const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
+    const authCheck = await fetch('/api/status', { signal: timeout });
     if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
   } catch {}
+
+  // Freeze the capture mode for this take. Changing the Live toggle later cannot
+  // switch the teardown path under a running session.
+  recordingCaptureMode = liveMode ? 'live' : 'standard';
+  if (recordingCaptureMode === 'live' && !LedgerLib) {
+    // An old cached shell can pair the new page with a missing ledger script.
+    // Standard mode still records, so the microphone is never blocked.
+    recordingCaptureMode = 'standard';
+    console.warn('Audio ledger library missing — falling back to Standard mode.');
+  }
 
   let stream;
   try {
@@ -1785,13 +1916,14 @@ async function startRecording() {
     analyser.fftSize = 2048; // wide window (~43ms) so the silence check sees real audio
     source = audioContext.createMediaStreamSource(stream);
 
-    // If the mic track ends mid-session, remember why so we can tell the user.
+    // If the mic track ends mid-session, stop cleanly and keep the audio. This
+    // used to only set a flag, leaving a live session silently dead.
     stream.getAudioTracks().forEach(t => {
-      t.onended = () => { if (isRecording && !cancelled) recordingInterrupted = 'Microphone was disconnected'; };
+      t.onended = () => { if (isRecording && !cancelled) handleRecorderFailure('Microphone was disconnected'); };
     });
 
     // Confirm the recorder is genuinely capturing audio BEFORE showing "recording".
-    if (liveMode) {
+    if (recordingCaptureMode === 'live') {
       await startLiveCapture(stream);
     } else {
       await startStandardRecorder(stream);
@@ -1821,14 +1953,22 @@ async function startRecording() {
     const recorderRunning = mediaRecorder && mediaRecorder.state !== 'inactive';
     if (recorderRunning) { cancelled = true; silentCancel = true; }
     try { if (recorderRunning) mediaRecorder.stop(); } catch {}
+    const failedSession = liveSession;
+    if (failedSession) {
+      failedSession.cancelled = true;
+      failedSession.accepting = false;
+      clearInterval(failedSession.chunkTimer);
+      for (const ac of failedSession.controllers) { try { ac.abort(); } catch {} }
+      liveSession = null;
+    }
+    if (liveLedger) { liveLedger.discard().catch(() => {}); liveLedger = null; }
     if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} liveScriptNode = null; }
     if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} liveWorkletNode = null; }
-    if (liveChunkTimer) { clearInterval(liveChunkTimer); liveChunkTimer = null; }
     if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
     // If a live start blanked the document, put the user's text back.
     if (liveDocumentCleared) {
-      currentRaw = liveSegmentBaseRaw;
-      currentCleaned = liveSegmentBaseCleaned;
+      currentRaw = failedSession ? failedSession.baseRaw : currentRaw;
+      currentCleaned = failedSession ? failedSession.baseCleaned : currentCleaned;
       showingRaw = false;
       liveDocumentCleared = false;
       updateTranscriptDisplay();
@@ -1839,8 +1979,9 @@ async function startRecording() {
     resetButton();
     setStatus('Could not start recording — ' + e.message, 'error');
     setTimeout(() => setStatus('Ready'), 4000);
+  } finally {
+    isStarting = false;
   }
-  isStarting = false;
 }
 
 // ── Mic sanity check ──
@@ -1918,80 +2059,9 @@ function encodeWav(samples, sampleRate) {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-// Append transcribed chunks in order, even if responses arrive out of order.
-// Wrapped defensively: a UI-render error must never poison the chunk pipeline.
-function liveFlushPending() {
-  while (livePending.has(liveNextSeq)) {
-    const t = livePending.get(liveNextSeq);
-    livePending.delete(liveNextSeq);
-    if (t) {
-      currentRaw += (currentRaw ? ' ' : '') + t;
-      try { updateTranscriptDisplay(); } catch (e) { console.error('liveFlushPending render error:', e); }
-    }
-    liveNextSeq++;
-  }
-}
-
-// Transcribe a chunk and track the promise so stopLiveRecording can wait for it.
-// Each chunk retries on transient failures so one network/provider blip doesn't
-// silently drop ten seconds of speech. The leftover audio is always in the local
-// backup, and the session-level transcription is reconciled on stop.
-const CHUNK_RETRIES = 3;          // total attempts per chunk
-async function liveTranscribeChunk(wavBlob, seq) {
-  const promise = (async () => {
-    let lastErr = '';
-    for (let attempt = 1; attempt <= CHUNK_RETRIES; attempt++) {
-      try {
-        const fd = new FormData();
-        fd.append('audio', wavBlob, 'chunk.wav');
-        const res = await fetch('/upload-chunk', { method: 'POST', body: fd });
-        if (res.status === 401) {
-          // Never redirect mid-recording: keep capturing locally, mark the
-          // chunk as failed (full session is retried on stop from local backup).
-          liveChunkErrors++;
-          setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
-          try { showRecoveryRow('failed'); } catch {}
-          // Fill the sequence hole so later chunks can still render on screen.
-          livePending.set(seq, '');
-          liveFlushPending();
-          return;
-        }
-        if (res.ok) {
-          const data = await res.json();
-          liveChunkSuccesses++;
-          livePending.set(seq, (data.rawTranscript || '').trim());
-          liveFlushPending();
-          return;
-        }
-        const d = await res.json().catch(() => ({}));
-        lastErr = d.error || ('HTTP ' + res.status);
-        // 4xx (except 429) won't improve on retry — give up immediately.
-        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
-      } catch (e) {
-        lastErr = e.message;
-      }
-      if (attempt < CHUNK_RETRIES) {
-        setStatus(`Chunk retry ${attempt}/${CHUNK_RETRIES - 1}…`, 'processing');
-        await new Promise(r => setTimeout(r, 800 * attempt));
-      }
-    }
-    // All attempts failed — record it, but say what's true: the audio is safe locally.
-    liveChunkErrors++;
-    console.error('chunk failed after retries:', lastErr);
-    setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
-    // Fill the sequence hole (empty text) so liveFlushPending can advance and later
-    // chunks keep appearing. The stop-time full re-transcribe supplies the real text.
-    livePending.set(seq, '');
-    liveFlushPending();
-  })();
-  liveInflight.add(promise);
-  promise.finally(() => liveInflight.delete(promise));
-  return promise;
-}
-
-// Simple linear-interpolation downsampler (e.g. 48kHz -> 16kHz).
-// 16kHz is the native rate for speech-to-text models, so this keeps accuracy
-// while producing much smaller WAV files (faster uploads, especially on mobile).
+// Simple linear-interpolation downsampler (e.g. 48kHz -> 16kHz) used for the
+// per-chunk upload. Persistence uses StreamingResampler, which is continuous
+// across chunk boundaries.
 function resample(samples, fromRate, toRate) {
   if (fromRate === toRate) return samples;
   const ratio = toRate / fromRate;
@@ -2007,115 +2077,244 @@ function resample(samples, fromRate, toRate) {
   return out;
 }
 
-// Send the newest captured samples as a 16kHz WAV chunk.
-// When force is true, it sends even while paused (used to flush the last bit
-// spoken before the user hits Pause, so it isn't lost).
-function liveSendChunk(force = false) {
-  if (liveWriteIndex <= liveLastChunkEndIndex) return;
-  // Copy only the unconsumed chunk (the last ~10s), not the whole recording.
-  const chunkLen = liveWriteIndex - liveLastChunkEndIndex;
-  const chunkSamples = new Float32Array(chunkLen);
-  chunkSamples.set(livePcmSamples.subarray(liveLastChunkEndIndex, liveWriteIndex));
-  liveLastChunkEndIndex = liveWriteIndex;
+function newSessionId() {
+  try { return crypto.randomUUID(); } catch {}
+  return 's-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+}
 
-  if (livePaused && !force) return; // discard audio captured while paused
+function isLiveSessionActive(session) {
+  return !!session && liveSession === session && !session.cancelled;
+}
 
-  // Downsample to 16kHz, then skip if it's still too short.
-  const resampled = resample(chunkSamples, audioContext.sampleRate, TARGET_SAMPLE_RATE);
-  const minSamples = TARGET_SAMPLE_RATE * MIN_CHUNK_SAMPLES_FACTOR;
-  if (resampled.length < minSamples && !force) return;
+function liveEndSample(session) {
+  return liveCaptureBaseSample + liveWriteIndex;
+}
 
-  // Keep this chunk for the local WAV backup, so a failed or interrupted live
-  // session is still recoverable, then transcribe it.
-  liveBackupChunks.push(resampled);
-  liveBackupSamples += resampled.length;
-  flushRecordingBackup(liveBackupChunks, true);
+function hasSpeech(samples, threshold = 0.004) {
+  for (let i = 0; i < samples.length; i++) {
+    if (Math.abs(samples[i]) >= threshold) return true;
+  }
+  return false;
+}
 
-  const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
-  const seq = liveChunkSeq++;
-  liveTranscribeChunk(wav, seq);
-
-  // Bound memory: if everything is consumed and the buffer has grown large, reset it.
-  if (liveLastChunkEndIndex >= liveWriteIndex && liveWriteIndex > audioContext.sampleRate * 30) {
-    livePcmSamples = new Float32Array(0);
-    liveWriteIndex = 0;
-    liveLastChunkEndIndex = 0;
-    // The buffer indices restart at 0 — reset the incremental-backup cursor too,
-    // otherwise the `start < captured` guard permanently disables tail capture.
-    captureLiveBackupIncremental.captured = 0;
+// Append transcribed chunks in order, even if responses arrive out of order.
+// Only the active session may render; a late reply from a cancelled take is
+// dropped instead of mutating the new document.
+function liveFlushPending(session) {
+  while (session.chunks.has(session.nextSeq)) {
+    const item = session.chunks.get(session.nextSeq);
+    session.chunks.delete(session.nextSeq);
+    if (item && item.text) {
+      session.raw += (session.raw ? ' ' : '') + item.text;
+      if (isLiveSessionActive(session)) {
+        currentRaw = session.raw;
+        try { updateTranscriptDisplay(); } catch (e) { console.error('liveFlushPending render error:', e); }
+      }
+    }
+    session.nextSeq++;
   }
 }
 
-// Copy the newly captured PCM (since the last snapshot) into a bounded rolling
-// backup list and flush it to IndexedDB. Called on every audio callback — throttled
-// internally — so the local copy always tracks the recording, including pauses and
-// while the user is speaking between chunk sends.
-const LIVE_BACKUP_MAX_SAMPLES = 16000 * 60 * 15; // cap ~15 min of 16kHz audio in RAM
-function captureLiveBackupIncremental() {
-  if (liveWriteIndex <= liveLastChunkEndIndex) return;
-  const start = liveLastChunkEndIndex;
-  const len = liveWriteIndex - start;
-  // Already inside the backup? Then just flush (throttled) and return.
-  if (start < (captureLiveBackupIncremental.captured || 0)) {
-    flushRecordingBackup(liveBackupChunks, true);
+const CHUNK_RETRIES = 2;          // total attempts per chunk (browser is the retry owner)
+const CHUNK_TIMEOUT_MS = 75_000;  // per-attempt budget
+const STOP_DRAIN_MS = 500;        // wait for the worklet's partial block
+const STOP_TOTAL_BUDGET_MS = 45_000; // drain in-flight chunks before marking incomplete
+
+function enqueueLiveChunk(session, wavBlob, meta) {
+  if (!isLiveSessionActive(session)) return;
+  if (session.queue.length >= LIVE_MAX_QUEUE) {
+    // The audio is still safe in the ledger; skip the request rather than
+    // building an unbounded queue. The stop-time full-session recovery can
+    // still transcribe it.
+    session.errors++;
+    session.failedRanges.push({ ...meta, reason: 'queue full' });
+    // Fill the sequence hole so later successful chunks can still appear.
+    session.chunks.set(meta.seq, { text: '', ok: false });
+    liveFlushPending(session);
+    setStatus('Transcription is falling behind — audio saved locally for full recovery', 'error');
     return;
   }
-  const raw = livePcmSamples.subarray(start, liveWriteIndex);
-  const resampled = resample(raw, audioContext.sampleRate, TARGET_SAMPLE_RATE);
-  liveBackupChunks.push(resampled);
-  liveBackupSamples += resampled.length;
-  captureLiveBackupIncremental.captured = liveWriteIndex;
-  // Bound memory: drop the oldest chunks once the cap is exceeded (keeps the tail,
-  // which is the part a recovery most needs).
-  while (liveBackupSamples > LIVE_BACKUP_MAX_SAMPLES && liveBackupChunks.length > 1) {
-    liveBackupSamples -= liveBackupChunks.shift().length;
-  }
-  flushRecordingBackup(liveBackupChunks, true);
+  session.queue.push({ wavBlob, meta });
+  pumpLiveQueue(session);
 }
 
-// Write the complete live session (or everything still buffered) as a finished
-// WAV backup. Called on every exit path so recovery always has usable audio.
-async function finalizeLiveBackup() {
-  try {
-    if (!liveBackupChunks.length) return;
-    backupSession++; // stop in-flight rolling writes from racing us
-    const blob = encodeWav(concatFloat32(liveBackupChunks), TARGET_SAMPLE_RATE);
-    if (blob.size > 0) await saveAudioBackup(blob, false);
-  } catch (e) {
-    console.error('finalizeLiveBackup failed:', e);
+function pumpLiveQueue(session) {
+  if (!isLiveSessionActive(session)) return;
+  while (session.inflight.size < LIVE_MAX_INFLIGHT && session.queue.length) {
+    const task = session.queue.shift();
+    // Track a caught promise so a provider/JSON failure cannot surface as an
+    // unhandled rejection while the take continues.
+    const p = liveTranscribeChunk(session, task).catch(e => {
+      console.error('Chunk transcription pipeline error:', e);
+      session.errors++;
+      session.chunks.set(task.meta.seq, { text: '', ok: false });
+      liveFlushPending(session);
+    });
+    session.inflight.add(p);
+    p.finally(() => {
+      session.inflight.delete(p);
+      if (isLiveSessionActive(session)) pumpLiveQueue(session);
+    });
   }
+}
+
+async function liveTranscribeChunk(session, task) {
+  const { wavBlob, meta } = task;
+  let lastErr = '';
+  for (let attempt = 1; attempt <= CHUNK_RETRIES; attempt++) {
+    if (!isLiveSessionActive(session)) return;
+    const ac = new AbortController();
+    session.controllers.add(ac);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ac.abort(); }, CHUNK_TIMEOUT_MS);
+    try {
+      const fd = new FormData();
+      fd.append('audio', wavBlob, 'chunk.wav');
+      const res = await fetch('/upload-chunk', { method: 'POST', body: fd, signal: ac.signal });
+      if (!isLiveSessionActive(session)) return;
+      if (res.status === 401) {
+        // Never redirect mid-recording: keep capturing locally.
+        session.errors++;
+        session.expired = true;
+        session.failedRanges.push({ ...meta, reason: 'session expired' });
+        setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
+        try { showRecoveryRow('failed'); } catch {}
+        session.chunks.set(meta.seq, { text: '', ok: false });
+        liveFlushPending(session);
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        if (!isLiveSessionActive(session)) return;
+        session.successes++;
+        session.chunks.set(meta.seq, { text: (data.rawTranscript || '').trim(), ok: true });
+        liveFlushPending(session);
+        return;
+      }
+      const d = await res.json().catch(() => ({}));
+      lastErr = d.error || ('HTTP ' + res.status);
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+    } catch (e) {
+      if (!isLiveSessionActive(session)) return;
+      lastErr = timedOut ? 'request timed out' : (e.message || 'network error');
+    } finally {
+      clearTimeout(timer);
+      session.controllers.delete(ac);
+    }
+    if (attempt < CHUNK_RETRIES) {
+      session.retries++;
+      setStatus(`Chunk retry ${attempt}/${CHUNK_RETRIES - 1}…`, 'processing');
+      const jitter = Math.floor(Math.random() * 250);
+      await new Promise(r => setTimeout(r, 800 * attempt + jitter));
+    }
+  }
+  if (!isLiveSessionActive(session)) return;
+  // All attempts failed — record the gap honestly, but keep recording. The full
+  // session is still in the ledger and is retried on stop.
+  session.errors++;
+  session.failedRanges.push({ ...meta, reason: lastErr || 'failed' });
+  console.error('chunk failed after retries:', lastErr);
+  setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
+  session.chunks.set(meta.seq, { text: '', ok: false });
+  liveFlushPending(session);
+}
+
+// Send the newest captured samples as a 16kHz WAV chunk. The send cursor is
+// independent of the persistence cursor: this function never appends to the
+// ledger and never consumes audio that persistence has not seen.
+// force=true sends while paused (used before Pause); final=true is Stop.
+function liveSendChunk(sessionArg, { force = false, final = false } = {}) {
+  const session = sessionArg || liveSession;
+  if (!session || !isLiveSessionActive(session)) return;
+  const end = liveEndSample(session);
+  const start = session.sendCursor;
+  if (end <= start) return;
+  const chunkLen = end - start;
+
+  // Don't consume a short chunk: leave it in the buffer so the next send (or
+  // Stop with final=true) includes it. This is what previously dropped the tail.
+  const minMicSamples = MIN_CHUNK_SAMPLES_FACTOR * session.micRate;
+  if (chunkLen < minMicSamples && !final && !force) return;
+
+  const localStart = Math.max(0, start - liveCaptureBaseSample);
+  const localEnd = Math.min(liveWriteIndex, end - liveCaptureBaseSample);
+  if (localEnd <= localStart) return;
+  const chunkSamples = livePcmSamples.slice(localStart, localEnd);
+
+  // A final/pause fragment with no speech is noise, not a lost word. Discard it
+  // explicitly (and advance the cursor) rather than sending an empty request.
+  if ((final || force) && !hasSpeech(chunkSamples)) {
+    session.sendCursor = end;
+    return;
+  }
+
+  session.sendCursor = end;
+  // Release the send buffer once everything has been sent (persistence has
+  // already seen every sample). Keep at least 30 s so short sessions don't churn.
+  if (session.sendCursor >= liveEndSample(session) && (liveEndSample(session) - liveCaptureBaseSample) > session.micRate * 30) {
+    liveCaptureBaseSample = liveEndSample(session);
+    livePcmSamples = new Float32Array(0);
+    liveWriteIndex = 0;
+  }
+  const resampled = resample(chunkSamples, session.micRate, TARGET_SAMPLE_RATE);
+  if (!resampled.length) return;
+  const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
+  const meta = {
+    seq: session.seq++,
+    startSec: start / session.micRate,
+    endSec: end / session.micRate
+  };
+  enqueueLiveChunk(session, wav, meta);
 }
 
 // Set up WAV chunk capture on the existing audioContext/source.
 // In append mode, keep a snapshot of the existing document so the live recording
 // can build its own segment and append it at the end.
-let liveSegmentBaseRaw = '';
-let liveSegmentBaseCleaned = '';
 function startLiveCapture(stream) {
   return new Promise((resolve, reject) => {
+    const session = {
+      id: newSessionId(),
+      startedAt: Date.now(),
+      micRate: audioContext.sampleRate,
+      chunkMs: getChunkDurationMs(),
+      accepting: true,
+      draining: false,
+      paused: false,
+      cancelled: false,
+      raw: '',
+      chunks: new Map(),
+      nextSeq: 0,
+      seq: 0,
+      sendCursor: 0,
+      successes: 0,
+      errors: 0,
+      retries: 0,
+      failedRanges: [],
+      inflight: new Set(),
+      controllers: new Set(),
+      queue: [],
+      drainResolve: null,
+      baseRaw: currentRaw,
+      baseCleaned: currentCleaned
+    };
+    liveSession = session;
     liveStream = stream;
     livePcmSamples = new Float32Array(0);
     liveWriteIndex = 0;
-    liveLastChunkEndIndex = 0;
-    liveChunkSeq = 0;
-    liveNextSeq = 0;
-    livePending.clear();
-    liveInflight.clear();
-    livePaused = false;
-    liveBackupChunks = [];
-    liveBackupSamples = 0;
-    liveChunkSuccesses = 0;
-    liveChunkErrors = 0;
-    lastBackupFlush = 0;
-    captureLiveBackupIncremental.captured = 0;
-    backupSession++; // new session — invalidate any earlier in-flight backup writes
-    // Snapshot the existing document (used for append mode).
-    liveSegmentBaseRaw = currentRaw;
-    liveSegmentBaseCleaned = currentCleaned;
+    liveCaptureBaseSample = 0;
+    liveResampler = new LedgerLib.StreamingResampler(session.micRate, TARGET_SAMPLE_RATE, 0);
+    liveLedger = new LedgerLib.AudioLedger({
+      sessionId: session.id,
+      adapter: liveLedgerAdapter,
+      sampleRate: TARGET_SAMPLE_RATE,
+      startedAt: session.startedAt
+    });
     currentRaw = '';
     currentCleaned = '';
     showingRaw = false;
     liveDocumentCleared = true;
+    lastBackupFlush = 0;
+    backupSession++;
 
     let settled = false;
     const timer = setTimeout(() => {
@@ -2127,8 +2326,24 @@ function startLiveCapture(stream) {
     // Shared handler for one block of mono PCM samples. Used by both the
     // AudioWorklet path and the ScriptProcessor fallback.
     const handleLiveBlock = (channel) => {
-      // Grow the buffer only when needed (amortized O(1) per sample). This avoids
-      // copying the whole recording on every callback, which is slow on iPhones.
+      if (!isLiveSessionActive(session)) return;
+      if ((!session.accepting && !session.draining) || session.paused) return;
+      if (!channel || !channel.length) return;
+
+      // Persist every captured sample exactly once, independent of sending.
+      // StreamingResampler keeps output positions stable across block sizes.
+      try {
+        const res = liveResampler.process(channel);
+        if (res.samples.length) {
+          liveLedger.append(res.samples, res.outStart).catch(e => {
+            console.error('Audio ledger append failed:', e);
+          });
+        }
+      } catch (e) {
+        console.error('Audio ledger resample failed:', e);
+      }
+
+      // Grow the send buffer only when needed (amortized O(1) per sample).
       if (liveWriteIndex + channel.length > livePcmSamples.length) {
         const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
         const nb = new Float32Array(newLen);
@@ -2137,16 +2352,13 @@ function startLiveCapture(stream) {
       }
       livePcmSamples.set(channel, liveWriteIndex);
       liveWriteIndex += channel.length;
-      // Keep the local backup current: snapshot everything captured so far into a
-      // bounded rolling list, so an interruption can never lose the audio. This is
-      // throttled (BACKUP_FLUSH_MS) and safe to call on every callback.
-      captureLiveBackupIncremental();
+
       // First real audio callback = capture is genuinely running.
       if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
     };
+    session.handleLiveBlock = handleLiveBlock;
 
-    // Preferred path: AudioWorklet runs off the main thread (no UI jank) and
-    // needs no connection to the destination (unlike ScriptProcessor).
+    // Preferred path: AudioWorklet runs off the main thread (no UI jank).
     try {
       if (audioContext.audioWorklet) {
         audioContext.audioWorklet.addModule('/live-capture-worklet.js').then(() => {
@@ -2154,12 +2366,19 @@ function startLiveCapture(stream) {
             // Timed out while loading the module — startRecording's catch tears down.
             return;
           }
+          if (!isLiveSessionActive(session)) return;
           try {
             const node = new AudioWorkletNode(audioContext, 'live-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
             liveWorkletNode = node;
-            node.port.onmessage = (e) => handleLiveBlock(e.data);
+            node.port.onmessage = (e) => {
+              if (e.data && e.data.type === 'flushed') {
+                if (session.drainResolve) { const r = session.drainResolve; session.drainResolve = null; r(); }
+                return;
+              }
+              handleLiveBlock(e.data);
+            };
             source.connect(node);
-            liveChunkTimer = setInterval(liveSendChunk, getChunkDurationMs());
+            session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
             updateTranscriptDisplay();
           } catch (err) {
             console.warn('AudioWorklet node failed, falling back to ScriptProcessor:', err.message);
@@ -2177,11 +2396,11 @@ function startLiveCapture(stream) {
     }
 
     // Legacy path: ScriptProcessorNode runs on the main thread (can jank long
-    // sessions) and only runs while connected to the destination. Kept as an
-    // automatic fallback for browsers without AudioWorklet.
+    // sessions) and only runs while connected to the destination.
     function startScriptProcessorFallback() {
       if (settled) return; // already resolved (worklet running) or rejected (timed out)
       if (liveWorkletNode || liveScriptNode) return;
+      if (!isLiveSessionActive(session)) return;
       try {
         liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
       } catch (err) {
@@ -2195,18 +2414,73 @@ function startLiveCapture(stream) {
       source.connect(liveScriptNode);
       liveScriptNode.connect(audioContext.destination);
 
-      liveChunkTimer = setInterval(liveSendChunk, getChunkDurationMs());
+      session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
       updateTranscriptDisplay();
     }
   });
 }
 
+// Ask the worklet to emit its partial 4096-sample buffer, and wait briefly.
+function drainLiveCapture(session) {
+  if (!session || !liveWorkletNode || !liveWorkletNode.port) return Promise.resolve();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; session.drainResolve = null; resolve(); };
+    session.drainResolve = finish;
+    session.draining = true;
+    try { liveWorkletNode.port.postMessage('flush'); } catch { finish(); return; }
+    setTimeout(finish, STOP_DRAIN_MS);
+  }).finally(() => { session.draining = false; });
+}
+
+async function finalizeLiveLedger(session) {
+  if (!liveLedger || !session) return;
+  try {
+    const tail = liveResampler ? liveResampler.flush() : null;
+    if (tail && tail.samples.length) await liveLedger.append(tail.samples, tail.outStart);
+  } catch (e) {
+    console.error('Live resampler flush failed:', e);
+  }
+  await liveLedger.flush();
+}
+
+async function waitForLiveQueue(session, budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  while ((session.inflight.size || session.queue.length) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (session.inflight.size || session.queue.length) {
+    // Bounded time budget exceeded. Keep the audio; mark the unsent work as
+    // failed so the transcript is never presented as complete.
+    for (const ac of session.controllers) { try { ac.abort(); } catch {} }
+    for (const task of session.queue) {
+      session.errors++;
+      session.failedRanges.push({ ...task.meta, reason: 'stop budget exceeded' });
+      session.chunks.set(task.meta.seq, { text: '', ok: false });
+    }
+    session.queue = [];
+    liveFlushPending(session);
+    session.timedOut = true;
+    return false;
+  }
+  return true;
+}
+
 // Tear down live capture and process the accumulated transcript.
 async function stopLiveRecording() {
+  const session = liveSession;
+  if (!session) return;
+  liveStopping = true;
+  session.accepting = false;
   clearLimitCheck();
   stopSilenceWatch();
-  clearInterval(liveChunkTimer);
-  liveSendChunk(); // send the final partial chunk
+  if (session.chunkTimer) clearInterval(session.chunkTimer);
+  session.chunkTimer = null;
+
+  // Drain the worklet tail before closing the port; otherwise the last few
+  // hundred milliseconds (often the final word) vanish.
+  await drainLiveCapture(session);
+  liveSendChunk(session, { final: true });
 
   cancelAnimationFrame(animationId);
   stopTimer(); clearWaveform();
@@ -2223,10 +2497,8 @@ async function stopLiveRecording() {
   liveStream = null;
 
   // Make sure the complete session is on disk before we tear anything down.
-  await finalizeLiveBackup();
+  await finalizeLiveLedger(session);
 
-  // Recording has stopped — show a "Transcribing…" status with elapsed seconds
-  // while the final chunks are processed, instead of leaving it on "Recording…".
   setStatusProcessing('Transcribing…');
   let procSeconds = 0;
   const procTimer = setInterval(() => {
@@ -2234,14 +2506,19 @@ async function stopLiveRecording() {
     statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
   }, 1000);
 
-  // Wait for all in-flight chunk transcriptions to finish so the final spoken
-  // bit is captured before we clean up. Then flush any ordered chunks still buffered.
-  try {
-    await Promise.allSettled([...liveInflight]);
-  } catch {}
-  liveFlushPending();
+  await waitForLiveQueue(session, STOP_TOTAL_BUDGET_MS);
+  // Any sequence that never produced an entry must not block later text.
+  for (let seq = session.nextSeq; seq < session.seq; seq++) {
+    if (!session.chunks.has(seq)) session.chunks.set(seq, { text: '', ok: false });
+  }
+  if (isLiveSessionActive(session)) liveFlushPending(session);
 
-  const ok = await finishLiveRecording();
+  let ok = false;
+  try {
+    ok = await finishLiveRecording(session);
+  } finally {
+    liveStopping = false;
+  }
   clearInterval(procTimer);
   if (autoStopped && ok) {
     const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
@@ -2252,11 +2529,21 @@ async function stopLiveRecording() {
   }
 }
 
-// Cancel live recording — discard everything, no cleanup.
+// Cancel live recording — discard everything, no cleanup, and make sure any
+// late provider replies cannot touch the document.
 async function cancelLiveRecording() {
+  const session = liveSession;
+  liveSession = null;
+  liveStopping = false;
+  if (session) {
+    session.cancelled = true;
+    session.accepting = false;
+    clearInterval(session.chunkTimer);
+    for (const ac of session.controllers) { try { ac.abort(); } catch {} }
+    session.queue = [];
+  }
   clearLimitCheck();
   stopSilenceWatch();
-  clearInterval(liveChunkTimer);
   cancelAnimationFrame(animationId);
   stopTimer(); clearWaveform();
   toggleBtn.classList.remove('recording');
@@ -2271,7 +2558,9 @@ async function cancelLiveRecording() {
   liveStream = null;
   cancelBtn.style.display = 'none';
   document.querySelector('.action-btns').style.display = '';
-  // A cancel discards the session — remove the rolling backup too.
+  // A cancel discards the session — remove its ledger blocks and the legacy backup.
+  if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
+  else if (session) { await deleteLiveSession(session.id); }
   await clearAudioBackup().catch(() => {});
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
@@ -2280,38 +2569,52 @@ async function cancelLiveRecording() {
   silentCancel = false;
 }
 
-// On stop: clean up the accumulated live raw text (or keep raw), update history, copy.
-// Returns true when the session produced text, false otherwise.
-async function finishLiveRecording() {
-  let raw = currentRaw;
+// On stop: if every chunk was transcribed, clean up/copy as usual. If any chunk
+// failed, try one whole-session re-transcription from the ledger. If that also
+// fails, show the partial text, keep the audio, and never auto-copy it.
+async function finishLiveRecording(session) {
+  if (session.cancelled) return false;
+  let raw = session.raw;
+  let complete = session.errors === 0 && !session.timedOut;
 
-  // If any chunk failed during the session, some speech was never transcribed.
-  // Since the full session is in the local backup, re-transcribe the whole thing
-  // through the standard /upload path and prefer that result — a few failed chunks
-  // must not cost the user those minutes.
-  if (liveChunkErrors > 0 && liveBackupChunks.length) {
+  if (!complete && liveLedger) {
     setStatusProcessing('Recovering failed chunks…');
+    const recoveryAbort = new AbortController();
+    processingAbortController = recoveryAbort;
     try {
-      const fullBlob = encodeWav(concatFloat32(liveBackupChunks), TARGET_SAMPLE_RATE);
-      const recovered = await transcribeAudioBlob(fullBlob, { silent: true });
+      const { blob } = await liveLedger.buildWav();
+      const recovered = await transcribeAudioBlob(blob, {
+        silent: true,
+        signal: recoveryAbort.signal
+      });
       if (recovered && recovered.trim()) {
         raw = recovered;
-        currentRaw = raw;
+        complete = true;
         console.log('Recovered full live session after chunk failures.');
       }
     } catch (e) {
       console.error('Full-session recovery failed:', e);
+    } finally {
+      if (processingAbortController === recoveryAbort) processingAbortController = null;
     }
   }
+
+  if (session.cancelled) return false;
+  const baseRaw = session.baseRaw;
+  const baseCleaned = session.baseCleaned;
 
   if (!raw.trim()) {
     clearProcessingUI();
     resetButton();
-    if (liveBackupSamples > 0 || liveChunkErrors > 0) {
-      // Audio was captured but nothing was transcribed — finalize it and keep it.
-      await finalizeLiveBackup();
-      setStatus('Nothing was transcribed — audio saved. Use Retry or Download.', 'error');
-      await showRecoveryRow('failed');
+    if (liveLedger) {
+      // Audio exists but nothing was transcribed — keep it and say so.
+      liveLedger.markPartial('no text transcribed');
+      await liveLedger.drain();
+      parkLedgerForRecovery(liveLedger);
+      liveLedger = null;
+      liveSession = null;
+      setStatus('Nothing was transcribed — full recording saved. Retry or Download.', 'error');
+      await showRecoveryRow(session.errors > 0 ? 'incomplete' : 'failed');
     } else {
       await clearAudioBackupIfIdle().catch(() => {});
       await clearInMemoryAudioBackup();
@@ -2322,15 +2625,35 @@ async function finishLiveRecording() {
     return false;
   }
 
+  if (!complete) {
+    if (session.cancelled) return false;
+    if (isAppendMode()) {
+      currentRaw = appendSegment(baseRaw, raw);
+      currentCleaned = baseCleaned;
+      showingRaw = !!baseCleaned;
+    } else {
+      currentRaw = raw;
+      currentCleaned = '';
+      showingRaw = true;
+    }
+    updateTranscriptDisplay();
+    liveLedger.markPartial('partial transcript');
+    await liveLedger.drain();
+    parkLedgerForRecovery(liveLedger);
+    liveLedger = null;
+    liveSession = null;
+    setStatus('Partial transcript — full recording saved. Retry or Download.', 'error');
+    await showRecoveryRow('incomplete');
+    processingAbortController = null;
+    clearProcessingUI();
+    resetButton();
+    return false;
+  }
+
   toggleBtn.classList.add('processing');
   setStatusProcessing('Cleaning up…');
   const abortController = new AbortController();
   processingAbortController = abortController;
-
-  let copiedLabel = '';
-  // The base document captured at live-recording start (for append mode).
-  const baseRaw = liveSegmentBaseRaw;
-  const baseCleaned = liveSegmentBaseCleaned;
 
   try {
     if (cleanToggle.checked) {
@@ -2347,19 +2670,26 @@ async function finishLiveRecording() {
       }
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
-        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
+        const cRes = await fetch('/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }),
+          signal: abortController.signal
+        });
         if (cRes.status === 401) { handleUnauthorized(); return false; }
         if (!cRes.ok) {
-          // Cleanup failed — keep the raw. In append mode, append it to the document.
+          // Cleanup failed — keep the raw. The transcript itself is complete, so
+          // the audio can be dropped.
           if (isAppendMode()) {
             currentRaw = appendSegment(baseRaw, raw);
-            await copyToClipboard(currentRaw);
+            copyFailed = !(await copyToClipboard(currentRaw));
           } else {
             currentCleaned = '';
-            await copyToClipboard(raw);
+            copyFailed = !(await copyToClipboard(raw));
           }
           updateTranscriptDisplay(true);
           addToHistory(raw, raw);
+          if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
           await clearAudioBackupIfIdle();
           await clearInMemoryAudioBackup();
           hideRecoveryRow();
@@ -2380,12 +2710,16 @@ async function finishLiveRecording() {
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, cleaned);
-        await copyToClipboard(currentCleaned);
-        copiedLabel = (baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied';
+        const copied = await copyToClipboard(currentCleaned);
+        setStatus(copied ? ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied') : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
-        if (cleaned) { addToHistory(raw, cleaned); await copyToClipboard(cleaned); copiedLabel = 'Cleaned copied'; }
+        if (cleaned) {
+          addToHistory(raw, cleaned);
+          const copied = await copyToClipboard(cleaned);
+          setStatus(copied ? 'Cleaned copied' : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
+        }
       }
     } else {
       currentCleaned = '';
@@ -2394,17 +2728,20 @@ async function finishLiveRecording() {
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
         addToHistory(raw, raw);
-        await copyToClipboard(currentRaw);
-        copiedLabel = baseRaw ? 'Appended & copied' : 'Raw copied';
+        const copied = await copyToClipboard(currentRaw);
+        setStatus(copied ? (baseRaw ? 'Appended & copied' : 'Raw copied') : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
       } else {
-        currentCleaned = '';
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw); await copyToClipboard(raw);
-        copiedLabel = 'Raw copied';
+        addToHistory(raw, raw);
+        const copied = await copyToClipboard(raw);
+        setStatus(copied ? 'Raw copied' : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
       }
     }
 
-    // Success — the transcript is safe, drop the audio backup.
+    // Full coverage succeeded (or the whole-session recovery did) — the audio is
+    // no longer needed. Partial sessions never reach this branch.
+    if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
+    liveSession = null;
     await clearAudioBackupIfIdle();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
@@ -2412,11 +2749,11 @@ async function finishLiveRecording() {
     clearProcessingUI();
     resetButton();
     if (!autoStopped) {
-      setStatus(copiedLabel, 'done');
-      setTimeout(() => setStatus('Ready'), 2000);
+      setTimeout(() => setStatus('Ready'), 2500);
     }
     return true;
   } catch (e) {
+    if (session.cancelled) return false;
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
       setTimeout(() => setStatus('Ready'), 1500);
@@ -2424,6 +2761,16 @@ async function finishLiveRecording() {
       setStatus('Error: ' + e.message, 'error');
       setTimeout(() => setStatus('Ready'), 3000);
     }
+    // Keep the audio for retry; mark it partial so it is never described as a
+    // complete transcription.
+    if (liveLedger) {
+      liveLedger.markPartial('cleanup or display failed');
+      await liveLedger.drain();
+      parkLedgerForRecovery(liveLedger);
+      liveLedger = null;
+    }
+    liveSession = null;
+    await showRecoveryRow('failed');
     processingAbortController = null;
     clearProcessingUI();
     resetButton();
@@ -2441,13 +2788,13 @@ function resetButton() {
   toggleBtn.innerHTML = '<svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>';
 }
 
-function cancelRecording() {
+async function cancelRecording() {
   if (!isRecording) return;
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
   stopSilenceWatch();
-  if (liveMode) { cancelLiveRecording(); return; }
+  if (recordingCaptureMode === 'live') { await cancelLiveRecording(); return; }
   cancelled = true;
   try { mediaRecorder.stop(); } catch (e) {}
   // The mic track is released inside onstop, after the final data is flushed.
@@ -2458,7 +2805,7 @@ function stopRecording() {
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
   stopSilenceWatch();
-  if (liveMode) { stopLiveRecording(); return; }
+  if (recordingCaptureMode === 'live') { stopLiveRecording(); return; }
   try { mediaRecorder.stop(); } catch (e) {}
   // The mic track is released inside onstop, after the final data is flushed.
 }
@@ -2476,17 +2823,24 @@ function togglePause() {
   if (!isRecording) return;
   if (navigator.vibrate) navigator.vibrate(10);
 
-  // Live mode: pause just stops sending chunks; captured audio is discarded while paused.
-  if (liveMode) {
+  // Live mode: pause stops sending and discards audio captured while paused.
+  if (recordingCaptureMode === 'live' && liveSession) {
+    const session = liveSession;
     if (isPaused) {
-      livePaused = false;
+      session.paused = false;
       resumeTimer();
       isPaused = false;
       pauseBtn.textContent = 'Pause';
       setStatus('Recording…', 'active');
     } else {
-      livePaused = true;
-      liveSendChunk(true); // flush the last bit spoken before pausing
+      liveSendChunk(session, { force: true }); // flush the last bit spoken before pausing
+      // Flush the persistence resampler so the last sample is in the ledger
+      // before audio captured during the pause is discarded.
+      try {
+        const tail = liveResampler ? liveResampler.flush() : null;
+        if (tail && tail.samples.length) liveLedger.append(tail.samples, tail.outStart).catch(() => {});
+      } catch {}
+      session.paused = true;
       pauseTimer();
       isPaused = true;
       pauseBtn.textContent = 'Resume';
@@ -2525,21 +2879,49 @@ toggleBtn.onclick = () => isRecording ? stopRecording() : startRecording();
 pauseBtn.onclick = togglePause;
 cancelBtn.onclick = cancelRecording;
 retryRecordingBtn.onclick = async () => {
-  const backup = await getBestAudioBackup();
+  const backup = recoveryBackup || await getBestAudioBackup();
   if (!backup) { hideRecoveryRow(); return; }
-  await transcribeAudioBlob(backup.blob);
+  retryRecordingBtn.disabled = true;
+  try {
+    const blob = backup.blob || await backup.getBlob();
+    const ok = await transcribeAudioBlob(blob);
+    if (ok) {
+      if (backup.source === 'ledger') await deleteLiveSession(backup.sessionId);
+      if (backup.source === 'memory-ledger' && recoveryLedger) {
+        await recoveryLedger.discard();
+        recoveryLedger = null;
+      }
+      hideRecoveryRow();
+    }
+  } catch (e) {
+    setStatus('Retry failed — recording kept. ' + e.message, 'error');
+  } finally {
+    retryRecordingBtn.disabled = false;
+  }
 };
 downloadRecordingBtn.onclick = async () => {
-  const backup = await getBestAudioBackup();
+  const backup = recoveryBackup || await getBestAudioBackup();
   if (!backup) { hideRecoveryRow(); return; }
-  const url = URL.createObjectURL(backup.blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `dictation-${new Date(backup.createdAt).toISOString().replace(/[:.]/g, '-')}.${audioExtension(backup.blob && backup.blob.type)}`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try {
+    const blob = backup.blob || await backup.getBlob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dictation-${new Date(backup.createdAt || Date.now()).toISOString().replace(/[:.]/g, '-')}.${audioExtension(blob.type)}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    setStatus('Download failed: ' + e.message, 'error');
+  }
 };
 clearRecordingBtn.onclick = async () => {
+  const backup = recoveryBackup;
+  if (!window.confirm('Discard this saved recording? This cannot be undone.')) return;
+  if (backup && backup.source === 'ledger') await deleteLiveSession(backup.sessionId);
+  if (backup && backup.source === 'memory-ledger' && recoveryLedger) {
+    await recoveryLedger.discard();
+    recoveryLedger = null;
+  }
   await clearAudioBackup();
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
@@ -2684,10 +3066,9 @@ window.addEventListener('offline', updateOnlineStatus);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden || !isRecording) return;
   try {
-    if (liveMode) {
-      liveSendChunk(); // include the current partial chunk for transcription
-      captureLiveBackupIncremental();
-      finalizeLiveBackup(); // write a complete, recoverable WAV
+    if (recordingCaptureMode === 'live' && liveSession) {
+      liveSendChunk(liveSession); // include the current partial chunk for transcription
+      if (liveLedger) liveLedger.flushPending(); // persist the <250 ms tail
     } else {
       flushRecordingBackup(audioChunks, false, true);
     }
@@ -2695,10 +3076,14 @@ document.addEventListener('visibilitychange', () => {
     console.error('Backup-on-hide failed:', e);
   }
 });
-// Last-chance synchronous-ish flush on page teardown.
+// Last-chance flush on page teardown. Up to one 250 ms block can still be lost
+// if the OS kills the page without running this; that is bounded and reported.
 window.addEventListener('pagehide', () => {
   if (!isRecording) return;
-  try { if (!liveMode) flushRecordingBackup(audioChunks, false, true); } catch {}
+  try {
+    if (recordingCaptureMode === 'live' && liveLedger) liveLedger.flushPending();
+    else flushRecordingBackup(audioChunks, false, true);
+  } catch {}
 });
 
 // ── Shortcuts popover ──
@@ -2775,7 +3160,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.21.0'; // keep in sync with package.json at release time
+const APP_VERSION = '6.22.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

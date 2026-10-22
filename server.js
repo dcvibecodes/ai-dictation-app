@@ -298,6 +298,13 @@ app.get('/', (req, res) => {
 });
 
 // --- Settings API ---
+// Tiny authenticated health check used on the record-start critical path.
+// Returning the full settings payload here made a hung network able to stall
+// the microphone indefinitely.
+app.get('/api/status', requireOwner, (req, res) => {
+  res.json({ ok: true });
+});
+
 app.get('/api/settings', requireOwner, (req, res) => {
   const s = loadSettings();
   res.json({
@@ -383,13 +390,14 @@ app.delete('/prompts/:id', requireOwner, (req, res) => {
 });
 
 // --- Transcription & Cleanup ---
-function getTranscriptionClient() {
+function getTranscriptionClient(maxRetries = 2) {
   const key = getEffectiveSetting('TRANSCRIPTION_API_KEY');
   const baseURL = getEffectiveSetting('TRANSCRIPTION_BASE_URL');
   if (!key) throw new Error('Transcription API key not configured. Go to Settings tab.');
   // maxRetries is explicit: with a buffered (replayable) body the SDK can safely
   // retry transient socket/timeout failures instead of surfacing "Connection error."
-  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS, maxRetries: 2 });
+  // Live chunks pass 0 because the browser owns retries (one retry owner).
+  return new OpenAI({ apiKey: key, baseURL: baseURL || undefined, timeout: AI_TIMEOUT_MS, maxRetries });
 }
 
 function getCleanupClient() {
@@ -432,17 +440,34 @@ function whisperConfigured() {
 // Transcribe a file with the Whisper-compatible engine. Retries safely by
 // buffering the audio into a Buffer (a file stream cannot be replayed, which is
 // what produced spurious "Connection error." messages when the SDK retried).
-async function transcribeWithWhisper(audioPath) {
-  const client = getTranscriptionClient();
+function extensionForMime(mimeType) {
+  const m = (mimeType || '').toLowerCase();
+  if (m.includes('mp4') || m.includes('aac') || m.includes('x-m4a')) return 'm4a';
+  if (m.includes('ogg')) return 'ogg';
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('webm')) return 'webm';
+  return 'bin';
+}
+
+async function transcribeWithWhisper(audioPath, mimeType, originalName, opts = {}) {
+  const client = getTranscriptionClient(opts.maxRetries === undefined ? 2 : opts.maxRetries);
   const model = getEffectiveSetting('TRANSCRIPTION_MODEL') || 'whisper-1';
   const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
   const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
 
   const audioBuffer = fs.readFileSync(audioPath);
+  // Pass the real MIME/filename. Labeling WebM/MP4 bytes as audio/wav makes some
+  // providers misdecode the file; never relabel to satisfy an API.
+  const type = mimeType || 'application/octet-stream';
+  const ext = extensionForMime(type);
+  const name = originalName && path.extname(originalName)
+    ? path.basename(originalName)
+    : `audio.${ext}`;
   const params = {
     // Buffer the audio (do NOT use a read stream) so the SDK can safely retry —
     // a consumed stream cannot be replayed, which caused spurious "Connection error."
-    file: await toFile(audioBuffer, path.basename(audioPath) || 'audio.wav', { type: 'audio/wav' }),
+    file: await toFile(audioBuffer, name, { type }),
     model
   };
   if (language) params.language = language;
@@ -507,7 +532,7 @@ async function transcribeWithGemini(audioPath, mimeType, format) {
 // A provider hiccup (bad format, empty response, connection error) must not lose
 // the recording — so if Gemini fails and Whisper is configured, we retry Whisper
 // before giving up. Returns the raw text (may be empty if the audio is silence).
-async function transcribeAudio(audioPath, mimeType) {
+async function transcribeAudio(audioPath, mimeType, originalName, opts = {}) {
   const engine = getEffectiveSetting('TRANSCRIPTION_ENGINE') || 'whisper';
 
   if (engine === 'gemini') {
@@ -517,7 +542,7 @@ async function transcribeAudio(audioPath, mimeType) {
       // available; otherwise fail with a clear, actionable message.
       if (whisperConfigured()) {
         console.warn(`Gemini cannot accept ${mimeType || 'unknown'} audio — using Whisper instead.`);
-        return transcribeWithWhisper(audioPath);
+        return transcribeWithWhisper(audioPath, mimeType, originalName, opts);
       }
       throw new Error('This audio format is not supported by Gemini (only wav/mp3). Switch to the Whisper engine or configure a Whisper API key.');
     }
@@ -527,21 +552,21 @@ async function transcribeAudio(audioPath, mimeType) {
       // back when Whisper is available and Gemini came back completely empty.
       if (!text.trim() && whisperConfigured()) {
         console.warn('Gemini returned no text — retrying with Whisper.');
-        return transcribeWithWhisper(audioPath);
+        return transcribeWithWhisper(audioPath, mimeType, originalName, opts);
       }
       return text;
     } catch (err) {
       // Any Gemini failure (auth, connection, 5xx) falls back to Whisper when possible.
       if (whisperConfigured()) {
         console.warn(`Gemini failed (${err.message}) — retrying with Whisper.`);
-        return transcribeWithWhisper(audioPath);
+        return transcribeWithWhisper(audioPath, mimeType, originalName, opts);
       }
       throw err;
     }
   }
 
   // Default: Whisper-compatible engine
-  return transcribeWithWhisper(audioPath);
+  return transcribeWithWhisper(audioPath, mimeType, originalName, opts);
 }
 
 // --- Test connection endpoints ---
@@ -661,7 +686,7 @@ app.post('/upload', requireOwner, aiUploadLimiter, upload.single('audio'), uploa
     const audioPath = req.file.path;
     const mimeType = req.file.mimetype;
 
-    const text = await transcribeAudio(audioPath, mimeType);
+    const text = await transcribeAudio(audioPath, mimeType, req.file.originalname);
 
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     res.json({ rawTranscript: text });
@@ -691,7 +716,8 @@ app.post('/upload-chunk', requireOwner, aiChunkLimiter, upload.single('audio'), 
     const audioPath = req.file.path;
     const mimeType = req.file.mimetype;
 
-    const text = await transcribeAudio(audioPath, mimeType);
+    // Browser is the single retry owner for live chunks.
+    const text = await transcribeAudio(audioPath, mimeType, req.file.originalname, { maxRetries: 0 });
 
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     res.json({ rawTranscript: text });
@@ -752,6 +778,7 @@ app.post('/cleanup-stream', requireOwner, aiCleanupLimiter, async (req, res) => 
     res.setHeader('X-Accel-Buffering', 'no'); // nginx proxy buffering off
     res.flushHeaders();
 
+    const upstream = new AbortController();
     const stream = await client.chat.completions.create({
       model,
       temperature: 0,
@@ -760,10 +787,19 @@ app.post('/cleanup-stream', requireOwner, aiCleanupLimiter, async (req, res) => 
         { role: 'system', content: activePrompt },
         { role: 'user', content: `<transcript>${rawTranscript}</transcript>` }
       ]
-    });
+    }, { signal: upstream.signal });
 
     let aborted = false;
-    req.on('close', () => { aborted = true; });
+    let finished = false;
+    // `res.on('close')` fires when the socket closes. If the response already
+    // ended, this is a normal completion, not a client disconnect. On a real
+    // disconnect, abort the upstream generation instead of only breaking the loop.
+    res.on('close', () => {
+      if (!finished) {
+        aborted = true;
+        try { upstream.abort(); } catch {}
+      }
+    });
 
     for await (const chunk of stream) {
       if (aborted) break;
@@ -773,9 +809,10 @@ app.post('/cleanup-stream', requireOwner, aiCleanupLimiter, async (req, res) => 
       }
     }
 
-    if (!aborted) {
+    if (!aborted && !res.writableEnded) {
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     }
+    finished = true;
     res.end();
   } catch (error) {
     console.error('Streaming cleanup error:', error.message);

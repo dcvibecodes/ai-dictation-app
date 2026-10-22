@@ -1,9 +1,10 @@
 {
   "name": "dictation-tool",
-  "version": "6.21.0",
+  "version": "6.22.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

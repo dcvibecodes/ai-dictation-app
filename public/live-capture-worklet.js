@@ -9,8 +9,21 @@ class LiveCaptureProcessor extends AudioWorkletProcessor {
     super();
     this._buf = new Float32Array(4096);
     this._idx = 0;
+    this._stopped = false;
+    this.port.onmessage = (e) => {
+      if (!e.data || e.data !== 'flush' || this._stopped) return;
+      this._stopped = true;
+      // Emit the partial block instead of dropping the final ~85 ms (often the
+      // last word), then tell the main thread the drain is complete.
+      if (this._idx > 0) {
+        this.port.postMessage(this._buf.slice(0, this._idx));
+        this._idx = 0;
+      }
+      this.port.postMessage({ type: 'flushed' });
+    };
   }
   process(inputs) {
+    if (this._stopped) return false;
     const ch = inputs && inputs[0] && inputs[0][0];
     if (ch && ch.length) {
       let offset = 0;
