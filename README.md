@@ -4,6 +4,11 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.23.2
+
+### Mobile corrections stay on one row
+- On phone-width screens, each correction now keeps **heard-as → replace-with → On → remove** in a single row instead of pushing the checkbox and remove button onto a second line. Spacing and input padding are tightened on mobile; the desktop layout is unchanged.
+
 ## What's New in v6.23.1
 
 ### Clearer distinction between corrections and recognition
