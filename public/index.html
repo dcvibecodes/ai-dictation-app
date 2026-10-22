@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20">
+  <link rel="stylesheet" href="styles.css?v=21">
 </head>
 <body>
   <div class="app">
@@ -117,6 +117,7 @@
           <span class="transcript-meta" id="transcriptMeta">0 words</span>
           <div class="transcript-actions">
             <button class="btn btn-ghost btn-sm" id="editTranscriptBtn" style="display:none">Edit</button>
+            <button class="btn btn-ghost btn-sm" id="toggleOriginalBtn" style="display:none">Show original</button>
             <button class="btn btn-ghost btn-sm" id="toggleRawBtn" style="display:none">Show raw</button>
             <button class="btn btn-ghost btn-sm" id="sendCleanupBtn" style="display:none">Clean up</button>
           </div>
@@ -199,6 +200,20 @@
         <div id="promptsList" class="prompts-list"></div>
       </div>
 
+      <!-- Correction dictionary -->
+      <div class="settings-section">
+        <div class="tab-panel-header">
+          <h2>Corrections</h2>
+          <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add</button>
+        </div>
+        <p class="settings-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone. This is different from the vocabulary hint: the hint guides recognition, while these rules guarantee a replacement. The original text stays available via <strong>Show original</strong>.</p>
+        <div id="correctionsList" class="corrections-list"></div>
+        <div class="test-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="saveCorrectionsBtn">Save corrections</button>
+          <span class="test-result" id="correctionsResult"></span>
+        </div>
+      </div>
+
       <!-- Animation settings -->
       <div class="settings-section">
         <div class="tab-panel-header">
@@ -273,6 +288,7 @@
       <div class="shortcut-item"><kbd>Z</kbd><span>Undo clear</span></div>
       <div class="shortcut-item"><kbd>K</kbd><span>Clean up</span></div>
       <div class="shortcut-item"><kbd>R</kbd><span>Toggle raw / cleaned view</span></div>
+      <div class="shortcut-item"><kbd>O</kbd><span>Toggle original / corrected view</span></div>
       <div class="shortcut-item"><kbd>N</kbd><span>New recording (clear + start)</span></div>
       <div class="shortcut-item"><kbd>U</kbd><span>Upload audio file</span></div>
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
@@ -287,6 +303,7 @@
   </div>
 
   <script src="lib/audio-ledger.js?v=1"></script>
-  <script src="script.js?v=28"></script>
+  <script src="lib/corrections.js?v=2"></script>
+  <script src="script.js?v=31"></script>
 </body>
 </html>

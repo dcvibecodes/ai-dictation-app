@@ -531,6 +531,19 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .animation-option-name { font-size: 0.8rem; font-weight: 600; }
 .animation-option-desc { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
 
+/* ── Correction dictionary ── */
+.corrections-list { display: flex; flex-direction: column; gap: 8px; }
+.correction-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
+.correction-row .input { font-size: 0.78rem; padding: 7px 9px; min-width: 0; }
+.correction-arrow { color: var(--text-faint); font-size: 0.8rem; }
+.correction-enabled { display: flex; align-items: center; gap: 4px; font-size: 0.68rem; color: var(--text-faint); white-space: nowrap; }
+.correction-remove { min-width: 30px; padding: 4px 8px; }
+.corrections-empty { font-size: 0.72rem; color: var(--text-faint); font-style: italic; }
+@media (max-width: 600px) {
+  .correction-row { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .correction-enabled { grid-column: 1 / 3; }
+  .correction-remove { grid-column: 3; justify-self: end; }
+}
 /* ── Live transcription interval ── */
 .live-chunk-label { display: flex; flex-direction: column; gap: 4px; max-width: 220px; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
 .live-chunk-input { max-width: 120px; }

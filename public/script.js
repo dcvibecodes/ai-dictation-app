@@ -96,6 +96,7 @@ const fileInput = document.getElementById("fileInput");
 const transcriptDisplay = document.getElementById('transcriptDisplay');
 const transcriptMeta = document.getElementById('transcriptMeta');
 const toggleRawBtn = document.getElementById('toggleRawBtn');
+const toggleOriginalBtn = document.getElementById('toggleOriginalBtn');
 const sendCleanupBtn = document.getElementById('sendCleanupBtn');
 const editTranscriptBtn = document.getElementById('editTranscriptBtn');
 
@@ -106,11 +107,14 @@ const AUDIO_BLOCK_STORE = 'blocks';
 const AUDIO_SESSION_STORE = 'sessions';
 const AUDIO_KEY = 'latest';
 const LedgerLib = window.AudioLedgerLib;
+const CorrectionsLib = window.CorrectionsLib;
 
 // Transcript state
 let currentRaw = '';
 let currentCleaned = '';
+let currentOriginalRaw = ''; // provider text before exact corrections
 let showingRaw = false; // false = showing cleaned (or raw if no cleaned)
+let showingOriginal = false; // true = showing the pre-correction provider text
 let isEditingTranscript = false; // true while transcript contentEditable is active
 
 // ── Append Mode ──
@@ -175,6 +179,45 @@ function isAppendMode() { return appendToggle ? appendToggle.checked : localStor
 // first segment, so just the new text.
 function appendSegment(base, newText) {
   return base ? base + '\n\n' + newText : newText;
+}
+
+// ── Exact corrections (Work profile) ──
+// Loaded once at startup and cached in localStorage, so a transcript can be
+// corrected even if the small glossary request is slow.
+let glossary = loadCachedGlossary();
+
+function loadCachedGlossary() {
+  if (!CorrectionsLib) return { profiles: { work: { replacements: [] } } };
+  try {
+    const raw = localStorage.getItem('dictationGlossary');
+    return CorrectionsLib.normalizeGlossary(raw ? JSON.parse(raw) : null);
+  } catch {
+    return CorrectionsLib.normalizeGlossary(null);
+  }
+}
+
+async function loadGlossaryFromServer() {
+  if (!CorrectionsLib) return;
+  try {
+    const res = await fetch('/api/glossary');
+    if (!res.ok) return;
+    glossary = CorrectionsLib.normalizeGlossary(await res.json());
+    try { localStorage.setItem('dictationGlossary', JSON.stringify(glossary)); } catch {}
+    renderCorrectionsUI();
+  } catch (e) {
+    console.warn('Glossary load failed — using the cached Work profile:', e.message);
+  }
+}
+
+// Never let a malformed/cached glossary break transcription or cleanup.
+function applyCorrections(text) {
+  if (!CorrectionsLib || typeof text !== 'string' || !text) return text;
+  try { return CorrectionsLib.applyCorrections(text, glossary); } catch { return text; }
+}
+
+function setOriginalRaw(value) {
+  currentOriginalRaw = value || '';
+  showingOriginal = false;
 }
 
 // ── Status helper ──
@@ -913,9 +956,11 @@ async function sendRawForCleanup() {
       cleaned = data.cleanedTranscript || '';
     }
 
+    cleaned = applyCorrections(cleaned);
     currentCleaned = cleaned;
 
     // Manual cleanup: the user asked to clean, so switch to showing the cleaned view.
+    showingOriginal = false;
     showingRaw = false;
 
     // Manual cleanup re-processes the existing text — no appending.
@@ -942,6 +987,7 @@ async function sendRawForCleanup() {
 
 // ── Transcript Display ──
 function getDisplayText() {
+  if (showingOriginal) return currentOriginalRaw || currentRaw;
   if (showingRaw) return currentRaw;
   if (currentCleaned) return currentCleaned;
   return currentRaw;
@@ -953,6 +999,8 @@ function updateTranscriptDisplay(animate = false) {
   transcriptDisplay.contentEditable = 'false';
   transcriptDisplay.classList.remove('editing', 'cleaning', 'streaming');
   editTranscriptBtn.textContent = 'Edit';
+  const hasOriginal = !!currentOriginalRaw && currentOriginalRaw !== currentRaw;
+  if (showingOriginal && !hasOriginal) showingOriginal = false;
   const text = getDisplayText();
   if (text.trim()) {
     transcriptDisplay.textContent = text;
@@ -972,9 +1020,17 @@ function updateTranscriptDisplay(animate = false) {
     clearStats();
   }
 
+  // Original (pre-correction) view is a third perspective on the same take.
+  if (toggleOriginalBtn) {
+    toggleOriginalBtn.style.display = hasOriginal ? '' : 'none';
+    toggleOriginalBtn.textContent = showingOriginal ? 'Show corrected' : 'Show original';
+  }
+
   // Show/hide toggle raw button — show whenever both versions exist (raw & cleaned),
   // including in append mode so you can switch views of the document.
-  if (currentRaw && currentCleaned) {
+  if (showingOriginal) {
+    toggleRawBtn.style.display = 'none';
+  } else if (currentRaw && currentCleaned) {
     toggleRawBtn.style.display = '';
     toggleRawBtn.textContent = showingRaw ? 'Show cleaned' : 'Show raw';
   } else {
@@ -986,9 +1042,21 @@ function updateTranscriptDisplay(animate = false) {
 }
 
 toggleRawBtn.addEventListener('click', () => {
+  showingOriginal = false;
   showingRaw = !showingRaw;
   updateTranscriptDisplay();
 });
+
+function toggleOriginalView() {
+  const hasOriginal = !!currentOriginalRaw && currentOriginalRaw !== currentRaw;
+  if (!hasOriginal) return;
+  showingOriginal = !showingOriginal;
+  updateTranscriptDisplay();
+}
+
+if (toggleOriginalBtn) {
+  toggleOriginalBtn.addEventListener('click', toggleOriginalView);
+}
 
 // ── Editable transcript ──
 function setTranscriptEditing(on) {
@@ -1012,7 +1080,9 @@ transcriptDisplay.addEventListener('input', () => {
   if (!isEditingTranscript) return;
   const text = transcriptDisplay.innerText;
   metaWordCount = countWords(text); setTranscriptMeta();
-  if (showingRaw) {
+  if (showingOriginal) {
+    currentOriginalRaw = text;
+  } else if (showingRaw) {
     currentRaw = text;
   } else if (currentCleaned) {
     currentCleaned = text;
@@ -1151,7 +1221,7 @@ function drawIdleLine() {
 function countWords(t) { return t.trim() === '' ? 0 : t.trim().split(/\s+/).length; }
 
 // ── Undo state ──
-let undoState = null; // { raw, cleaned }
+let undoState = null; // { raw, cleaned, originalRaw }
 
 // ── Clear ──
 // Clear always wipes the on-screen text (which is the whole document). One click.
@@ -1176,10 +1246,11 @@ async function clearDocument() {
   }
   // Save state for undo before clearing
   if (getDisplayText().trim()) {
-    undoState = { raw: currentRaw, cleaned: currentCleaned };
+    undoState = { raw: currentRaw, cleaned: currentCleaned, originalRaw: currentOriginalRaw };
   }
   currentRaw = '';
   currentCleaned = '';
+  setOriginalRaw('');
   showingRaw = false;
   updateTranscriptDisplay();
   await clearAudioBackup();
@@ -1231,6 +1302,7 @@ function undoClear() {
   }
   currentRaw = undoState.raw;
   currentCleaned = undoState.cleaned;
+  setOriginalRaw(undoState.originalRaw || '');
   showingRaw = false;
   undoState = null;
   updateTranscriptDisplay();
@@ -1366,7 +1438,7 @@ async function deletePrompt(id) {
 
 // ── History ──
 function saveHistory() { try { localStorage.setItem('dictationHistory', JSON.stringify(history.slice(0, 20))); } catch (e) { console.warn('history save failed (storage full or unavailable):', e); } }
-function addToHistory(raw, cleaned) { history.unshift({ raw, cleaned, timestamp: new Date().toLocaleString() }); saveHistory(); renderHistory(); }
+function addToHistory(raw, cleaned, originalRaw = '') { history.unshift({ raw, cleaned, originalRaw, timestamp: new Date().toLocaleString() }); saveHistory(); renderHistory(); }
 
 function renderHistory() {
   document.getElementById('historyList').innerHTML = history.length === 0
@@ -1382,6 +1454,7 @@ function restoreHistory(i) {
   document.body.classList.add('record-active');
   currentRaw = history[i].raw;
   currentCleaned = history[i].cleaned;
+  setOriginalRaw(history[i].originalRaw || '');
   showingRaw = false;
   updateTranscriptDisplay(true);
 }
@@ -1405,6 +1478,7 @@ async function loadSettingsUI() {
   // to respond (which could take a couple of seconds).
   settingsLocked = true;
   applySettingsLock();
+  renderCorrectionsUI();
   try {
     const res = await fetch('/api/settings');
     if (res.status === 401) { handleUnauthorized(); return; }
@@ -1425,7 +1499,167 @@ async function loadSettingsUI() {
     document.getElementById('setCleanupUrl').value = s.cleanupUrl;
     document.getElementById('setCleanupModel').value = s.cleanupModel;
     updateEngineFields();
+    renderCorrectionsUI();
   } catch (e) { console.error('loadSettingsUI error:', e); }
+}
+
+// ── Corrections settings UI ──
+let correctionsDirty = false; // protect unsaved edits from settings refreshes
+
+function makeCorrectionRow(rule = {}) {
+  const row = document.createElement('div');
+  row.className = 'correction-row';
+
+  const aliases = document.createElement('input');
+  aliases.className = 'input';
+  aliases.type = 'text';
+  aliases.dataset.field = 'aliases';
+  aliases.placeholder = 'fun control';
+  aliases.value = (rule.aliases || []).join(', ');
+  aliases.setAttribute('aria-label', 'Heard as');
+
+  const arrow = document.createElement('span');
+  arrow.className = 'correction-arrow';
+  arrow.textContent = '→';
+
+  const canonical = document.createElement('input');
+  canonical.className = 'input';
+  canonical.type = 'text';
+  canonical.dataset.field = 'canonical';
+  canonical.placeholder = 'fund control';
+  canonical.value = rule.canonical || '';
+  canonical.setAttribute('aria-label', 'Replace with');
+
+  const enabledLabel = document.createElement('label');
+  enabledLabel.className = 'correction-enabled';
+  const enabled = document.createElement('input');
+  enabled.type = 'checkbox';
+  enabled.dataset.field = 'enabled';
+  enabled.checked = rule.enabled !== false;
+  enabledLabel.appendChild(enabled);
+  enabledLabel.appendChild(document.createTextNode(' On'));
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-ghost btn-sm btn-danger correction-remove';
+  remove.textContent = '×';
+  remove.setAttribute('aria-label', 'Remove correction');
+  remove.onclick = () => {
+    correctionsDirty = true;
+    row.remove();
+    const list = document.getElementById('correctionsList');
+    if (!list || list.querySelector('.correction-row')) return;
+    // Show the empty state directly. Re-rendering from `glossary` here would
+    // bring the saved rules back and make "delete every rule" impossible.
+    list.innerHTML = '';
+    const empty = document.createElement('p');
+    empty.className = 'corrections-empty';
+    empty.textContent = 'No corrections yet. Add one below.';
+    list.appendChild(empty);
+  };
+
+  row.append(aliases, arrow, canonical, enabledLabel, remove);
+  return row;
+}
+
+function renderCorrectionsUI() {
+  const list = document.getElementById('correctionsList');
+  if (!list) return;
+  // Settings reloads happen in the background; don't overwrite rows the user
+  // is editing unless the save succeeded (or this is the first render).
+  if (correctionsDirty) return;
+  list.innerHTML = '';
+  const rules = (glossary && glossary.profiles && glossary.profiles.work && glossary.profiles.work.replacements) || [];
+  if (!rules.length) {
+    const empty = document.createElement('p');
+    empty.className = 'corrections-empty';
+    empty.textContent = 'No corrections yet. Add one below.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const rule of rules) list.appendChild(makeCorrectionRow(rule));
+}
+
+function addCorrectionRow() {
+  const list = document.getElementById('correctionsList');
+  if (!list) return;
+  correctionsDirty = true;
+  const empty = list.querySelector('.corrections-empty');
+  if (empty) empty.remove();
+  const row = makeCorrectionRow();
+  list.appendChild(row);
+  const input = row.querySelector('[data-field="aliases"]');
+  if (input) input.focus();
+}
+
+async function saveCorrections() {
+  const btn = document.getElementById('saveCorrectionsBtn');
+  const result = document.getElementById('correctionsResult');
+  if (!btn || !result) return;
+  const rows = [...document.querySelectorAll('#correctionsList .correction-row')];
+  const replacements = [];
+  let rowNumber = 0;
+
+  for (const row of rows) {
+    const aliasesRaw = row.querySelector('[data-field="aliases"]').value.trim();
+    const canonical = row.querySelector('[data-field="canonical"]').value.trim();
+    const enabled = row.querySelector('[data-field="enabled"]').checked;
+    if (!aliasesRaw && !canonical) continue;
+    rowNumber++;
+    if (!aliasesRaw) {
+      result.textContent = `Row ${rowNumber}: enter what you hear.`;
+      result.className = 'test-result test-fail';
+      return;
+    }
+    if (!canonical) {
+      result.textContent = `Row ${rowNumber}: enter what to replace it with.`;
+      result.className = 'test-result test-fail';
+      return;
+    }
+    const aliases = aliasesRaw.split(',').map(s => s.trim()).filter(Boolean);
+    replacements.push({ canonical, aliases, caseInsensitive: true, wholePhrase: true, enabled });
+  }
+
+  const profile = (glossary && glossary.profiles && glossary.profiles.work) || {};
+  const body = {
+    schemaVersion: 1,
+    activeProfile: 'work',
+    profiles: {
+      work: {
+        context: profile.context || '',
+        terms: [],
+        replacements
+      }
+    }
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  result.textContent = '';
+  result.className = 'test-result';
+  try {
+    const res = await fetch('/api/glossary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error(data.error || 'Save failed');
+    glossary = CorrectionsLib.normalizeGlossary(data.glossary);
+    try { localStorage.setItem('dictationGlossary', JSON.stringify(glossary)); } catch {}
+    correctionsDirty = false;
+    renderCorrectionsUI();
+    result.textContent = 'Saved ✓';
+    result.className = 'test-result test-ok';
+    setTimeout(() => { result.textContent = ''; result.className = 'test-result'; }, 2500);
+  } catch (e) {
+    result.textContent = e.message;
+    result.className = 'test-result test-fail';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save corrections';
+  }
 }
 
 // Show/hide the engine-specific fields based on the selected transcription engine.
@@ -1442,6 +1676,18 @@ function updateEngineFields() {
 const engineSelect = document.getElementById('setTranscriptionEngine');
 if (engineSelect) {
   engineSelect.addEventListener('change', updateEngineFields);
+}
+
+// Correction rows are independent of the API configuration lock: saved with
+// their own button, so API keys are not needed to change a spelling rule.
+const addCorrectionBtn = document.getElementById('addCorrectionBtn');
+if (addCorrectionBtn) addCorrectionBtn.addEventListener('click', addCorrectionRow);
+const saveCorrectionsBtn = document.getElementById('saveCorrectionsBtn');
+if (saveCorrectionsBtn) saveCorrectionsBtn.addEventListener('click', saveCorrections);
+const correctionsList = document.getElementById('correctionsList');
+if (correctionsList) {
+  correctionsList.addEventListener('input', () => { correctionsDirty = true; });
+  correctionsList.addEventListener('change', () => { correctionsDirty = true; });
 }
 
 function applySettingsLock() {
@@ -1616,11 +1862,20 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
     const uData = await uRes.json();
     if (uData.error) throw new Error(uData.error);
 
-    const raw = uData.rawTranscript || '';
-    if (silent) { if (procTimer) clearInterval(procTimer); return raw; }
+    const providerRaw = uData.rawTranscript || '';
+    // Silent recovery hands the provider text back untouched so the caller can
+    // keep the original and apply the current rules once.
+    if (silent) { if (procTimer) clearInterval(procTimer); return providerRaw; }
+    const raw = applyCorrections(providerRaw);
     // Keep the existing on-screen document so append mode can add below it.
     const baseRaw = currentRaw;
     const baseCleaned = currentCleaned;
+    const baseOriginalRaw = currentOriginalRaw;
+    // In append mode the original view must cover the WHOLE document. If the
+    // existing document had no corrections, its raw text is its original text.
+    setOriginalRaw(isAppendMode()
+      ? appendSegment(baseOriginalRaw || baseRaw, providerRaw)
+      : (providerRaw !== raw ? providerRaw : ''));
     currentRaw = raw;
 
     let copiedLabel = '';
@@ -1641,6 +1896,10 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         streamSuccess = false;
       }
 
+      // Cleanup can reintroduce the original spelling, so apply the exact rules
+      // to its output as well.
+      cleaned = applyCorrections(cleaned);
+
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
         const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
@@ -1655,7 +1914,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
             copyFailed = !(await copyToClipboard(raw));
           }
           updateTranscriptDisplay(true);
-          addToHistory(raw, raw);
+          addToHistory(raw, raw, currentOriginalRaw);
           await clearAudioBackup();
           await clearInMemoryAudioBackup();
           hideRecoveryRow();
@@ -1667,7 +1926,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         }
         const cData = await cRes.json();
         if (cData.error) throw new Error(cData.error);
-        cleaned = cData.cleanedTranscript || '';
+        cleaned = applyCorrections(cData.cleanedTranscript || '');
       }
 
       showingRaw = false;
@@ -1677,14 +1936,14 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         currentCleaned = appendSegment(baseCleaned, cleaned);
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
-        addToHistory(raw, cleaned);
+        addToHistory(raw, cleaned, currentOriginalRaw);
         copyFailed = !(await copyToClipboard(currentCleaned));
         copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied');
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
         if (cleaned) {
-          addToHistory(raw, cleaned);
+          addToHistory(raw, cleaned, currentOriginalRaw);
           copyFailed = !(await copyToClipboard(cleaned));
           copiedLabel = copyFailed ? 'Cleaned — copy blocked, tap the transcript' : 'Cleaned copied';
         }
@@ -1697,12 +1956,12 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         // Append the new raw segment to the document.
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw);
+        addToHistory(raw, raw, currentOriginalRaw);
         copyFailed = !(await copyToClipboard(currentRaw));
         copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : (baseRaw ? 'Appended & copied' : 'Raw copied');
       } else {
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw);
+        addToHistory(raw, raw, currentOriginalRaw);
         copyFailed = !(await copyToClipboard(raw));
         copiedLabel = copyFailed ? 'Raw — copy blocked, tap the transcript' : 'Raw copied';
       }
@@ -1969,6 +2228,7 @@ async function startRecording() {
     if (liveDocumentCleared) {
       currentRaw = failedSession ? failedSession.baseRaw : currentRaw;
       currentCleaned = failedSession ? failedSession.baseCleaned : currentCleaned;
+      if (failedSession) setOriginalRaw(failedSession.baseOriginalRaw);
       showingRaw = false;
       liveDocumentCleared = false;
       updateTranscriptDisplay();
@@ -2107,7 +2367,7 @@ function liveFlushPending(session) {
     if (item && item.text) {
       session.raw += (session.raw ? ' ' : '') + item.text;
       if (isLiveSessionActive(session)) {
-        currentRaw = session.raw;
+        currentRaw = applyCorrections(session.raw);
         try { updateTranscriptDisplay(); } catch (e) { console.error('liveFlushPending render error:', e); }
       }
     }
@@ -2295,7 +2555,8 @@ function startLiveCapture(stream) {
       queue: [],
       drainResolve: null,
       baseRaw: currentRaw,
-      baseCleaned: currentCleaned
+      baseCleaned: currentCleaned,
+      baseOriginalRaw: currentOriginalRaw
     };
     liveSession = session;
     liveStream = stream;
@@ -2311,6 +2572,7 @@ function startLiveCapture(stream) {
     });
     currentRaw = '';
     currentCleaned = '';
+    setOriginalRaw('');
     showingRaw = false;
     liveDocumentCleared = true;
     lastBackupFlush = 0;
@@ -2574,7 +2836,8 @@ async function cancelLiveRecording() {
 // fails, show the partial text, keep the audio, and never auto-copy it.
 async function finishLiveRecording(session) {
   if (session.cancelled) return false;
-  let raw = session.raw;
+  let providerRaw = session.raw;
+  let raw = applyCorrections(providerRaw);
   let complete = session.errors === 0 && !session.timedOut;
 
   if (!complete && liveLedger) {
@@ -2588,7 +2851,8 @@ async function finishLiveRecording(session) {
         signal: recoveryAbort.signal
       });
       if (recovered && recovered.trim()) {
-        raw = recovered;
+        providerRaw = recovered;
+        raw = applyCorrections(providerRaw);
         complete = true;
         console.log('Recovered full live session after chunk failures.');
       }
@@ -2602,6 +2866,14 @@ async function finishLiveRecording(session) {
   if (session.cancelled) return false;
   const baseRaw = session.baseRaw;
   const baseCleaned = session.baseCleaned;
+  const baseOriginalRaw = session.baseOriginalRaw;
+  // Same rule as standard mode: the original view covers the whole document,
+  // falling back to the existing raw text when it had no corrections.
+  if (raw.trim()) {
+    setOriginalRaw(isAppendMode()
+      ? appendSegment(baseOriginalRaw || baseRaw, providerRaw)
+      : (providerRaw !== raw ? providerRaw : ''));
+  }
 
   if (!raw.trim()) {
     clearProcessingUI();
@@ -2650,6 +2922,10 @@ async function finishLiveRecording(session) {
     return false;
   }
 
+  // The preview may only contain the chunks that arrived. The final/recovered
+  // text is authoritative, so reset the raw state before cleanup/display.
+  if (!isAppendMode()) currentRaw = raw;
+
   toggleBtn.classList.add('processing');
   setStatusProcessing('Cleaning up…');
   const abortController = new AbortController();
@@ -2668,6 +2944,7 @@ async function finishLiveRecording(session) {
         cleaned = '';
         streamSuccess = false;
       }
+      cleaned = applyCorrections(cleaned);
       // Fallback: non-streaming cleanup
       if (!streamSuccess || !cleaned) {
         const cRes = await fetch('/cleanup', {
@@ -2688,7 +2965,7 @@ async function finishLiveRecording(session) {
             copyFailed = !(await copyToClipboard(raw));
           }
           updateTranscriptDisplay(true);
-          addToHistory(raw, raw);
+          addToHistory(raw, raw, currentOriginalRaw);
           if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
           await clearAudioBackupIfIdle();
           await clearInMemoryAudioBackup();
@@ -2702,21 +2979,21 @@ async function finishLiveRecording(session) {
         }
         const cData = await cRes.json();
         if (cData.error) throw new Error(cData.error);
-        cleaned = cData.cleanedTranscript || '';
+        cleaned = applyCorrections(cData.cleanedTranscript || '');
       }
       showingRaw = false;
       if (isAppendMode() && cleaned) {
         currentCleaned = appendSegment(baseCleaned, cleaned);
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
-        addToHistory(raw, cleaned);
+        addToHistory(raw, cleaned, currentOriginalRaw);
         const copied = await copyToClipboard(currentCleaned);
         setStatus(copied ? ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied') : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
       } else {
         currentCleaned = cleaned;
         updateTranscriptDisplay(true);
         if (cleaned) {
-          addToHistory(raw, cleaned);
+          addToHistory(raw, cleaned, currentOriginalRaw);
           const copied = await copyToClipboard(cleaned);
           setStatus(copied ? 'Cleaned copied' : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
         }
@@ -2727,12 +3004,12 @@ async function finishLiveRecording(session) {
       if (isAppendMode() && raw.trim()) {
         currentRaw = appendSegment(baseRaw, raw);
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw);
+        addToHistory(raw, raw, currentOriginalRaw);
         const copied = await copyToClipboard(currentRaw);
         setStatus(copied ? (baseRaw ? 'Appended & copied' : 'Raw copied') : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
       } else {
         updateTranscriptDisplay(true);
-        addToHistory(raw, raw);
+        addToHistory(raw, raw, currentOriginalRaw);
         const copied = await copyToClipboard(raw);
         setStatus(copied ? 'Raw copied' : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
       }
@@ -3017,7 +3294,14 @@ document.addEventListener('keydown', e => {
   // Toggle raw/cleaned view
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (currentRaw && currentCleaned) { showingRaw = !showingRaw; updateTranscriptDisplay(); }
+    if (currentRaw && currentCleaned) { showingOriginal = false; showingRaw = !showingRaw; updateTranscriptDisplay(); }
+  }
+  // Toggle original/corrected view when a correction changed the text
+  if (e.key === 'o' && !e.ctrlKey && !e.metaKey) {
+    if (currentOriginalRaw && currentOriginalRaw !== currentRaw) {
+      e.preventDefault();
+      toggleOriginalView();
+    }
   }
   // Theme toggle (light/dark) — 'M' for Mode/Moon
   if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
@@ -3141,6 +3425,7 @@ window.addEventListener('error', (e) => {
 document.body.classList.add('record-active');
 initOnboarding();
 loadPrompts();
+loadGlossaryFromServer();
 renderHistory();
 checkRecoveryOnLoad();
 updateOnlineStatus();
@@ -3160,7 +3445,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.22.0'; // keep in sync with package.json at release time
+const APP_VERSION = '6.23.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

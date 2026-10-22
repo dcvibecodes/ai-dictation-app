@@ -8,6 +8,7 @@ const bcrypt  = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const OpenAI  = require('openai');
 const { toFile } = require('openai');
+const { normalizeGlossary } = require('./public/lib/corrections.js');
 const rateLimit = require('express-rate-limit');
 
 const app    = express();
@@ -303,6 +304,31 @@ app.get('/', (req, res) => {
 // the microphone indefinitely.
 app.get('/api/status', requireOwner, (req, res) => {
   res.json({ ok: true });
+});
+
+// Correction rules are separate from the recognition hint: the hint is advice
+// to the model, while these are exact replacements applied after transcription.
+function loadGlossary() {
+  const stored = loadSettings().GLOSSARY;
+  try { return normalizeGlossary(stored); }
+  catch (e) {
+    console.warn('Saved glossary is invalid — using the default Work profile:', e.message);
+    return normalizeGlossary(null);
+  }
+}
+
+app.get('/api/glossary', requireOwner, (req, res) => {
+  res.json(loadGlossary());
+});
+
+app.post('/api/glossary', requireOwner, (req, res) => {
+  let glossary;
+  try { glossary = normalizeGlossary(req.body); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  const current = loadSettings();
+  current.GLOSSARY = glossary;
+  saveSettings(current);
+  res.json({ ok: true, glossary });
 });
 
 app.get('/api/settings', requireOwner, (req, res) => {

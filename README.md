@@ -4,6 +4,16 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.23.0
+
+### Work glossary: exact corrections that stick
+- **Correction dictionary** — Settings → Corrections replaces known mishearings **after** transcription, so the result is guaranteed rather than left to the model. Ships with **fun control → fund control** (case-insensitive, whole phrase). **fun controller** is left alone.
+- **Rules survive cleanup** — the same exact rules are applied again to the cleaned text, because a cleanup model can reintroduce the original spelling. Rules are word-boundary aware across Unicode text, longest phrase first, and applied once per pass so replacements cannot cascade.
+- **Original is never lost** — when a rule changed the text, a **Show original / Show corrected** button appears next to the raw/cleaned toggle. History and Undo remember the provider's original wording too.
+- **Stored server-side** — the glossary lives in `data/settings.json` under `GLOSSARY` and is managed with `GET/POST /api/glossary`; the browser keeps a localStorage cache so a reload does not flash the defaults. Validation rejects duplicate aliases, rules whose canonical form would cascade, and over-limit rule sets (200 rules / 20 aliases per rule / 100 characters per phrase).
+- **Vocabulary hint stays separate** — the hint biases recognition but cannot guarantee a spelling. Correction rules are deterministic and apply to both raw and cleaned output.
+- **Tests** — `npm test` now covers normalization, boundary matching, longest-first replacement, idempotence, cascades, and Unicode aliases.
+
 ## What's New in v6.22.0
 
 ### Reliability pass: every sample accounted for, partial takes never lose audio
@@ -168,12 +178,14 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Tap to copy** — click/tap the transcript to copy the entire text to clipboard (a "Copied ✓" confirmation appears; no fading animation)
 - **First-run hint banner** — a one-time banner on first load points out how to record and how to tap-to-copy
 - **Show raw / Show cleaned toggle** — switch between raw and cleaned versions (shortcut: R)
+- **Show original / Show corrected** — when a correction rule changed the provider's text, compare it with the corrected result without losing either version (shortcut: O)
 - **Manual cleanup** — press K or click Clean up to (re-)process the transcript with the selected prompt at any time
 - **Manual theme toggle** — sun/moon button in the header; defaults to system preference, manual override saved
 - **Pause/resume recording** — pause mid-dictation (button or P); timer and waveform freeze; resume where you left off
 - **Editable transcript** — click Edit (or press E) to fix words directly in the transcript before copying; plain-text paste, live word count, syncs with append mode; on mobile the font bumps to 16px while editing to prevent iOS Safari auto-zoom
 - **Language setting** — pin the transcription language (e.g. `en`) instead of auto-detect for better accuracy and speed
 - **Vocabulary hint** — bias the transcription model toward your names, jargon, and uncommon words
+- **Correction dictionary** — Settings → Corrections enforces exact, case-insensitive, whole-phrase replacements (for example **fun control** → **fund control**) after transcription and again after cleanup; the provider's original wording stays available via **Show original**. Stored server-side, with a localStorage cache.
 - **Correct audio format handling** — recordings are labeled with their actual format (WebM on Chrome, M4A on Safari/iOS) so transcription APIs accept them
 - **Pulsing recording indicator** — subtle red ring pulse animation on the mic button while recording
 - **Haptic feedback** — short vibration on recording start/stop (Android)
@@ -182,9 +194,9 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Prompt dropdown** — select cleanup prompt from a dropdown; always visible on the Dictate tab
 - **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5); re-clean with a different prompt anytime
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
-- **Settings tab** — API keys, models, base URLs, and prompt management in card-style sections
+- **Settings tab** — API keys, models, base URLs, prompt management, and the correction dictionary in card-style sections
 - **Locked settings** — API config is read-only by default, click Edit to modify
-- **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, N, U, A, T, L, 1–5, M, D, H, S
+- **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, O, N, U, A, T, L, 1–5, M, D, H, S
 - **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
@@ -235,6 +247,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `Z` | Undo clear (restore last cleared transcript) |
 | `K` | Clean up (re-process transcript with selected prompt) |
 | `R` | Toggle raw / cleaned view |
+| `O` | Toggle original / corrected view (when a correction changed the text) |
 | `N` | New recording (clear + start) |
 | `U` | Upload audio file |
 | `A` | Toggle append mode |
@@ -260,7 +273,10 @@ dictation-app/
 │   ├── setup.html         # First-time setup
 │   ├── auth.css           # Auth page styles
 │   ├── script.js          # Frontend logic
-│   │   ├── live-capture-worklet.js  # Live-mode mic capture (AudioWorklet)
+│   ├── live-capture-worklet.js      # Live-mode mic capture (AudioWorklet)
+│   ├── lib/
+│   │   ├── audio-ledger.js          # Live-mode audio blocks
+│   │   └── corrections.js           # Exact glossary/correction rules
 │   ├── styles.css         # Main styles
 │   ├── sw.js              # Service worker (PWA)
 │   ├── manifest.json      # PWA manifest
@@ -359,6 +375,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - **Live mode is on by default** — turn it off with the Live toggle or `L`. In Live mode the transcript fills in as you speak (chunks default to 10 s; configurable 3–60 s in Settings → Live transcription) and the full session is backed up locally as a WAV.
 - **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Discard**.
 - **Clear during recording cancels the take** (it does not get transcribed back into the document).
+- **Corrections are exact, not fuzzy** — an alias matches the whole phrase, ignoring case, and is replaced with the canonical spelling. Add each mishearing as a separate alias; the vocabulary hint remains the tool for general recognition bias.
 
 ### Configurable rate limits & transcript cap
 
