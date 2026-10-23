@@ -1,3 +1,19 @@
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/fraunces-latin-var.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/fonts/outfit-latin-var.woff2') format('woff2');
+}
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 /* overflow-x: clip hides horizontal overflow WITHOUT creating a scroll container —
    unlike hidden, which computes overflow-y to auto and breaks page wheel-scrolling

@@ -1,6 +1,6 @@
 // Cache version is bumped on every release. It only exists to purge old shells;
 // app code is always fetched network-first so a deploy is live on the next load.
-const CACHE_NAME = 'dictation-v30';
+const CACHE_NAME = 'dictation-v31';
 const APP_SHELL = [
   '/',
   '/styles.css',
@@ -9,6 +9,8 @@ const APP_SHELL = [
   '/lib/corrections.js',
   '/live-capture-worklet.js',
   '/manifest.json',
+  '/fonts/fraunces-latin-var.woff2',
+  '/fonts/outfit-latin-var.woff2',
   '/favicon.svg',
   '/icon-192.png',
   '/icon-512.png'
@@ -49,18 +51,6 @@ self.addEventListener('fetch', e => {
 
   const neverCache = NEVER_CACHE.some(p => url.pathname.startsWith(p));
   if (neverCache) return; // default browser fetch — no SW involvement
-
-  // Cache-first for Google Fonts (stable, long-lived)
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
-    e.respondWith(
-      caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
-        return res;
-      }))
-    );
-    return;
-  }
 
   // Network-first for ALL app code and pages, so a deploy is picked up immediately.
   // The cache is only a fallback for offline use.

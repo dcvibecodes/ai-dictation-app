@@ -4,6 +4,15 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.23.3
+
+### Self-Hosted Fonts — Same Typography on Web, Mobile, and Offline
+
+- **Outfit + Fraunces are now served locally** from `public/fonts/` with `@font-face` in `styles.css` and `auth.css`; Google Fonts and its preconnects are gone. The app no longer depends on an external font CDN and renders the same display typography on desktop, mobile, and offline/PWA.
+- **Login and setup match the app** — both auth pages use the same self-hosted Outfit/Fraunces pair.
+- **Offline-safe** — both WOFF2 files are precached in `dictation-v31`; only ~100 KB total including license files.
+- **No server or database change.**
+
 ## What's New in v6.23.2
 
 ### Mobile corrections stay on one row
