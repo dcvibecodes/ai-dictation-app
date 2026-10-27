@@ -26,6 +26,9 @@ let recordingInterrupted = '';    // set if the mic dies mid-recording (track en
 let silentCancel = false;         // suppress the "Cancelled" status when Clear stops a recording
 let lastBackupFlush = 0;          // throttle for rolling audio-backup writes
 let backupSession = 0;            // invalidates in-flight backup writes when a recording ends
+let lastAuthOkAt = 0;             // last time the login check passed; skips repeat checks
+const AUTH_FRESH_MS = 60000;      // a recent OK means Record can skip the network round trip
+let audioPrewarmed = false;       // true once the idle pre-warm has run
 
 // --- Live transcription mode ---
 // When enabled, audio is captured in chunks and transcribed as you speak, so
@@ -2048,7 +2051,10 @@ function startStandardRecorder(stream) {
     // If no audio chunk arrives within 3s, something is wrong — never pretend.
     timer = setTimeout(() => fail(new Error('no audio was captured')), 3000);
     try {
-      recorder.start(1000); // 1s timeslice → periodic dataavailable + rolling backup
+      // Short timeslice: the first chunk (our "real audio confirmed" proof)
+      // arrives in ~250ms instead of ~1s. Later chunks cost nothing extra —
+      // backup already flushes per chunk with tiny blobs.
+      recorder.start(250);
     } catch (err) {
       fail(err);
     }
@@ -2133,17 +2139,20 @@ async function startRecording() {
     return;
   }
   isStarting = true;
-  setStatus('Starting mic…');
 
   // Fail fast on expired session BEFORE the user speaks: if auth is gone,
-  // redirect now rather than after a long recording. This is a tiny status
-  // endpoint, not the full settings payload, and it is bounded so a hung
-  // network cannot stall the mic forever.
-  try {
-    const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
-    const authCheck = await fetch('/api/status', { signal: timeout });
-    if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
-  } catch {}
+  // redirect now rather than after a long recording. This check stays serial
+  // (mic never opens before login is confirmed), but a login confirmed less
+  // than a minute ago is still valid, so back-to-back takes skip the wait.
+  if (Date.now() - lastAuthOkAt > AUTH_FRESH_MS) {
+    setStatus('Checking login…');
+    try {
+      const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
+      const authCheck = await fetch('/api/status', { signal: timeout });
+      if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
+      lastAuthOkAt = Date.now();
+    } catch {}
+  }
 
   // Freeze the capture mode for this take. Changing the Live toggle later cannot
   // switch the teardown path under a running session.
@@ -2156,6 +2165,7 @@ async function startRecording() {
   }
 
   let stream;
+  setStatus('Opening mic…');
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
@@ -3421,6 +3431,32 @@ window.addEventListener('error', (e) => {
   console.error('Uncaught error:', e.error || e.message);
 });
 
+// ── Idle audio pre-warm ──
+// Record-start speed, take one: creating the AudioContext and fetching the
+// Live worklet file both happen while you are reading the page, not while
+// "Opening mic…" is on screen. The microphone is never touched here, so the
+// browser mic indicator stays off. Runs once; every failure is silent because
+// startRecording redoes all of this anyway — pre-warming only ever saves time.
+async function prewarmAudio() {
+  if (audioPrewarmed) return;
+  audioPrewarmed = true;
+  try {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    const ctx = new Ctor();
+    if (ctx.state === 'suspended') { try { await ctx.resume(); } catch {} }
+    try {
+      if (ctx.audioWorklet) await ctx.audioWorklet.addModule('/live-capture-worklet.js');
+    } catch {}
+    try { await ctx.close(); } catch {}
+  } catch {}
+}
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(() => prewarmAudio(), { timeout: 5000 });
+} else {
+  setTimeout(() => prewarmAudio(), 1500);
+}
+
 // ── Init ──
 document.body.classList.add('record-active');
 initOnboarding();
@@ -3445,7 +3481,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.23.2'; // keep in sync with package.json at release time
+const APP_VERSION = '6.23.4'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
