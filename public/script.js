@@ -39,7 +39,6 @@ let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rat
 let liveWriteIndex = 0;           // samples written into livePcmSamples
 let liveCaptureBaseSample = 0;    // absolute mic-sample index of livePcmSamples[0]
 let liveSession = null;           // frozen state for the active live recording
-let micStartupMarks = null;       // TEMP DIAGNOSTIC: per-take mic startup timing marks
 let liveLedger = null;            // AudioLedger (independent persistence cursor)
 let recoveryLedger = null;        // ledger kept in memory when IndexedDB failed
 let liveResampler = null;         // StreamingResampler mic rate -> 16 kHz, chunk-stable
@@ -223,45 +222,6 @@ function setOriginalRaw(value) {
 
 // ── Status helper ──
 function setStatus(t, type = '') { statusEl.textContent = t; statusEl.className = 'status ' + type; }
-
-// TEMP DIAGNOSTIC (mic-startup timing build, not for main): report how long each
-// startup stage took. Times only - no audio content is ever logged.
-function micStartupStageTimes(m) {
-  const ms = (a, b) => Math.round(b - a);
-  const parts = [];
-  if (m.authStart && m.authDone) parts.push(['login check', ms(m.authStart, m.authDone)]);
-  if (m.micStart && m.micDone) parts.push(['mic open', ms(m.micStart, m.micDone)]);
-  if (m.micDone && m.ctxDone) parts.push(['audio context', ms(m.micDone, m.ctxDone)]);
-  if (m.ctxDone && m.workletDone) parts.push([m.usedFallback ? 'capture setup (fallback)' : 'worklet load', ms(m.ctxDone, m.workletDone)]);
-  return parts;
-}
-
-// Success path: full breakdown once real captured audio has confirmed the take.
-function showMicStartupTiming() {
-  const m = micStartupMarks;
-  micStartupMarks = null;
-  if (!m || !m.t0 || !m.firstAudio) return;
-  const parts = micStartupStageTimes(m);
-  const setupEnd = m.workletDone || m.ctxDone;
-  if (setupEnd) parts.push(['first audio', Math.round(m.firstAudio - setupEnd)]);
-  const total = Math.round(m.firstAudio - m.t0);
-  const summary = parts.map(p => p[0] + ' ' + p[1] + 'ms').join(' · ');
-  console.log('[mic-startup] total ' + total + 'ms - ' + summary);
-  try { console.table(Object.fromEntries(parts.concat([['total', total]]))); } catch {}
-  const text = 'Recording… (mic ready in ' + total + 'ms: ' + summary + ')';
-  setStatus(text, 'active');
-  setTimeout(() => { if (statusEl.textContent === text) setStatus('Recording…', 'active'); }, 8000);
-}
-
-// Failure path: which stage failed, elapsed time, and any completed stages.
-function logMicStartupFailure(stage) {
-  const m = micStartupMarks;
-  micStartupMarks = null;
-  if (!m || !m.t0) return;
-  const elapsed = Math.round(performance.now() - m.t0);
-  const done = micStartupStageTimes(m).map(p => p[0] + ' ' + p[1] + 'ms').join(' · ');
-  console.log('[mic-startup] FAILED during ' + stage + ' after ' + elapsed + 'ms' + (done ? ' (completed: ' + done + ')' : ''));
-}
 function setStatusProcessing(t) {
   setStatus(t, 'processing');
   cancelBtn.style.display = '';
@@ -2076,7 +2036,6 @@ function startStandardRecorder(stream) {
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) audioChunks.push(e.data);
       if (audioChunks.length) flushRecordingBackup(audioChunks, false);
-      if (e.data && e.data.size > 0 && micStartupMarks && !micStartupMarks.firstAudio) micStartupMarks.firstAudio = performance.now(); // TEMP DIAGNOSTIC
       if (e.data && e.data.size > 0) ok();
     };
     recorder.onerror = (ev) => {
@@ -2175,19 +2134,16 @@ async function startRecording() {
   }
   isStarting = true;
   setStatus('Starting mic…');
-  micStartupMarks = { t0: performance.now() }; // TEMP DIAGNOSTIC
 
   // Fail fast on expired session BEFORE the user speaks: if auth is gone,
   // redirect now rather than after a long recording. This is a tiny status
   // endpoint, not the full settings payload, and it is bounded so a hung
   // network cannot stall the mic forever.
-  micStartupMarks.authStart = performance.now(); // TEMP DIAGNOSTIC
   try {
     const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
     const authCheck = await fetch('/api/status', { signal: timeout });
-    if (authCheck.status === 401) { logMicStartupFailure('login check (401)'); isStarting = false; resetButton(); handleUnauthorized(); return; } // TEMP DIAGNOSTIC log added
+    if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
   } catch {}
-  micStartupMarks.authDone = performance.now(); // TEMP DIAGNOSTIC
 
   // Freeze the capture mode for this take. Changing the Live toggle later cannot
   // switch the teardown path under a running session.
@@ -2200,12 +2156,10 @@ async function startRecording() {
   }
 
   let stream;
-  micStartupMarks.micStart = performance.now(); // TEMP DIAGNOSTIC
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
     console.error('getUserMedia error:', err);
-    logMicStartupFailure('mic open'); // TEMP DIAGNOSTIC
     isStarting = false;
     resetButton();
     const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
@@ -2213,12 +2167,10 @@ async function startRecording() {
     setTimeout(() => setStatus('Ready'), 4000);
     return;
   }
-  micStartupMarks.micDone = performance.now(); // TEMP DIAGNOSTIC
 
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch {} }
-    micStartupMarks.ctxDone = performance.now(); // TEMP DIAGNOSTIC
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048; // wide window (~43ms) so the silence check sees real audio
     source = audioContext.createMediaStreamSource(stream);
@@ -2252,10 +2204,8 @@ async function startRecording() {
     isRecording = true;
     setStatus('Recording…', 'active');
     startSilenceWatch();
-    showMicStartupTiming(); // TEMP DIAGNOSTIC
   } catch (e) {
     console.error('Recording start error:', e);
-    logMicStartupFailure('capture setup'); // TEMP DIAGNOSTIC
     // Tear down everything so we never leave a false "recording" impression.
     // Only mark as cancelled if a recorder is actually running (its onstop will
     // then discard the partial audio); otherwise leave the flag clean for next time.
@@ -2666,7 +2616,6 @@ function startLiveCapture(stream) {
       liveWriteIndex += channel.length;
 
       // First real audio callback = capture is genuinely running.
-      if (micStartupMarks && !micStartupMarks.firstAudio) micStartupMarks.firstAudio = performance.now(); // TEMP DIAGNOSTIC
       if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
     };
     session.handleLiveBlock = handleLiveBlock;
@@ -2691,7 +2640,6 @@ function startLiveCapture(stream) {
               handleLiveBlock(e.data);
             };
             source.connect(node);
-            if (micStartupMarks && !micStartupMarks.workletDone) micStartupMarks.workletDone = performance.now(); // TEMP DIAGNOSTIC
             session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
             updateTranscriptDisplay();
           } catch (err) {
@@ -2727,7 +2675,6 @@ function startLiveCapture(stream) {
       };
       source.connect(liveScriptNode);
       liveScriptNode.connect(audioContext.destination);
-      if (micStartupMarks) { micStartupMarks.usedFallback = true; if (!micStartupMarks.workletDone) micStartupMarks.workletDone = performance.now(); } // TEMP DIAGNOSTIC
 
       session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
       updateTranscriptDisplay();
