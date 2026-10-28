@@ -4,14 +4,22 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.24.1
+
+### Pill removed — failures stay in the red status line
+
+- **The capture-state pill is gone.** It could get stuck showing "Transcribing" after a take ended (a late chunk reply re-showed it mid-stop with no code left to hide it), and it clashed with the app's aesthetic. Transcription failures are reported where they always were: the red status line (`Session expired — …`, `Chunk failed: … — audio saved locally`, `Transcription is falling behind — …`). Audio safety is unchanged — the ledger keeps every sample regardless.
+- **Background login refresh stays.** The 45-second visible-and-idle session re-check is untouched.
+- **No server or database change.**
+
 ## What's New in v6.24.0
 
-### Login stays warm in the background + a live "is it transcribing?" pill
+### Login stays warm in the background
 
 - **Record almost never waits on the login check anymore.** While the app is visible and idle, the session is re-confirmed every 45 seconds — tighter than the 60-second freshness window — so pressing Record nearly always finds a fresh OK and skips the network round trip. The mic still never opens before login is confirmed.
 - **Checks pause at the right times.** No checks while recording, starting, draining, or processing (Live chunk uploads already detect an expired session mid-take, roughly every chunk interval), and none while the tab is hidden — a backgrounded phone PWA does not keep polling. Returning to the tab triggers one immediate check. If the last OK is stale (laptop slept, a check failed), Record runs the same login check first, exactly as before.
 - **One shared request.** The Record button, the background timer, and the foreground refresh all join the same in-flight `/api/status` call, so the server is never double-hit.
-- **New pill next to the timer during Live takes.** It reads "Starting transcription…" (amber) until the first chunk comes back, "Transcribing" (green) while chunks are being transcribed, and a pulsing red "Audio only — not transcribing" the moment a chunk fails, a request stalls past its timeout, or the session expires — then back to green if transcription recovers (for example after re-login in another tab). It is a separate element, so status-line messages can no longer erase the warning while you're speaking. Audio keeps saving to the local ledger in every state.
+- **Transcription failures surface in the red status line.** If a chunk fails, a request stalls past its timeout, or the session expires, the status line says so in red; audio keeps saving to the local ledger in every state.
 - **Background expiry never redirects you.** If a background check finds the session gone while idle, you get a status warning and the next Record sends you to `/login` — an unsaved transcript on screen is never lost to a surprise redirect.
 - **No server or database change.**
 

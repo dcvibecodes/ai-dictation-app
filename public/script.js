@@ -89,7 +89,6 @@ const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl    = document.getElementById('timer');
 const ctx        = waveformCanvas.getContext('2d');
-const captureStateEl = document.getElementById('captureState');
 const recoveryRow = document.getElementById('recoveryRow');
 const recoveryInfo = document.getElementById('recoveryInfo');
 const retryRecordingBtn = document.getElementById('retryRecordingBtn');
@@ -2202,32 +2201,6 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') runBackgroundAuthCheck();
 });
 
-// ── Live capture state pill ──
-// While a Live take runs, this pill sits next to the timer and says whether
-// words are being transcribed right now or audio is only being saved locally
-// (session expired, network down, chunks failing or stalling). It is its own
-// element — never overwritten by setStatus() — and stays up for the whole
-// take, which the old status-line warning could not do. Audio is safe in the
-// ledger in every state; the pill is only about whether text is appearing.
-// It reads "Starting transcription…" until the first chunk succeeds, so it
-// never claims Transcribing without evidence.
-function updateCaptureState(state) {
-  if (!captureStateEl) return;
-  if (state === 'hidden') { captureStateEl.style.display = 'none'; return; }
-  captureStateEl.style.display = '';
-  if (state === 'local-only') {
-    captureStateEl.textContent = 'Audio only — not transcribing';
-    captureStateEl.className = 'capture-state local-only';
-  } else if (state === 'starting') {
-    // No chunk has been transcribed yet — never claim "Transcribing" early.
-    captureStateEl.textContent = 'Starting transcription…';
-    captureStateEl.className = 'capture-state starting';
-  } else {
-    captureStateEl.textContent = 'Transcribing';
-    captureStateEl.className = 'capture-state ok';
-  }
-}
-
 async function startRecording() {
   if (isRecording || isStarting || liveStopping) return;
   if (processingAbortController) {
@@ -2307,7 +2280,6 @@ async function startRecording() {
     document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
     setStatus('Recording…', 'active');
-    updateCaptureState(recordingCaptureMode === 'live' ? 'starting' : 'hidden');
     startSilenceWatch();
   } catch (e) {
     console.error('Recording start error:', e);
@@ -2497,7 +2469,6 @@ function enqueueLiveChunk(session, wavBlob, meta) {
     session.chunks.set(meta.seq, { text: '', ok: false });
     liveFlushPending(session);
     setStatus('Transcription is falling behind — audio saved locally for full recovery', 'error');
-    updateCaptureState('local-only');
     return;
   }
   session.queue.push({ wavBlob, meta });
@@ -2544,7 +2515,6 @@ async function liveTranscribeChunk(session, task) {
         session.expired = true;
         session.failedRanges.push({ ...meta, reason: 'session expired' });
         setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
-        updateCaptureState('local-only');
         try { showRecoveryRow('failed'); } catch {}
         session.chunks.set(meta.seq, { text: '', ok: false });
         liveFlushPending(session);
@@ -2554,8 +2524,6 @@ async function liveTranscribeChunk(session, task) {
         const data = await res.json();
         if (!isLiveSessionActive(session)) return;
         session.successes++;
-        // Transcription recovered (e.g. after re-login in another tab).
-        updateCaptureState('transcribing');
         session.chunks.set(meta.seq, { text: (data.rawTranscript || '').trim(), ok: true });
         liveFlushPending(session);
         return;
@@ -2566,7 +2534,6 @@ async function liveTranscribeChunk(session, task) {
     } catch (e) {
       if (!isLiveSessionActive(session)) return;
       lastErr = timedOut ? 'request timed out' : (e.message || 'network error');
-      if (timedOut) updateCaptureState('local-only');
     } finally {
       clearTimeout(timer);
       session.controllers.delete(ac);
@@ -2585,7 +2552,6 @@ async function liveTranscribeChunk(session, task) {
   session.failedRanges.push({ ...meta, reason: lastErr || 'failed' });
   console.error('chunk failed after retries:', lastErr);
   setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
-  updateCaptureState('local-only');
   session.chunks.set(meta.seq, { text: '', ok: false });
   liveFlushPending(session);
 }
@@ -3181,7 +3147,6 @@ async function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
-  updateCaptureState('hidden');
   stopSilenceWatch();
   if (recordingCaptureMode === 'live') { await cancelLiveRecording(); return; }
   cancelled = true;
@@ -3193,7 +3158,6 @@ function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
-  updateCaptureState('hidden');
   stopSilenceWatch();
   if (recordingCaptureMode === 'live') { stopLiveRecording(); return; }
   try { mediaRecorder.stop(); } catch (e) {}
@@ -3585,7 +3549,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.24.0'; // keep in sync with package.json at release time
+const APP_VERSION = '6.24.1'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
