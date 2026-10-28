@@ -4,6 +4,16 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.23.4
+
+### Faster record start — same safety guarantees
+
+- **Back-to-back takes skip the login wait** — the first take checks login before opening the mic (as before); takes within the next 60 seconds skip the network round trip. The mic still never opens before login is confirmed, so you can never speak in vain on an expired session.
+- **Audio engine pre-warms while you read** — the page quietly prepares the audio engine and fetches the Live capture file in the background after load. The microphone is never touched (mic indicator stays off); if pre-warming fails, Record works exactly as before.
+- **Standard mode confirms audio ~4x faster** — the first-recording proof chunk arrives in ~250 ms instead of ~1 s, with the same "Recording…" only-after-real-audio guarantee. Live mode's proof was already ~85 ms and is unchanged.
+- **Honest stages** — "Starting mic…" now reads "Checking login…" → "Opening mic…", so a stall always names its stage.
+- **No server or database change.**
+
 ## What's New in v6.23.3
 
 ### Self-Hosted Fonts — Same Typography on Web, Mobile, and Offline
