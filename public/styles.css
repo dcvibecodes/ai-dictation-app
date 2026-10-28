@@ -214,6 +214,40 @@ header {
 .status.done { color: var(--success); }
 .status.error { color: var(--danger); }
 
+/* Live capture state pill — shown next to the timer during a Live take so a
+   transcription failure is impossible to miss while speaking. */
+.capture-state {
+  font-size: 0.66rem; font-weight: 600; letter-spacing: 0.02em;
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.capture-state.ok { color: var(--success); background: rgba(74, 222, 128, 0.12); }
+.capture-state.starting { color: var(--warning); background: rgba(251, 191, 36, 0.12); }
+.capture-state.local-only {
+  color: var(--danger); background: var(--danger-dim); border-color: var(--danger);
+  animation: capture-state-pulse 1.6s ease-in-out infinite;
+}
+@keyframes capture-state-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .capture-state.local-only { animation: none; }
+}
+
+/* On phones the recorder row is a fixed bottom grid; float the pill just above
+   it, centred, so it never disturbs the grid or clips on the safe-area inset. */
+@media (max-width: 600px) {
+  .capture-state {
+    position: absolute;
+    top: -32px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  }
+  .capture-state.ok { background: var(--bg-surface); border-color: var(--success); }
+  .capture-state.starting { background: var(--bg-surface); border-color: var(--warning); }
+  .capture-state.local-only { background: var(--bg-surface); }
+}
+
 .recovery-row {
   display: flex;
   align-items: center;

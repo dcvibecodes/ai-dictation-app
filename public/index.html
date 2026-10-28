@@ -64,6 +64,7 @@
         </button>
         <canvas id="waveform" aria-hidden="true"></canvas>
         <span id="timer">00:00</span>
+        <span id="captureState" class="capture-state" style="display:none" aria-live="polite"></span>
         <div class="rec-btns">
           <button id="pauseBtn" class="btn btn-ghost btn-sm" style="display:none">Pause</button>
           <button id="cancelBtn" class="btn btn-ghost btn-sm btn-danger" style="display:none">Cancel</button>
@@ -301,6 +302,7 @@
     </div>
   </div>
 
+  <script src="lib/auth-refresh.js?v=1"></script>
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
   <script src="script.js?v=33"></script>

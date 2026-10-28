@@ -27,7 +27,9 @@ let silentCancel = false;         // suppress the "Cancelled" status when Clear 
 let lastBackupFlush = 0;          // throttle for rolling audio-backup writes
 let backupSession = 0;            // invalidates in-flight backup writes when a recording ends
 let lastAuthOkAt = 0;             // last time the login check passed; skips repeat checks
+const AuthRefreshLib = window.AuthRefreshLib || null; // background-refresh logic (testable module)
 const AUTH_FRESH_MS = 60000;      // a recent OK means Record can skip the network round trip
+const AUTH_REFRESH_INTERVAL_MS = AuthRefreshLib ? AuthRefreshLib.DEFAULT_REFRESH_INTERVAL_MS : 45000;
 let audioPrewarmed = false;       // true once the idle pre-warm has run
 
 // --- Live transcription mode ---
@@ -87,6 +89,7 @@ const statusEl   = document.getElementById('status');
 const waveformCanvas = document.getElementById('waveform');
 const timerEl    = document.getElementById('timer');
 const ctx        = waveformCanvas.getContext('2d');
+const captureStateEl = document.getElementById('captureState');
 const recoveryRow = document.getElementById('recoveryRow');
 const recoveryInfo = document.getElementById('recoveryInfo');
 const retryRecordingBtn = document.getElementById('retryRecordingBtn');
@@ -2131,6 +2134,100 @@ function handleRecorderFailure(message) {
   stopRecording();
 }
 
+// ── Login check, shared by Record and the background refresh ──
+// Returns true when the session is confirmed, false on 401 (session gone —
+// resets freshness so the next Record re-checks), null on network/timeout
+// (unknown — keep the old freshness value and proceed, as before).
+async function fetchAuthStatus() {
+  try {
+    const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
+    const res = await fetch('/api/status', { signal: timeout });
+    if (res.status === 401) { lastAuthOkAt = 0; return false; }
+    lastAuthOkAt = Date.now();
+    return true;
+  } catch { return null; }
+}
+
+// All callers (Record click, background timer, foreground refresh) join one
+// in-flight request, so a click landing on a tick never doubles the traffic.
+const checkAuthOnce = AuthRefreshLib
+  ? AuthRefreshLib.createCoalescedCheck(fetchAuthStatus)
+  : fetchAuthStatus;
+
+function authIsFresh() {
+  return AuthRefreshLib
+    ? AuthRefreshLib.isAuthFresh(lastAuthOkAt, Date.now(), AUTH_FRESH_MS)
+    : (Date.now() - lastAuthOkAt <= AUTH_FRESH_MS);
+}
+
+// ── Background login refresh ──
+// Keeps Record fast without weakening the check: while the app is visible and
+// idle, re-confirm the session every 45 s (tighter than the 60 s freshness
+// window), so pressing Record almost always finds a fresh OK and skips its own
+// round trip. Checks never run while recording, starting, draining or
+// processing — Live chunk uploads already detect expiry mid-take, and the
+// audio ledger keeps every sample regardless — and never while the tab is
+// hidden, so a backgrounded phone PWA does not keep polling. If the last OK
+// is stale (laptop slept, a check failed), Record runs the same check first,
+// exactly as before.
+function authBackgroundBusy() {
+  return isRecording || isStarting || liveStopping || !!processingAbortController;
+}
+
+async function runBackgroundAuthCheck() {
+  const allowed = AuthRefreshLib
+    ? AuthRefreshLib.shouldRunBackgroundCheck({
+        visible: document.visibilityState === 'visible',
+        busy: authBackgroundBusy(),
+        inflight: checkAuthOnce.pending ? checkAuthOnce.pending() : false
+      })
+    : (document.visibilityState === 'visible' && !authBackgroundBusy());
+  if (!allowed) return;
+  const ok = await checkAuthOnce();
+  if (ok === false && !authBackgroundBusy()) {
+    // Session is gone and nothing is mid-take. Never redirect from a
+    // background tick — an unsaved transcript may be on screen. The next
+    // Record re-checks, and handleUnauthorized() redirects from there.
+    setStatus('Session expired — sign in again on your next recording', 'error');
+  }
+}
+
+let authRefreshTimer = null;
+function startAuthRefresh() {
+  if (authRefreshTimer) return;
+  authRefreshTimer = setInterval(runBackgroundAuthCheck, AUTH_REFRESH_INTERVAL_MS);
+  runBackgroundAuthCheck(); // warm the very first Record click
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') runBackgroundAuthCheck();
+});
+
+// ── Live capture state pill ──
+// While a Live take runs, this pill sits next to the timer and says whether
+// words are being transcribed right now or audio is only being saved locally
+// (session expired, network down, chunks failing or stalling). It is its own
+// element — never overwritten by setStatus() — and stays up for the whole
+// take, which the old status-line warning could not do. Audio is safe in the
+// ledger in every state; the pill is only about whether text is appearing.
+// It reads "Starting transcription…" until the first chunk succeeds, so it
+// never claims Transcribing without evidence.
+function updateCaptureState(state) {
+  if (!captureStateEl) return;
+  if (state === 'hidden') { captureStateEl.style.display = 'none'; return; }
+  captureStateEl.style.display = '';
+  if (state === 'local-only') {
+    captureStateEl.textContent = 'Audio only — not transcribing';
+    captureStateEl.className = 'capture-state local-only';
+  } else if (state === 'starting') {
+    // No chunk has been transcribed yet — never claim "Transcribing" early.
+    captureStateEl.textContent = 'Starting transcription…';
+    captureStateEl.className = 'capture-state starting';
+  } else {
+    captureStateEl.textContent = 'Transcribing';
+    captureStateEl.className = 'capture-state ok';
+  }
+}
+
 async function startRecording() {
   if (isRecording || isStarting || liveStopping) return;
   if (processingAbortController) {
@@ -2144,14 +2241,11 @@ async function startRecording() {
   // redirect now rather than after a long recording. This check stays serial
   // (mic never opens before login is confirmed), but a login confirmed less
   // than a minute ago is still valid, so back-to-back takes skip the wait.
-  if (Date.now() - lastAuthOkAt > AUTH_FRESH_MS) {
+  // The background refresh keeps lastAuthOkAt warm while the app sits visible
+  // and idle, so most Record clicks skip this network round trip entirely.
+  if (!authIsFresh()) {
     setStatus('Checking login…');
-    try {
-      const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(1500) : undefined;
-      const authCheck = await fetch('/api/status', { signal: timeout });
-      if (authCheck.status === 401) { isStarting = false; resetButton(); handleUnauthorized(); return; }
-      lastAuthOkAt = Date.now();
-    } catch {}
+    if (await checkAuthOnce() === false) { isStarting = false; resetButton(); handleUnauthorized(); return; }
   }
 
   // Freeze the capture mode for this take. Changing the Live toggle later cannot
@@ -2213,6 +2307,7 @@ async function startRecording() {
     document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
     setStatus('Recording…', 'active');
+    updateCaptureState(recordingCaptureMode === 'live' ? 'starting' : 'hidden');
     startSilenceWatch();
   } catch (e) {
     console.error('Recording start error:', e);
@@ -2402,6 +2497,7 @@ function enqueueLiveChunk(session, wavBlob, meta) {
     session.chunks.set(meta.seq, { text: '', ok: false });
     liveFlushPending(session);
     setStatus('Transcription is falling behind — audio saved locally for full recovery', 'error');
+    updateCaptureState('local-only');
     return;
   }
   session.queue.push({ wavBlob, meta });
@@ -2448,6 +2544,7 @@ async function liveTranscribeChunk(session, task) {
         session.expired = true;
         session.failedRanges.push({ ...meta, reason: 'session expired' });
         setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
+        updateCaptureState('local-only');
         try { showRecoveryRow('failed'); } catch {}
         session.chunks.set(meta.seq, { text: '', ok: false });
         liveFlushPending(session);
@@ -2457,6 +2554,8 @@ async function liveTranscribeChunk(session, task) {
         const data = await res.json();
         if (!isLiveSessionActive(session)) return;
         session.successes++;
+        // Transcription recovered (e.g. after re-login in another tab).
+        updateCaptureState('transcribing');
         session.chunks.set(meta.seq, { text: (data.rawTranscript || '').trim(), ok: true });
         liveFlushPending(session);
         return;
@@ -2467,6 +2566,7 @@ async function liveTranscribeChunk(session, task) {
     } catch (e) {
       if (!isLiveSessionActive(session)) return;
       lastErr = timedOut ? 'request timed out' : (e.message || 'network error');
+      if (timedOut) updateCaptureState('local-only');
     } finally {
       clearTimeout(timer);
       session.controllers.delete(ac);
@@ -2485,6 +2585,7 @@ async function liveTranscribeChunk(session, task) {
   session.failedRanges.push({ ...meta, reason: lastErr || 'failed' });
   console.error('chunk failed after retries:', lastErr);
   setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
+  updateCaptureState('local-only');
   session.chunks.set(meta.seq, { text: '', ok: false });
   liveFlushPending(session);
 }
@@ -3080,6 +3181,7 @@ async function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  updateCaptureState('hidden');
   stopSilenceWatch();
   if (recordingCaptureMode === 'live') { await cancelLiveRecording(); return; }
   cancelled = true;
@@ -3091,6 +3193,7 @@ function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  updateCaptureState('hidden');
   stopSilenceWatch();
   if (recordingCaptureMode === 'live') { stopLiveRecording(); return; }
   try { mediaRecorder.stop(); } catch (e) {}
@@ -3467,6 +3570,7 @@ checkRecoveryOnLoad();
 updateOnlineStatus();
 drawIdleLine();
 updateTranscriptDisplay();
+startAuthRefresh();
 
 // ── iOS PWA fix: force layout recalculation for env(safe-area-inset-bottom) ──
 // On iOS standalone PWA, env() values may not resolve until after first paint.
@@ -3481,7 +3585,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.23.4'; // keep in sync with package.json at release time
+const APP_VERSION = '6.24.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
