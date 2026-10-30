@@ -4,6 +4,14 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v6.25.0
+
+### Live is off by default — final transcripts get more context
+
+- **Live mode now starts OFF for anyone who has never chosen.** Live chunks carry less context than a full recording, so words at chunk edges can be dropped. With Live off, the whole take is transcribed in one request and the final text is usually more accurate — it just takes a bit longer at the end.
+- **Your choice still sticks.** The Live toggle on the Dictate tab is the preference: turn it on and it stays on across sessions and app updates; turn it off and it stays off. Press `L` or use the toggle any time.
+- **No server or database change.**
+
 ## What's New in v6.24.1
 
 ### Pill removed — failures stay in the red status line
@@ -218,7 +226,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Password-protected** — owner-only access, bcrypt hashed, no-expiry session (10-year cookie + sliding refresh)
 - **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits
 - **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
-- **Live transcription** (on by default) — designed for long dictation sessions: audio is sent in chunks (default every 10 s; configurable 3–60 s in Settings → Live transcription) and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Turn it off with the Live toggle, or press L.
+- **Live transcription** (off by default; the Live toggle remembers your choice) — designed for long dictation sessions: audio is sent in chunks (default every 10 s; configurable 3–60 s in Settings → Live transcription) and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Turn it on with the Live toggle, or press L.
 - **Recording safety net** — the recorder only shows "recording" once real audio is confirmed; a silence watchdog warns if the mic is muted or in use; mic loss mid-session is caught and the audio is saved; and a rolling backup means an interrupted recording is recoverable on the next open.
 - **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
@@ -421,7 +429,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
-- **Live mode is on by default** — turn it off with the Live toggle or `L`. In Live mode the transcript fills in as you speak (chunks default to 10 s; configurable 3–60 s in Settings → Live transcription) and the full session is backed up locally as a WAV.
+- **Live mode is off by default** — turn it on with the Live toggle or `L`; your choice persists across sessions and app updates. In Live mode the transcript fills in as you speak (chunks default to 10 s; configurable 3–60 s in Settings → Live transcription) and the full session is backed up locally as a WAV.
 - **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Discard**.
 - **Clear during recording cancels the take** (it does not get transcribed back into the document).
 - **Corrections are exact, not fuzzy** — an alias matches the whole phrase, ignoring case, and is replaced with the canonical spelling. Add each mishearing as a separate alias; the vocabulary hint remains the tool for general recognition bias.

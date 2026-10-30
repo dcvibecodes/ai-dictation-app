@@ -35,8 +35,9 @@ let audioPrewarmed = false;       // true once the idle pre-warm has run
 // --- Live transcription mode ---
 // When enabled, audio is captured in chunks and transcribed as you speak, so
 // long dictations are transcribed during recording instead of all at the end.
-// Default ON — the Live toggle or the L shortcut can turn it off.
-let liveMode = localStorage.getItem('liveMode') !== 'false'; // default ON
+// Default OFF — the Live toggle or the L shortcut turns it on, and that choice
+// persists across sessions and app updates (localStorage survives both).
+let liveMode = localStorage.getItem('liveMode') === 'true'; // default OFF
 let liveStream = null;            // the mic MediaStream while live-recording
 let liveScriptNode = null;        // ScriptProcessorNode fallback capturing raw PCM
 let liveWorkletNode = null;       // AudioWorkletNode (preferred — off main thread)
