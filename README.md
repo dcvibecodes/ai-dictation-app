@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.3 — built-in cleanup prompt v7
+
+- **Cleanup prompt v7 is now the built-in default.** The prompt migration version is `7`, so any stored Default override is dropped once on startup and the prompt list shows **Built-in**. Restore returns v7; custom prompts are untouched.
+
 ## What's New in v7.1.2 — Settings order
 
 - **New Settings order:** Voice models → Cleanup models → Cleanup prompts → Corrections → Recognition → Account & security.

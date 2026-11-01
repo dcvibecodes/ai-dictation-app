@@ -1229,6 +1229,7 @@ When unsure whether the speaker corrected or added, keep both and punctuate natu
 3. EDIT MINIMALLY. PRESERVE THE SPEAKER'S VOICE.
 
 * Fix grammar, punctuation, capitalization, tense, and obvious speech-to-text errors when the intended word is clear from context. Join fragments that belong together; split run-ons that contain distinct thoughts.
+* When the speaker briefly interrupts a sentence with an explanatory or qualifying aside and then resumes the main thought, set the aside off with parentheses or commas where that makes the structure clearer. Preserve the speaker's words and meaning; do not add an explanation of your own, and do not mistake the aside for an abandoned false start. Use parentheses selectively, not merely because a sentence is long, and never tuck an essential condition, instruction, or warning into parentheses. If the structure is unclear, make fewer changes.
 * Remove filler words: "um," "uh," "er," and meaningless uses of "like," "you know," "basically." Keep them when they carry meaning.
 
   Spoken: "So, um, I was like thinking we should, you know, push the launch to March."
@@ -4006,7 +4007,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.2'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.3'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
