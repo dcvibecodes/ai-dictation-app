@@ -4,10 +4,22 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.1 — bug fixes for models, keys and live streaming
+
+- **Gemini 3.5 Transcribe works properly.** It is a dedicated speech model, not a chat model, so it now has its own provider (“Google Gemini Transcribe”) and uses Google's native `generateContent` API. Existing profiles whose Gemini model contains `transcribe` are moved to the new provider automatically on startup — the saved key is kept.
+- **Browse models is a real picker.** Clicking it opens a searchable list under the model field. It no longer overwrites your model with the first result. Internal/unrelated IDs (`antigravity`, embeddings, image/video models) are filtered out, and the curated model list is shown first.
+- **Test & save only saves on a successful test.** “Save anyway” is gone. A failed test leaves the sheet open and nothing is written.
+- **Cartesia live streaming fixed.** The API version is now `2026-03-01` (the old value was rejected), turn events (`turn.start` / `turn.update` / `turn.end`) are parsed correctly, and Stop waits for the final turn instead of sending an unsupported `finalize` command. With Append off the preview no longer keeps the previous take on screen.
+- **Provider failures no longer look like an expired login.** A bad provider key returns a provider error (400/5xx) instead of a 401 that the UI interpreted as “Session expired”.
+- **No more Safari “Save Password?” popup for API keys.** The key field is no longer a password input; it is masked by CSS and has a Show/Hide toggle.
+- **Sheets lock the page behind them.** Opening a provider or prompt sheet fixes the background scroll position and prevents scrolling until it closes.
+- **Login/setup fields match.** The username input now uses the same height and padding as the password input.
+- **Cartesia Test & save now checks the actual streaming connection**, not just the REST voices endpoint.
+
 ## What's New in v7.0.0 — provider profiles, stronger auth, new interface
 
-- **Saved voice models (profiles).** Settings now holds a list of provider + model + key profiles — OpenAI, Mistral, Groq, Gemini, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti and Cartesia, plus a Custom OpenAI-compatible endpoint. Tap a row to activate it; the base URL is built in for known providers, so you only paste a key and pick a model. Your existing single-slot setup is migrated automatically into profiles on first boot; nothing to re-enter.
-- **Real provider adapters.** Non-OpenAI providers are not faked with a URL: each one has its own request shape, auth header and response parser. Failures keep the recording. A different provider is used only if you explicitly configure a fallback model.
+- **Saved voice models (profiles).** Settings now holds a list of provider + model + key profiles — OpenAI, Mistral, Groq, Gemini, Gemini Transcribe, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti and Cartesia, plus a Custom OpenAI-compatible endpoint. Tap a row to activate it; the base URL is built in for known providers, so you only paste a key and pick a model. Your existing single-slot setup is migrated automatically into profiles on first boot; nothing to re-enter.
+- **Real provider adapters.** Non-OpenAI providers are not faked with a URL: each one has its own request shape, auth header and response parser. Google's dedicated `gemini-3.5-transcribe` model uses its native API and has its own provider. Failures keep the recording. A different provider is used only if you explicitly configure a fallback model.
 - **Username + account settings.** New installs choose a username at `/setup`; existing installs get a one-time "Choose your username" screen after signing in (the existing password keeps working). You can change the username and the password from Settings → Account & security.
 - **Stronger sessions.** Passwords are now 12+ characters and capped at 72 bytes (bcrypt's limit) with a clear error instead of silent truncation. Sessions expire after 180 days, and changing your password invalidates every other session — this browser stays signed in.
 - **CSRF hardening.** Sensitive mutations validate the Origin/Referer host on top of the SameSite cookie.
@@ -271,7 +283,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
 - **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or discard from the recovery strip. Works in both standard and live-streaming modes, and recovers interrupted recordings on the next open.
-- **Any provider** — saved provider profiles for OpenAI, Mistral, Groq, Gemini, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti, Cartesia, or any OpenAI-compatible endpoint
+- **Any provider** — saved provider profiles for OpenAI, Mistral, Groq, Gemini, Gemini Transcribe, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti, Cartesia, or any OpenAI-compatible endpoint
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
 - **Account & security** — change your username or password from Settings (or from the login screen). Password changes sign out every other session; saved API keys are unaffected

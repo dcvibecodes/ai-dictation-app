@@ -1189,3 +1189,47 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Scroll lock (sheets + prompt modal) ── */
+html.scroll-locked,
+body.scroll-locked { overflow: hidden !important; }
+body.scroll-locked {
+  position: fixed; left: 0; right: 0; width: 100%;
+}
+.sheet, .modal { overscroll-behavior: contain; }
+.sheet-overlay, .modal-overlay { overscroll-behavior: contain; }
+
+/* ── API key field (not a password-type input, so Safari stops offering to
+       save it in the Passwords app) ── */
+.secret-row { display: flex; align-items: center; gap: 6px; }
+.secret-row .input { flex: 1; min-width: 0; }
+.secret-input { -webkit-text-security: disc; font-family: 'SF Mono', 'Fira Code', monospace; }
+.secret-input.revealed { -webkit-text-security: none; }
+.secret-toggle {
+  border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+  border-radius: 8px; padding: 6px 10px; font-family: inherit; font-size: 0.68rem;
+  font-weight: 600; cursor: pointer; flex-shrink: 0;
+}
+.secret-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+/* ── Model picker inside the profile sheet ── */
+.model-picker {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--border-subtle); border-radius: 12px;
+  padding: 10px; background: var(--surface-card-muted);
+  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+}
+.model-search { font-size: 0.74rem; }
+.model-list { display: flex; flex-direction: column; gap: 2px; }
+.model-option {
+  display: block; width: 100%; text-align: left; border: none; background: transparent;
+  color: var(--text); font-family: inherit; font-size: 0.74rem; padding: 7px 8px;
+  border-radius: 7px; cursor: pointer; word-break: break-all;
+}
+.model-option:hover, .model-option:focus-visible { background: var(--accent-dim); outline: none; }
+.model-option.is-current { background: var(--accent); color: var(--accent-contrast); }
+
+/* Stop the Settings/History/Record scroll containers while a sheet is open. */
+body.scroll-locked #panel-settings.active,
+body.scroll-locked #panel-history.active,
+body.scroll-locked #panel-record.active { overflow: hidden; }

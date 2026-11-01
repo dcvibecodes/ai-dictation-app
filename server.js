@@ -81,10 +81,13 @@ function loadSettings() {
         if (p.apiKey) p.apiKey = decryptSecret(p.apiKey);
       }
     }
+    const beforeProfiles = JSON.stringify(raw.TRANSCRIPTION_PROFILES || null);
     const migrated = providers.migrateSettings(raw);
     settingsCache = migrated;
-    // Persist the migration so profiles are the only source of truth from now on.
-    if (!Array.isArray(raw.TRANSCRIPTION_PROFILES) || !Array.isArray(raw.CLEANUP_PROFILES)) {
+    // Persist the migration so profiles are the only source of truth from now
+    // on, and so provider re-routing (e.g. a transcribe model) sticks.
+    const profilesChanged = JSON.stringify(migrated.TRANSCRIPTION_PROFILES || null) !== beforeProfiles;
+    if (!Array.isArray(raw.TRANSCRIPTION_PROFILES) || !Array.isArray(raw.CLEANUP_PROFILES) || profilesChanged) {
       saveSettings(migrated);
     }
   } catch { settingsCache = {}; }
@@ -716,7 +719,7 @@ function cartesiaStreamUrl(profile) {
     model: profile.model || 'ink-2',
     encoding: 'pcm_s16le',
     sample_rate: '16000',
-    cartesia_version: '2026-08-14'
+    cartesia_version: '2026-03-01'
   });
   return `wss://api.cartesia.ai/stt/turns/websocket?${params.toString()}`;
 }
@@ -747,6 +750,7 @@ wss.on('connection', (client, req) => {
     try { if (client.readyState === WebSocket.OPEN) client.close(code || 1000, reason); } catch {}
   };
 
+  console.log(`Stream open: ${profile.provider}/${profile.model}`);
   try {
     upstream = new WebSocket(cartesiaStreamUrl(profile), {
       headers: { 'X-API-Key': profile.apiKey }
@@ -775,7 +779,8 @@ wss.on('connection', (client, req) => {
     shutdown(1011);
   });
 
-  upstream.on('close', () => {
+  upstream.on('close', (code, reason) => {
+    console.log(`Stream upstream closed: ${code} ${reason || ''}`.trim());
     if (!closed) {
       try { client.send(JSON.stringify({ type: 'done' })); } catch {}
       shutdown(1000);
@@ -791,13 +796,7 @@ wss.on('connection', (client, req) => {
     }
     let message;
     try { message = JSON.parse(data.toString()); } catch { return; }
-    if (message.type === 'finalize') {
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'finalize' }));
-      // Give the provider a moment to flush the final turn.
-      setTimeout(() => shutdown(1000), 4000);
-    } else if (message.type === 'close') {
-      shutdown(1000);
-    }
+    if (message.type === 'close') shutdown(1000);
   });
 
   client.on('close', () => shutdown(1000));
@@ -999,6 +998,8 @@ async function transcribeWithProfile(profile, audioPath, mimeType, originalName,
       return transcribeWithWhisper(audioPath, mimeType, originalName, { ...opts, profile });
     case 'gemini':
       return transcribeWithGemini(audioPath, mimeType, { ...opts, profile });
+    case 'gemini-transcribe':
+      return adapters.transcribeWithGeminiTranscribe(common);
     case 'elevenlabs': return adapters.transcribeWithElevenLabs(common);
     case 'deepgram':   return adapters.transcribeWithDeepgram(common);
     case 'cohere':     return adapters.transcribeWithCohere(common);
@@ -1029,6 +1030,15 @@ async function transcribeAudio(audioPath, mimeType, originalName, opts = {}) {
   }
 }
 
+// Provider auth failures are not app-session failures. Returning the provider's
+// 401 verbatim made the client think the login had expired, so provider errors
+// become 502 while real app auth stays 401.
+function providerErrorStatus(error) {
+  const status = Number(error && error.status);
+  if (status === 401 || status === 403) return 400;
+  return status >= 400 ? status : 500;
+}
+
 // --- Test connection endpoints ---
 function makeSilenceWav(seconds = 1, sampleRate = 16000) {
   const samples = seconds * sampleRate;
@@ -1040,6 +1050,30 @@ function makeSilenceWav(seconds = 1, sampleRate = 16000) {
   buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
   buf.write('data', 36); buf.writeUInt32LE(dataSize, 40);
   return buf;
+}
+
+function probeCartesiaStream(profile) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(cartesiaStreamUrl(profile), {
+      headers: { 'X-API-Key': profile.apiKey }
+    });
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      if (err) reject(err); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('Cartesia streaming probe timed out.')), 10_000);
+    ws.on('open', () => setTimeout(() => finish(), 800));
+    ws.on('error', (err) => finish(new Error('Cartesia streaming failed: ' + err.message)));
+    ws.on('close', (code, reason) => {
+      if (code !== 1000 && code !== 1005) {
+        finish(new Error(`Cartesia streaming closed (${code}) ${reason || ''}`.trim()));
+      }
+    });
+  });
 }
 
 async function probeProfile(profile) {
@@ -1061,7 +1095,7 @@ async function probeProfile(profile) {
       signal: AbortSignal.timeout(AI_TIMEOUT_MS)
     });
     if (!resp.ok) throw new Error(`Gemini connection failed (${resp.status})`);
-  } else if (['elevenlabs', 'deepgram', 'cohere'].includes(protocol)) {
+  } else if (['elevenlabs', 'deepgram', 'cohere', 'gemini-transcribe'].includes(protocol)) {
     // Exercise the real adapter with a short silent sample.
     const tmp = path.join(DATA_DIR, `probe-${Date.now()}.wav`);
     fs.writeFileSync(tmp, makeSilenceWav());
@@ -1077,6 +1111,7 @@ async function probeProfile(profile) {
       if (protocol === 'elevenlabs') await adapters.transcribeWithElevenLabs(common);
       if (protocol === 'deepgram') await adapters.transcribeWithDeepgram(common);
       if (protocol === 'cohere') await adapters.transcribeWithCohere(common);
+      if (protocol === 'gemini-transcribe') await adapters.transcribeWithGeminiTranscribe(common);
     } finally {
       try { fs.unlinkSync(tmp); } catch {}
     }
@@ -1094,11 +1129,9 @@ async function probeProfile(profile) {
     });
     if (!resp.ok) throw new Error(`Corti connection failed (${resp.status})`);
   } else if (protocol === 'cartesia') {
-    const resp = await fetch('https://api.cartesia.ai/voices', {
-      headers: { 'X-API-Key': profile.apiKey, 'Cartesia-Version': '2026-08-14' },
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS)
-    });
-    if (!resp.ok) throw new Error(`Cartesia connection failed (${resp.status})`);
+    // Validate the streaming path itself (key, model, API version), not just
+    // the REST voices endpoint.
+    await probeCartesiaStream(profile);
   }
   return Date.now() - started;
 }
@@ -1171,12 +1204,37 @@ app.post('/api/test-cleanup', requireOwner, async (req, res) => {
   }
 });
 
-// Browse models for OpenAI-compatible providers via their list-models API.
+// Browse models. Result order is deliberately curated-first: provider catalogs
+// are the only list that is guaranteed to be relevant.
+function mergeModelLists(curated, fetched) {
+  const out = [];
+  for (const id of [...(curated || []), ...(fetched || [])]) {
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+async function listNativeGeminiModels(providerId, preset, key) {
+  const base = (preset.baseUrl || 'https://generativelanguage.googleapis.com/v1beta')
+    .replace(/\/openai\/?$/, '')
+    .replace(/\/+$/, '');
+  const resp = await fetch(`${base}/models`, {
+    headers: { 'x-goog-api-key': key },
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+  });
+  if (!resp.ok) throw new Error(`Model list failed (${resp.status})`);
+  const data = await resp.json();
+  const ids = (data.models || [])
+    .filter(m => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
+    .map(m => m.name);
+  return providers.filterModelIds(providerId, ids);
+}
+
 app.post('/api/models', requireOwner, async (req, res) => {
   const { provider, key, baseUrl, kind } = req.body || {};
   const catalog = kind === 'cleanup' ? providers.CLEANUP_PROVIDERS : providers.TRANSCRIPTION_PROVIDERS;
   const preset = catalog[provider] || {};
-  const fallback = Array.isArray(preset.models) ? preset.models : [];
+  const curated = Array.isArray(preset.models) ? preset.models : [];
   try {
     // Never send one provider's saved key to a different provider.
     let apiKey = key;
@@ -1184,17 +1242,23 @@ app.post('/api/models', requireOwner, async (req, res) => {
       const active = providers.getActiveProfile(loadSettings(), kind === 'cleanup' ? 'cleanup' : 'transcription');
       if (active && active.provider === provider) apiKey = active.apiKey;
     }
-    if (!apiKey) return res.json({ ok: true, models: fallback });
-    const client = new OpenAI({
-      apiKey,
-      baseURL: (baseUrl || preset.baseUrl || '') || undefined,
-      timeout: AI_TIMEOUT_MS
-    });
-    const list = await client.models.list();
-    const models = (list.data || []).map(m => m.id).filter(Boolean).sort();
-    res.json({ ok: true, models: models.length ? models : fallback });
+    if (!apiKey) return res.json({ ok: true, models: curated });
+
+    let fetched = [];
+    if (!kind && (provider === 'gemini' || provider === 'gemini_transcribe')) {
+      fetched = await listNativeGeminiModels(provider, preset, apiKey);
+    } else {
+      const client = new OpenAI({
+        apiKey,
+        baseURL: (baseUrl || preset.baseUrl || '') || undefined,
+        timeout: AI_TIMEOUT_MS
+      });
+      const list = await client.models.list();
+      fetched = providers.filterModelIds(provider, (list.data || []).map(m => m.id));
+    }
+    res.json({ ok: true, models: mergeModelLists(curated, fetched) });
   } catch (error) {
-    res.json({ ok: true, models: fallback, warning: error.message });
+    res.json({ ok: true, models: curated, warning: error.message });
   }
 });
 
@@ -1243,7 +1307,7 @@ app.post('/upload', requireOwner, aiUploadLimiter, upload.single('audio'), uploa
   } catch (error) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     console.error('Upload error:', error.message);
-    const status = error.status || 500;
+    const status = providerErrorStatus(error);
     res.status(status).json({ error: error.message });
   }
 });
@@ -1269,7 +1333,7 @@ app.post('/cleanup', requireOwner, aiCleanupLimiter, async (req, res) => {
     res.json({ cleanedTranscript: cleanup.choices[0].message.content });
   } catch (error) {
     console.error('Cleanup error:', error.message);
-    const status = error.status || 500;
+    const status = providerErrorStatus(error);
     res.status(status).json({ error: error.message });
   }
 });
@@ -1327,7 +1391,7 @@ app.post('/cleanup-stream', requireOwner, aiCleanupLimiter, async (req, res) => 
       res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
       res.end();
     } else {
-      const status = error.status || 500;
+      const status = providerErrorStatus(error);
       res.status(status).json({ error: error.message });
     }
   }

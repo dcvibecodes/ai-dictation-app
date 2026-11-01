@@ -1392,9 +1392,9 @@ async function restoreDefault() {
   if (res.status === 401) { handleUnauthorized(); return; }
   defaultOverride = null; await loadPrompts();
 }
-function openAddPromptModal() { editingPromptId = null; document.getElementById('modalTitle').textContent = 'New Prompt'; document.getElementById('promptNameInput').value = ''; document.getElementById('promptNameInput').disabled = false; document.getElementById('promptTextInput').value = ''; document.getElementById('modalOverlay').classList.add('open'); }
-function openEditPromptModal(id) { editingPromptId = id; const isD = id === 'default'; const p = isD ? { name: 'Default', text: getDefaultPromptText() } : prompts.find(x => x.id === id); if (!p) return; document.getElementById('modalTitle').textContent = isD ? 'Edit Default' : 'Edit Prompt'; document.getElementById('promptNameInput').value = p.name; document.getElementById('promptNameInput').disabled = isD; document.getElementById('promptTextInput').value = p.text; document.getElementById('modalOverlay').classList.add('open'); }
-function closePromptModal() { document.getElementById('modalOverlay').classList.remove('open'); editingPromptId = null; }
+function openAddPromptModal() { editingPromptId = null; document.getElementById('modalTitle').textContent = 'New Prompt'; document.getElementById('promptNameInput').value = ''; document.getElementById('promptNameInput').disabled = false; document.getElementById('promptTextInput').value = ''; const ov = document.getElementById('modalOverlay'); if (!ov.classList.contains('open')) lockPageScroll(); ov.classList.add('open'); }
+function openEditPromptModal(id) { editingPromptId = id; const isD = id === 'default'; const p = isD ? { name: 'Default', text: getDefaultPromptText() } : prompts.find(x => x.id === id); if (!p) return; document.getElementById('modalTitle').textContent = isD ? 'Edit Default' : 'Edit Prompt'; document.getElementById('promptNameInput').value = p.name; document.getElementById('promptNameInput').disabled = isD; document.getElementById('promptTextInput').value = p.text; const ov = document.getElementById('modalOverlay'); if (!ov.classList.contains('open')) lockPageScroll(); ov.classList.add('open'); }
+function closePromptModal() { const overlay = document.getElementById('modalOverlay'); if (overlay.classList.contains('open')) unlockPageScroll(); overlay.classList.remove('open'); editingPromptId = null; }
 function closeModal(e) { if (e.target === document.getElementById('modalOverlay')) closePromptModal(); }
 
 async function savePrompt() {
@@ -1631,15 +1631,41 @@ async function activateProfile(kind, profile) {
 }
 
 let sheetReturnFocus = null;
+let scrollLockDepth = 0;
+let scrollLockY = 0;
+
+// A fixed overlay alone does not stop the page/panel behind it from scrolling
+// (especially on mobile, where Settings is its own scroll container). Lock both
+// the document and its scroll position while any sheet/modal is open.
+function lockPageScroll() {
+  if (scrollLockDepth === 0) {
+    scrollLockY = window.scrollY || document.documentElement.scrollTop || 0;
+    document.documentElement.classList.add('scroll-locked');
+    document.body.classList.add('scroll-locked');
+    document.body.style.top = `-${scrollLockY}px`;
+  }
+  scrollLockDepth++;
+}
+
+function unlockPageScroll() {
+  if (scrollLockDepth === 0) return;
+  scrollLockDepth--;
+  if (scrollLockDepth > 0) return;
+  document.documentElement.classList.remove('scroll-locked');
+  document.body.classList.remove('scroll-locked');
+  document.body.style.top = '';
+  window.scrollTo(0, scrollLockY);
+}
 
 function openSheet(title) {
   const overlay = document.getElementById('sheetOverlay');
-  sheetReturnFocus = document.activeElement;
+  const wasOpen = overlay.classList.contains('open');
+  if (!wasOpen) sheetReturnFocus = document.activeElement;
   document.getElementById('sheetTitle').textContent = title;
   document.getElementById('sheetBody').innerHTML = '';
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden', 'false');
-  document.body.classList.add('sheet-open');
+  if (!wasOpen) lockPageScroll();
   setTimeout(() => {
     const first = overlay.querySelector('input, button, select');
     if (first) first.focus();
@@ -1651,7 +1677,7 @@ function closeSheet(e) {
   const overlay = document.getElementById('sheetOverlay');
   overlay.classList.remove('open');
   overlay.setAttribute('aria-hidden', 'true');
-  document.body.classList.remove('sheet-open');
+  unlockPageScroll();
   if (sheetReturnFocus && typeof sheetReturnFocus.focus === 'function') {
     sheetReturnFocus.focus();
     sheetReturnFocus = null;
@@ -1753,9 +1779,8 @@ function openProfileForm(kind, providerId, profile) {
   head.append(mono, headInfo);
 
   const labelField = field('Profile name', 'text', profile ? profile.label : (provider.name || ''));
-  const keyField = field('API key', 'password', '');
+  const keyField = field('API key', 'text', '', { secret: true });
   keyField.input.placeholder = profile && profile.hasKey ? profile.maskedKey : 'Paste your API key';
-  keyField.input.autocomplete = 'off';
   const keyHelp = document.createElement('span');
   keyHelp.className = 'field-help';
   if (profile && profile.hasKey) keyHelp.textContent = 'Leave blank to keep the saved key.';
@@ -1784,9 +1809,15 @@ function openProfileForm(kind, providerId, profile) {
   browse.type = 'button';
   browse.className = 'btn btn-ghost btn-sm';
   browse.textContent = 'Browse models';
+  const modelPicker = document.createElement('div');
+  modelPicker.className = 'model-picker';
+  modelPicker.style.display = 'none';
   browse.addEventListener('click', async () => {
+    if (modelPicker.style.display !== 'none') { modelPicker.style.display = 'none'; return; }
     browse.disabled = true;
     browse.textContent = 'Loading…';
+    modelPicker.innerHTML = '<p class="field-help">Loading models…</p>';
+    modelPicker.style.display = '';
     try {
       const data = await apiJson('/api/models', {
         method: 'POST',
@@ -1798,16 +1829,23 @@ function openProfileForm(kind, providerId, profile) {
           baseUrl: baseField ? baseField.input.value.trim() : undefined
         })
       });
+      const models = data.models || [];
       datalist.innerHTML = '';
-      (data.models || []).forEach(m => {
+      models.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
         datalist.appendChild(opt);
       });
-      if ((data.models || []).length) modelField.input.value = data.models[0];
+      renderModelPicker(modelPicker, models, modelField.input.value, (picked) => {
+        modelField.input.value = picked;
+        modelPicker.style.display = 'none';
+      }, data.warning);
     } catch (e) {
-      result.textContent = e.message;
-      result.className = 'test-result test-fail';
+      modelPicker.innerHTML = '';
+      const p = document.createElement('p');
+      p.className = 'field-help';
+      p.textContent = e.message;
+      modelPicker.appendChild(p);
     } finally {
       browse.disabled = false;
       browse.textContent = 'Browse models';
@@ -1830,10 +1868,6 @@ function openProfileForm(kind, providerId, profile) {
   testSave.type = 'submit';
   testSave.className = 'btn btn-primary';
   testSave.textContent = 'Test & save';
-  const saveOnly = document.createElement('button');
-  saveOnly.type = 'button';
-  saveOnly.className = 'btn btn-ghost';
-  saveOnly.textContent = 'Save anyway';
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'btn btn-ghost';
@@ -1845,7 +1879,7 @@ function openProfileForm(kind, providerId, profile) {
   remove.textContent = 'Delete';
   remove.style.display = profile ? '' : 'none';
 
-  actions.append(testSave, saveOnly);
+  actions.append(testSave);
   if (profile) actions.append(remove);
   actions.append(cancel);
 
@@ -1854,6 +1888,7 @@ function openProfileForm(kind, providerId, profile) {
   modelRow.className = 'browse-row';
   modelRow.appendChild(browse);
   form.appendChild(modelRow);
+  form.appendChild(modelPicker);
   if (baseField) form.appendChild(baseField.wrap);
   form.append(result, actions);
   body.appendChild(form);
@@ -1869,7 +1904,6 @@ function openProfileForm(kind, providerId, profile) {
 
   async function testConnection() {
     testSave.disabled = true;
-    saveOnly.disabled = true;
     const original = testSave.textContent;
     testSave.textContent = 'Testing…';
     result.textContent = '';
@@ -1894,7 +1928,6 @@ function openProfileForm(kind, providerId, profile) {
       return false;
     } finally {
       testSave.disabled = false;
-      saveOnly.disabled = false;
       testSave.textContent = original;
     }
   }
@@ -1923,16 +1956,11 @@ function openProfileForm(kind, providerId, profile) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const ok = await testConnection();
-    if (!ok) return;
-    try { await persist(); } catch (err) {
-      if (err.message !== 'Unauthorized') {
-        result.textContent = '✗ ' + err.message;
-        result.className = 'test-result test-fail';
-      }
+    if (!ok) {
+      result.textContent = '✗ Not saved — fix the error above and test again.';
+      result.className = 'test-result test-fail';
+      return;
     }
-  });
-
-  saveOnly.addEventListener('click', async () => {
     try { await persist(); } catch (err) {
       if (err.message !== 'Unauthorized') {
         result.textContent = '✗ ' + err.message;
@@ -1958,7 +1986,52 @@ function openProfileForm(kind, providerId, profile) {
   });
 }
 
-function field(labelText, type, value) {
+function renderModelPicker(container, models, current, onPick, warning) {
+  container.innerHTML = '';
+  if (warning) {
+    const note = document.createElement('p');
+    note.className = 'field-help';
+    note.textContent = 'Could not load the live list — showing the built-in models. ' + warning;
+    container.appendChild(note);
+  }
+  if (!models.length) {
+    const none = document.createElement('p');
+    none.className = 'field-help';
+    none.textContent = 'No models returned. Type the model name manually.';
+    container.appendChild(none);
+    return;
+  }
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'input model-search';
+  search.placeholder = 'Filter models…';
+  search.setAttribute('aria-label', 'Filter models');
+  const list = document.createElement('div');
+  list.className = 'model-list';
+  const draw = (query) => {
+    const q = String(query || '').toLowerCase();
+    list.innerHTML = '';
+    models.filter(m => !q || m.toLowerCase().includes(q)).forEach(m => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'model-option' + (m === current ? ' is-current' : '');
+      row.textContent = m;
+      row.addEventListener('click', () => onPick(m));
+      list.appendChild(row);
+    });
+    if (!list.children.length) {
+      const none = document.createElement('p');
+      none.className = 'field-help';
+      none.textContent = 'No matching model.';
+      list.appendChild(none);
+    }
+  };
+  search.addEventListener('input', () => draw(search.value));
+  container.append(search, list);
+  draw('');
+}
+
+function field(labelText, type, value, opts = {}) {
   const wrap = document.createElement('label');
   wrap.className = 'field';
   const span = document.createElement('span');
@@ -1967,6 +2040,35 @@ function field(labelText, type, value) {
   input.type = type;
   input.className = 'input';
   input.value = value || '';
+  if (opts.secret) {
+    // A password-type field makes Safari offer "Save Password?" for an API key.
+    // Keep the key masked with CSS instead (WebKit), and stop password managers
+    // from treating it as a credential.
+    input.classList.add('secret-input');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('data-lpignore', 'true');
+    input.setAttribute('data-1p-ignore', 'true');
+    input.setAttribute('data-bwignore', 'true');
+    const row = document.createElement('span');
+    row.className = 'secret-row';
+    row.appendChild(input);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'secret-toggle';
+    toggle.textContent = 'Show';
+    toggle.setAttribute('aria-label', 'Show API key');
+    toggle.addEventListener('click', () => {
+      const revealed = input.classList.toggle('revealed');
+      toggle.textContent = revealed ? 'Hide' : 'Show';
+      toggle.setAttribute('aria-label', revealed ? 'Hide API key' : 'Show API key');
+    });
+    row.appendChild(toggle);
+    wrap.append(span, row);
+    return { wrap, input };
+  }
   wrap.append(span, input);
   return { wrap, input };
 }
@@ -2537,7 +2639,10 @@ async function transcribeAudioBlob(audioBlob) {
       const errData = await uRes.json().catch(() => ({}));
       throw new Error(errData.error || 'Audio file too large for the server. Try a shorter recording or check your reverse proxy (nginx) client_max_body_size setting.');
     }
-    if (!uRes.ok) throw lastUploadErr || new Error(`Upload: ${uRes.status}`);
+    if (!uRes.ok) {
+      const errData = await uRes.json().catch(() => ({}));
+      throw new Error(errData.error || (lastUploadErr && lastUploadErr.message) || `Upload: ${uRes.status}`);
+    }
     const uData = await uRes.json();
     if (uData.error) throw new Error(uData.error);
 
@@ -2555,19 +2660,19 @@ async function transcribeAudioBlob(audioBlob) {
     clearInterval(procTimer);
 
     if (result.cleanupFailed) {
-      setStatus(result.copiedLabel, 'error');
-      setTimeout(() => setStatus('Ready'), 3000);
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
+      setStatus(result.copiedLabel, 'error');
+      setTimeout(() => setStatus('Ready'), 3000);
       return true;
     }
 
     if (!autoStopped) {
-      setStatus(result.copiedLabel, result.copyFailed ? 'error' : 'done');
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
+      setStatus(result.copiedLabel, result.copyFailed ? 'error' : 'done');
       setTimeout(() => setStatus('Ready'), 2000);
     } else {
       clearProcessingUI();
@@ -2579,16 +2684,16 @@ async function transcribeAudioBlob(audioBlob) {
   } catch (e) {
     clearInterval(procTimer);
     if (e.name === 'AbortError') {
-      setStatus('Cancelled', 'error');
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
+      setStatus('Cancelled', 'error');
       setTimeout(() => setStatus('Ready'), 1500);
     } else {
-      setStatus('Error: ' + e.message, 'error');
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
+      setStatus('Error: ' + e.message, 'error');
       setTimeout(() => setStatus('Ready'), 3000);
       showRecoveryRow('failed');
     }
@@ -2987,7 +3092,7 @@ function newSessionId() {
 
 // ── Live streaming helpers (Cartesia) ──
 const STREAM_DRAIN_MS = 500;
-const STREAM_FINALIZE_MS = 6000;
+const STREAM_FINALIZE_MS = 2500;
 
 function isStreamSessionActive(session) {
   return !!session && streamSession === session && !session.cancelled;
@@ -3011,11 +3116,6 @@ function streamSendPcm(samples) {
   else if (streamPendingAudio.length < 200) streamPendingAudio.push(frame);
 }
 
-function streamSendControl(message) {
-  if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
-  try { streamSocket.send(JSON.stringify(message)); } catch {}
-}
-
 function streamResolveDone(session) {
   if (session && session.resolveDone) {
     const resolve = session.resolveDone;
@@ -3024,11 +3124,21 @@ function streamResolveDone(session) {
   }
 }
 
+function streamResolveFinal(session) {
+  if (session && session.finalizeResolve) {
+    const resolve = session.finalizeResolve;
+    session.finalizeResolve = null;
+    resolve();
+  }
+}
+
 function updateStreamPreview(session) {
   if (!isStreamSessionActive(session) || !streamAssembler) return;
   const preview = streamAssembler.text();
   if (!preview.trim()) return;
-  const base = session.baseRaw || '';
+  // Append off means a new take replaces the old document. Only Append mode
+  // should keep the previous text visible while speaking.
+  const base = isAppendMode() ? (session.baseRaw || '') : '';
   const shown = appendSegment(base, preview);
   transcriptDisplay.textContent = shown;
   transcriptDisplay.classList.remove('transcript-placeholder');
@@ -3050,17 +3160,20 @@ function handleStreamEvent(raw) {
   }
   if (event.type === 'error') {
     session.streamError = event.error || 'Live stream failed';
-    setStatus('Live preview unavailable — the full recording is still saved', 'error');
+    // A preview failure is not a recording failure: stay amber, keep capturing.
+    setStatus('Live preview unavailable — the recording is still saved', 'processing');
     return;
   }
   if (event.type === 'done') {
     session.streamDone = true;
     streamResolveDone(session);
+    streamResolveFinal(session);
     return;
   }
-  if (event.type === 'transcript' && event.text && streamAssembler) {
+  if ((event.type === 'transcript' || event.type === 'turn-start' || event.type === 'turn-resume') && streamAssembler) {
     streamAssembler.apply(event);
     updateStreamPreview(session);
+    if (event.type === 'transcript' && event.isFinal) streamResolveFinal(session);
   }
 }
 
@@ -3121,37 +3234,35 @@ function startStreamingCapture(mediaStream) {
       streamDone: false,
       resolveDone: null,
       donePromise: null,
+      finalizeResolve: null,
+      finalizePromise: null,
       baseRaw: currentRaw,
       baseCleaned: currentCleaned,
       baseOriginalRaw: currentOriginalRaw
     };
     streamSession = session;
     streamMediaStream = mediaStream;
+    // Ink does not space-join turn transcripts, so concatenate exactly what the
+    // provider sends. Partials replace the in-flight text; finals accumulate.
     streamAssembler = {
-      finals: [],
+      finalText: '',
       partial: '',
       apply(event) {
+        if (!event) return;
+        if (event.type === 'turn-start') {
+          this.partial = '';
+          return;
+        }
+        if (event.type !== 'transcript') return;
         if (event.isFinal) {
-          const text = String(event.text || '').trim();
-          const joined = this.finals.join(' ').trim();
-          if (text && joined && (text === joined || text.startsWith(joined))) {
-            // Some providers resend the cumulative transcript instead of deltas.
-            this.finals.length = 0;
-            this.finals.push(text);
-          } else if (text) {
-            this.finals.push(text);
-          }
+          this.finalText += String(event.text || '');
           this.partial = '';
         } else {
-          this.partial = event.text;
+          this.partial = String(event.text || '');
         }
       },
-      text() {
-        const joined = this.finals.join(' ').trim();
-        if (!this.partial) return joined;
-        return (joined ? joined + ' ' : '') + this.partial;
-      },
-      finalText() { return this.finals.join(' ').trim(); }
+      text() { return this.finalText + this.partial; },
+      finalOnly() { return this.finalText; }
     };
     streamResampler = new LedgerLib.StreamingResampler(session.micRate, TARGET_SAMPLE_RATE, 0);
     streamLedger = new LedgerLib.AudioLedger({
@@ -3160,6 +3271,7 @@ function startStreamingCapture(mediaStream) {
       sampleRate: TARGET_SAMPLE_RATE,
       startedAt: session.startedAt
     });
+    session.finalizePromise = new Promise(resolve => { session.finalizeResolve = resolve; });
     streamReady = false;
     streamPendingAudio = [];
     lastBackupFlush = 0;
@@ -3322,18 +3434,22 @@ async function stopStreamingRecording() {
     await finalizeStreamLedger();
 
     setStatusProcessing('Finishing transcription…');
-    if (streamSocket && streamSocket.readyState === WebSocket.OPEN) {
-      streamSendControl({ type: 'finalize' });
-      await Promise.race([session.donePromise || Promise.resolve(), new Promise(r => setTimeout(r, STREAM_FINALIZE_MS))]);
+    if (!session.streamError && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+      // The auto-finalization endpoint has no "finalize" command. A short burst
+      // of silence lets its VAD close the current turn; wait for turn.end, and
+      // fall back to the last partial if it never arrives.
+      streamSendPcm(new Float32Array(TARGET_SAMPLE_RATE * 0.5));
+      await Promise.race([
+        session.finalizePromise || Promise.resolve(),
+        new Promise(r => setTimeout(r, STREAM_FINALIZE_MS))
+      ]);
     }
     if (streamSocket) { try { streamSocket.close(); } catch {} }
     streamSocket = null;
     streamReady = false;
     streamPendingAudio = [];
 
-    const providerRaw = streamAssembler
-      ? (streamAssembler.finalText() || streamAssembler.text())
-      : '';
+    const providerRaw = streamAssembler ? streamAssembler.text() : '';
 
     // Fail-and-preserve: a broken stream or empty result falls back to the
     // complete recording on disk, transcribed through the normal upload path.
@@ -3371,9 +3487,9 @@ async function stopStreamingRecording() {
       const result = await applyProviderTranscript(providerRaw, { signal: abortController.signal });
       if (result.unauthorized) {
         await parkStreamForRecovery(session, 'session expired');
-        handleUnauthorized();
         clearProcessingUI();
         resetButton();
+        handleUnauthorized();
         return;
       }
       if (!result.ok) {
@@ -3390,6 +3506,8 @@ async function stopStreamingRecording() {
       if (streamLedger) { await streamLedger.discard(); streamLedger = null; }
       streamSession = null;
 
+      clearProcessingUI();
+      resetButton();
       if (result.cleanupFailed) {
         setStatus(result.copiedLabel, 'error');
         setTimeout(() => setStatus('Ready'), 3000);
@@ -3401,10 +3519,12 @@ async function stopStreamingRecording() {
         setStatus(result.copiedLabel, result.copyFailed ? 'error' : 'done');
         setTimeout(() => setStatus('Ready'), 2000);
       }
-      clearProcessingUI();
-      resetButton();
     } catch (e) {
       if (session.cancelled) return;
+      await parkStreamForRecovery(session, 'cleanup or display failed');
+      clearProcessingUI();
+      resetButton();
+      await showRecoveryRow('failed');
       if (e.name === 'AbortError') {
         setStatus('Cancelled', 'error');
         setTimeout(() => setStatus('Ready'), 1500);
@@ -3412,10 +3532,6 @@ async function stopStreamingRecording() {
         setStatus('Error: ' + e.message, 'error');
         setTimeout(() => setStatus('Ready'), 3000);
       }
-      await parkStreamForRecovery(session, 'cleanup or display failed');
-      await showRecoveryRow('failed');
-      clearProcessingUI();
-      resetButton();
     } finally {
       processingAbortController = null;
     }
@@ -3886,7 +4002,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '6.24.1'; // keep in sync with package.json at release time
+const APP_VERSION = '7.0.1'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

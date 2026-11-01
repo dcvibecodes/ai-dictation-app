@@ -101,6 +101,35 @@ test('active profile resolution requires a key and honours file over env', () =>
   assert.equal(providers.getActiveProfile(settings, 'transcription').provider, 'openai');
 });
 
+test('transcribe profiles are routed to the native Gemini provider', () => {
+  const migrated = providers.migrateSettings({
+    TRANSCRIPTION_PROFILES: [
+      { id: 'a', provider: 'gemini', model: 'gemini-3.5-transcribe', apiKey: 'enc:v1:x' },
+      { id: 'b', provider: 'gemini', model: 'gemini-2.5-flash', apiKey: 'enc:v1:y' }
+    ],
+    CLEANUP_PROFILES: []
+  });
+  assert.equal(migrated.TRANSCRIPTION_PROFILES[0].provider, 'gemini_transcribe');
+  assert.equal(migrated.TRANSCRIPTION_PROFILES[1].provider, 'gemini');
+  // Idempotent.
+  const again = providers.migrateSettings(migrated);
+  assert.equal(again.TRANSCRIPTION_PROFILES[0].provider, 'gemini_transcribe');
+});
+
+test('model filtering removes noise and keeps the right family', () => {
+  const raw = [
+    'models/gemini-3.5-transcribe',
+    'models/gemini-3.6-flash',
+    'models/antigravity-preview-05-2026',
+    'models/text-embedding-004',
+    'models/imagen-4',
+    'models/veo-3'
+  ];
+  assert.deepEqual(providers.filterModelIds('gemini', raw), ['gemini-3.6-flash']);
+  assert.deepEqual(providers.filterModelIds('gemini_transcribe', raw), ['gemini-3.5-transcribe']);
+  assert.deepEqual(providers.filterModelIds('openai', ['whisper-1', 'whisper-1', '']), ['whisper-1']);
+});
+
 test('fallback only resolves when explicitly configured', () => {
   const settings = {
     TRANSCRIPTION_PROFILES: [

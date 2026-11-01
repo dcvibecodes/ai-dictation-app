@@ -128,6 +128,28 @@ test('AssemblyAI: an error status stops polling and throws', async () => {
   );
 });
 
+test('Gemini Transcribe: native generateContent with inline audio', async () => {
+  const audioPath = tmpAudio('wav-bytes', 'wav');
+  let seen;
+  const fetchImpl = async (url, init) => {
+    seen = { url, init };
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: 'native gemini text' }] } }] });
+  };
+  const text = await adapters.transcribeWithGeminiTranscribe({
+    audioPath, mimeType: 'audio/wav',
+    profile: { apiKey: 'AIza-test', model: 'gemini-3.5-transcribe', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
+    language: 'en', hint: 'Acme, Jira', fetchImpl
+  });
+  assert.equal(text, 'native gemini text');
+  assert.equal(seen.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent');
+  assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-test');
+  const body = JSON.parse(seen.init.body);
+  assert.equal(body.contents[0].parts[0].inlineData.mimeType, 'audio/wav');
+  assert.ok(body.contents[0].parts[0].inlineData.data);
+  assert.deepEqual(body.generationConfig.audioTranscriptionConfig.languageCodes, ['en']);
+  assert.deepEqual(body.generationConfig.audioTranscriptionConfig.customVocabulary, ['Acme', 'Jira']);
+});
+
 test('pcmFromWav strips header and returns s16le payload', () => {
   const wav = Buffer.alloc(44 + 8);
   wav.write('RIFF', 0); wav.write('WAVE', 8); wav.write('fmt ', 12);
@@ -166,7 +188,7 @@ test('Cartesia: handshake params, header, frames, one finalize, final text', asy
   assert.match(ws.url, /model=ink-2/);
   assert.match(ws.url, /encoding=pcm_s16le/);
   assert.match(ws.url, /sample_rate=16000/);
-  assert.match(ws.url, /cartesia_version=2026-08-14/);
+  assert.match(ws.url, /cartesia_version=2026-03-01/);
   assert.equal(ws.options.headers['X-API-Key'], 'cart-key');
 
   ws.emit('open', {});
