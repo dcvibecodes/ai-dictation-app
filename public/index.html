@@ -9,12 +9,12 @@
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#000000">
   <script>(function(){var t=localStorage.getItem('dictationTheme');if(t){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme',window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}})()</script>
-  <link rel="manifest" href="/manifest.json?v=19">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=19">
+  <link rel="manifest" href="/manifest.json?v=20">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preload" href="/fonts/fraunces-latin-var.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/outfit-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=28">
+  <link rel="stylesheet" href="styles.css?v=29">
 </head>
 <body>
   <div class="app">
@@ -149,9 +149,9 @@
             <h2>Voice models</h2>
             <p class="card-desc">The active model transcribes every recording. Tap a row to switch.</p>
           </div>
+          <button type="button" class="btn btn-primary btn-sm" data-add-profile="transcription">+ Add provider</button>
         </div>
         <div id="transcriptionProfiles" class="profile-list" role="radiogroup" aria-label="Voice models"></div>
-        <button type="button" class="add-row" data-add-profile="transcription">+ Add provider</button>
         <div class="fallback-block">
           <div class="fallback-head">
             <h3>Fallback voice model</h3>
@@ -170,9 +170,9 @@
             <h2>Cleanup models</h2>
             <p class="card-desc">Auto-clean repairs punctuation and fillers. Tap a row to switch.</p>
           </div>
+          <button type="button" class="btn btn-primary btn-sm" data-add-profile="cleanup">+ Add provider</button>
         </div>
         <div id="cleanupProfiles" class="profile-list" role="radiogroup" aria-label="Cleanup models"></div>
-        <button type="button" class="add-row" data-add-profile="cleanup">+ Add provider</button>
       </section>
 
       <!-- Recognition -->
@@ -192,8 +192,8 @@
           </label>
         </div>
         <div class="row-end">
-          <button type="button" class="btn btn-primary btn-sm" id="saveRecognitionBtn">Save recognition</button>
           <span class="test-result" id="recognitionResult"></span>
+          <button type="button" class="btn btn-primary btn-sm" id="saveRecognitionBtn">Save recognition</button>
         </div>
       </section>
 
@@ -217,9 +217,9 @@
           <label>Username<input type="text" id="accountUsernameInput" class="input" maxlength="50" placeholder="Your name"></label>
           <label>Current password<input type="password" id="accountUsernamePassword" class="input" autocomplete="current-password"></label>
           <div class="row-end">
-            <button type="submit" class="btn btn-primary btn-sm">Save name</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="cancelNameBtn">Cancel</button>
             <span class="test-result" id="usernameResult"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="cancelNameBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Save name</button>
           </div>
         </form>
         <div class="account-row">
@@ -227,16 +227,16 @@
             <span>Password</span>
             <span class="account-sub">Minimum 12 characters</span>
           </div>
-          <button type="button" class="btn btn-primary btn-sm" id="changePasswordBtn">Change password</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="changePasswordBtn">Change password</button>
         </div>
         <form id="passwordForm" class="stack-form" style="display:none">
           <label>Current password<input type="password" id="accountCurrentPassword" class="input" autocomplete="current-password"></label>
           <label>New password<input type="password" id="accountNewPassword" class="input" minlength="12" autocomplete="new-password"></label>
           <label>Confirm new password<input type="password" id="accountConfirmPassword" class="input" minlength="12" autocomplete="new-password"></label>
           <div class="row-end">
-            <button type="submit" class="btn btn-primary btn-sm">Save password</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="cancelPasswordBtn">Cancel</button>
             <span class="test-result" id="passwordResult"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="cancelPasswordBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Save password</button>
           </div>
         </form>
         <div class="row-end">
@@ -267,8 +267,8 @@
         </div>
         <div id="correctionsList" class="corrections-list"></div>
         <div class="row-end">
-          <button type="button" class="btn btn-ghost btn-sm" id="saveCorrectionsBtn">Save corrections</button>
           <span class="test-result" id="correctionsResult"></span>
+          <button type="button" class="btn btn-primary btn-sm" id="saveCorrectionsBtn">Save corrections</button>
         </div>
       </section>
 
@@ -347,6 +347,6 @@
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
   <script src="lib/profiles-ui.js?v=1"></script>
-  <script src="script.js?v=39"></script>
+  <script src="script.js?v=40"></script>
 </body>
 </html>

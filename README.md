@@ -4,6 +4,14 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.5 — button hierarchy and alignment
+
+- **One button rule across Settings.** Filled black = commit/create (`Save recognition`, `Save corrections`, `Save name`, `Save password`, `Test & save`, `+ Add provider`, `+ Add prompt`, `+ Add rule`). Ghost = open/edit/secondary (`Edit`, `Change password`, `Cancel`, `Sign out`). Danger ghost = destructive (`Delete`, `Restore`).
+- **Actions sit on the right.** Card headers, section save rows, account forms and prompt rows all right-align their actions. Destructive actions in the profile sheet stay on the left, with Cancel then Test & save on the right.
+- **Add provider moved into the card header** for Voice models and Cleanup models, matching Add prompt/Add rule.
+- **Prompt rows aligned.** Default and custom prompts now both put Edit/Delete at the far right instead of custom actions hugging the name.
+- **Corrections save is now primary** (it was ghost while Recognition’s was primary), and “Change password” is secondary because it opens a form rather than committing one.
+
 ## What's New in v7.0.4 — prompt v3, calmer selection, fallback cleanup, UI consistency
 
 - **New built-in cleanup prompt (v5).** The production default has been replaced with the updated v5 prompt. The one-time prompt migration version is now `5`, so any stored Default override is dropped once and the list shows **Built-in**.

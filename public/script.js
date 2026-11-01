@@ -1836,9 +1836,11 @@ function openProfileForm(kind, providerId, profile) {
   remove.textContent = 'Delete';
   remove.style.display = profile ? '' : 'none';
 
-  actions.append(testSave);
-  if (profile) actions.append(remove);
-  actions.append(cancel);
+  if (profile) {
+    remove.classList.add('form-delete');
+    actions.append(remove);
+  }
+  actions.append(cancel, testSave);
 
   form.append(head, labelField.wrap, keyField.wrap, modelField.wrap, datalist);
   const modelRow = document.createElement('div');
@@ -3968,7 +3970,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.0.4'; // keep in sync with package.json at release time
+const APP_VERSION = '7.0.5'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
