@@ -890,15 +890,15 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   --record-accent: #b4552d;
   --surface-card: #fdfaf5;
   --surface-card-muted: #f7f1e8;
-  --selected-bg: #f1e7d9;
-  --selected-border: #ddcbb7;
+  --selected-bg: #f8f3eb;
+  --selected-border: #e6dacb;
 }
 :root[data-theme="dark"] {
   --record-accent: #e0784f;
   --surface-card: #131313;
   --surface-card-muted: #191919;
-  --selected-bg: #212121;
-  --selected-border: #3a3a3a;
+  --selected-bg: #1b1b1b;
+  --selected-border: #303030;
 }
 :root {
   --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
@@ -983,7 +983,7 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   background: var(--selected-bg);
   color: var(--text);
   border-color: var(--selected-border);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .profile-row.is-active .profile-meta { color: var(--text-faint); }
 .profile-monogram {

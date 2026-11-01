@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.6 — lighter active-model highlight
+
+- The selected Voice/Cleanup model row now uses an almost-background tint (`#f8f3eb` light, `#1b1b1b` dark) with a softer accent edge. The ACTIVE badge and border keep it recognizable without the heavy filled block.
+
 ## What's New in v7.0.5 — button hierarchy and alignment
 
 - **One button rule across Settings.** Filled black = commit/create (`Save recognition`, `Save corrections`, `Save name`, `Save password`, `Test & save`, `+ Add provider`, `+ Add prompt`, `+ Add rule`). Ghost = open/edit/secondary (`Edit`, `Change password`, `Cancel`, `Sign out`). Danger ghost = destructive (`Delete`, `Restore`).
