@@ -9,12 +9,12 @@
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#000000">
   <script>(function(){var t=localStorage.getItem('dictationTheme');if(t){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme',window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}})()</script>
-  <link rel="manifest" href="/manifest.json?v=18">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=18">
+  <link rel="manifest" href="/manifest.json?v=19">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=19">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preload" href="/fonts/fraunces-latin-var.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/outfit-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=27">
+  <link rel="stylesheet" href="styles.css?v=28">
 </head>
 <body>
   <div class="app">
@@ -152,14 +152,23 @@
         </div>
         <div id="transcriptionProfiles" class="profile-list" role="radiogroup" aria-label="Voice models"></div>
         <button type="button" class="add-row" data-add-profile="transcription">+ Add provider</button>
+        <div class="fallback-block">
+          <div class="fallback-head">
+            <h3>Fallback voice model</h3>
+            <p class="card-desc">Optional. Used once if the active model fails.</p>
+          </div>
+          <select id="fallbackProfileSelect" class="input" aria-label="Fallback voice model">
+            <option value="">None (fail and keep the recording)</option>
+          </select>
+        </div>
       </section>
 
       <!-- Cleanup model -->
       <section class="settings-card">
         <div class="card-head">
           <div>
-            <h2>Cleanup model</h2>
-            <p class="card-desc">Auto-clean repairs punctuation and fillers using this model.</p>
+            <h2>Cleanup models</h2>
+            <p class="card-desc">Auto-clean repairs punctuation and fillers. Tap a row to switch.</p>
           </div>
         </div>
         <div id="cleanupProfiles" class="profile-list" role="radiogroup" aria-label="Cleanup models"></div>
@@ -186,11 +195,6 @@
           <button type="button" class="btn btn-primary btn-sm" id="saveRecognitionBtn">Save recognition</button>
           <span class="test-result" id="recognitionResult"></span>
         </div>
-        <label class="fallback-row">Fallback voice model <span class="optional">(optional — only used if the active model fails)</span>
-          <select id="fallbackProfileSelect" class="input">
-            <option value="">None (fail and keep the recording)</option>
-          </select>
-        </label>
       </section>
 
       <!-- Account & security -->
@@ -207,7 +211,7 @@
             <span id="accountName">No username</span>
             <span class="account-sub">Owner</span>
           </div>
-          <button type="button" class="btn btn-ghost btn-sm" id="editNameBtn">Edit name</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="editNameBtn">Edit</button>
         </div>
         <form id="usernameForm" class="stack-form" style="display:none">
           <label>Username<input type="text" id="accountUsernameInput" class="input" maxlength="50" placeholder="Your name"></label>
@@ -230,7 +234,7 @@
           <label>New password<input type="password" id="accountNewPassword" class="input" minlength="12" autocomplete="new-password"></label>
           <label>Confirm new password<input type="password" id="accountConfirmPassword" class="input" minlength="12" autocomplete="new-password"></label>
           <div class="row-end">
-            <button type="submit" class="btn btn-primary btn-sm">Update password</button>
+            <button type="submit" class="btn btn-primary btn-sm">Save password</button>
             <button type="button" class="btn btn-ghost btn-sm" id="cancelPasswordBtn">Cancel</button>
             <span class="test-result" id="passwordResult"></span>
           </div>
@@ -247,7 +251,7 @@
             <h2>Cleanup prompts</h2>
             <p class="card-desc">The active prompt is sent as a system message to the cleanup model.</p>
           </div>
-          <button class="btn btn-primary btn-sm" id="addPromptBtn" onclick="openAddPromptModal()">+ Add</button>
+          <button class="btn btn-primary btn-sm" id="addPromptBtn" onclick="openAddPromptModal()">+ Add prompt</button>
         </div>
         <div id="promptsList" class="prompts-list"></div>
       </section>
@@ -259,7 +263,7 @@
             <h2>Corrections</h2>
             <p class="card-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone.</p>
           </div>
-          <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add</button>
+          <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add rule</button>
         </div>
         <div id="correctionsList" class="corrections-list"></div>
         <div class="row-end">
@@ -343,6 +347,6 @@
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
   <script src="lib/profiles-ui.js?v=1"></script>
-  <script src="script.js?v=38"></script>
+  <script src="script.js?v=39"></script>
 </body>
 </html>

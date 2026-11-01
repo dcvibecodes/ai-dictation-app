@@ -4,9 +4,17 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.4 — prompt v3, calmer selection, fallback cleanup, UI consistency
+
+- **New built-in cleanup prompt (v5).** The production default has been replaced with the updated v5 prompt. The one-time prompt migration version is now `5`, so any stored Default override is dropped once and the list shows **Built-in**.
+- **Softer active-model highlight.** The selected voice/cleanup model uses a light tint and a thin accent edge instead of a full black/white fill, in both themes.
+- **Fallback moved and fixed.** Fallback is now a separate heading inside **Voice models** (not Recognition). Activating the profile that is currently the fallback clears it, selecting the active model as fallback is rejected, and profiles without keys cannot be chosen.
+- **Consistent control heights.** All single-line inputs and selects are 40 px (settings, sheets, prompt selector, login/setup). Textareas remain multi-line.
+- **Consistency cleanup:** “Edit name” → “Edit”, “Update password” → “Save password”, “Cleanup model” → “Cleanup models”, “+ Add” → “+ Add prompt” / “+ Add rule”, Sign out is no longer underlined and keeps its hover highlight, and the duplicate account avatar was removed.
+
 ## What's New in v7.0.3 — simpler settings, OpenCode Go cleanup, inbuilt default prompt
 
-- **OpenCode Go cleanup provider.** Settings → Cleanup model now offers **OpenCode Go** as a preset. Its OpenAI-compatible base URL (`https://opencode.ai/inference/go/openai/v1`), curated model list and live model browser are built in. Paste your Go API key, pick a model, Test & save. Transcription is unchanged — Go has no speech-to-text endpoint. Note: OpenCode documents Go for coding-agent traffic and monitors usage, so using it for dictation cleanup is at your discretion.
+- **OpenCode Go cleanup provider.** Settings → Cleanup models now offers **OpenCode Go** as a preset. Its OpenAI-compatible base URL (`https://opencode.ai/inference/go/openai/v1`), curated model list and live model browser are built in. Paste your Go API key, pick a model, Test & save. Transcription is unchanged — Go has no speech-to-text endpoint. Note: OpenCode documents Go for coding-agent traffic and monitors usage, so using it for dictation cleanup is at your discretion.
 - **Cleanup animation removed.** There is no longer a Shatter / Word-by-word option; cleaned text always replaces the raw text instantly. The settings section, code path and animation CSS are gone.
 - **The live default prompt is now built in.** The edited Default prompt that was running in production has been moved into the app code, and the stored override is dropped once on startup. The prompt list shows it as **Built-in**; Restore now returns to this version instead of the older original.
 
@@ -179,7 +187,7 @@ Fixes:
 ### Diagnosed from real server logs: provider failures no longer lose recordings
 Server logs from a failed session showed the root cause: the **Gemini** transcription endpoint was rejecting audio with `"Invalid audio format \"aac\"... Valid formats are: [wav, mp3]"`, then returning `"Gemini returned an empty transcription."`, and finally `"Connection error."` — every chunk failed, so nothing was transcribed and, because the live backup was never finalized, there was nothing to recover.
 
-- **Provider fallback (v7+)** — there is no silent switching between providers: a different provider means different cost, terms and privacy handling for your audio. Failures keep the recording, and a fallback model runs only if you explicitly choose one in Settings → Recognition.
+- **Provider fallback (v7+)** — there is no silent switching between providers: a different provider means different cost, terms and privacy handling for your audio. Failures keep the recording, and a fallback model runs only if you explicitly choose one under Settings → Voice models.
 - **Honest format handling** — Gemini is only ever sent genuine `wav`/`mp3`. WebM (Chrome) and MP4/AAC (Safari) audio goes straight to Whisper instead of being mislabeled and rejected.
 - **Live backup is finalized on every exit path** — stop, error, "nothing transcribed", tab hidden, and page unload all write a complete, recoverable WAV, so the recovery strip always has real audio to offer.
 - **Recovery on load is unconditional** — any backup with audio is surfaced, in-progress or finished.
@@ -428,7 +436,7 @@ Each profile stores its own key, encrypted at rest. **Recognition** fields (Lang
 | Base URL | **Custom** profiles only, under Advanced | `http://my-server:8000/v1` |
 | Transcription Language | Settings → Recognition (shared) | Optional — e.g. `en`; blank = auto-detect |
 | Vocabulary hint | Settings → Recognition (shared) | Optional — names/jargon, e.g. `Acme, Jira, WebM` |
-| Fallback voice model | Settings → Recognition | Optional — only runs after the active model fails |
+| Fallback voice model | Settings → Voice models | Optional — only runs after the active model fails |
 | Cleanup prompt | Settings → Cleanup prompts | Default or one of up to 4 custom prompts |
 
 Every known provider has its base URL built in — you never see or edit one. Keys stay server-side and are encrypted at rest (AES-256-GCM, `enc:v1:`), and `GET /api/settings` only ever returns a bullet + last 4 mask.

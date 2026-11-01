@@ -46,7 +46,7 @@ const SECRET_FILE   = path.join(DATA_DIR, 'session.secret');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
 const PROMPTS_VERSION_FILE = path.join(DATA_DIR, 'prompts.version');
-const PROMPTS_VERSION = '2'; // bump when the built-in default replaces stored overrides
+const PROMPTS_VERSION = '5'; // bump when the built-in default replaces stored overrides
 const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
 const BCRYPT_ROUNDS = 12;
 // Deliberate change from the old no-expiry session: tokens now have an absolute
@@ -468,6 +468,12 @@ app.post('/api/settings/fallback', requireOwner, (req, res) => {
   if (id != null && id !== '') {
     const profile = providers.findProfile(current, 'transcription', id);
     if (!profile) return res.status(400).json({ error: 'Unknown profile.' });
+    if (profile.id === current.ACTIVE_TRANSCRIPTION_PROFILE) {
+      return res.status(400).json({ error: 'The active model cannot also be the fallback.' });
+    }
+    if (!profile.apiKey) {
+      return res.status(400).json({ error: 'That profile has no API key yet.' });
+    }
     current.FALLBACK_TRANSCRIPTION_PROFILE = id;
   } else {
     delete current.FALLBACK_TRANSCRIPTION_PROFILE;
@@ -665,8 +671,16 @@ function registerProfileRoutes(kind) {
     const profile = providers.findProfile(current, kind, req.params.id);
     if (!profile) return res.status(404).json({ error: 'Profile not found.' });
     current[meta.active] = profile.id;
+    // A profile cannot be both active and fallback: the fallback would be a no-op.
+    if (kind === 'transcription' && current.FALLBACK_TRANSCRIPTION_PROFILE === profile.id) {
+      delete current.FALLBACK_TRANSCRIPTION_PROFILE;
+    }
     saveSettings(current);
-    res.json({ ok: true, activeProfile: profile.id });
+    res.json({
+      ok: true,
+      activeProfile: profile.id,
+      fallbackTranscriptionProfile: current.FALLBACK_TRANSCRIPTION_PROFILE || null
+    });
   });
 }
 
@@ -822,7 +836,9 @@ wss.on('connection', (client, req) => {
 // new built-in text instead of an older one.
 function migratePromptOverrides(list) {
   const safe = Array.isArray(list) ? list : [];
-  if (fs.existsSync(PROMPTS_VERSION_FILE)) return safe;
+  let stored = '';
+  try { stored = fs.readFileSync(PROMPTS_VERSION_FILE, 'utf8').trim(); } catch {}
+  if (stored && Number(stored) >= Number(PROMPTS_VERSION)) return safe;
   const filtered = safe.filter(p => p && p.id !== 'default');
   if (filtered.length !== safe.length) {
     fs.writeFileSync(PROMPTS_FILE, JSON.stringify(filtered, null, 2));
