@@ -2296,25 +2296,6 @@ function makeCorrectionRow(rule = {}) {
   canonicalLabel.textContent = 'Replace with';
   canonicalField.append(canonicalLabel, canonical);
 
-  const controls = document.createElement('div');
-  controls.className = 'correction-controls';
-
-  const enabledLabel = document.createElement('label');
-  enabledLabel.className = 'correction-enabled';
-  const switchEl = document.createElement('span');
-  switchEl.className = 'toggle-switch';
-  const enabled = document.createElement('input');
-  enabled.type = 'checkbox';
-  enabled.dataset.field = 'enabled';
-  enabled.checked = rule.enabled !== false;
-  enabled.setAttribute('aria-label', 'Enable rule');
-  const slider = document.createElement('span');
-  slider.className = 'toggle-slider';
-  switchEl.append(enabled, slider);
-  const onText = document.createElement('span');
-  onText.textContent = 'On';
-  enabledLabel.append(switchEl, onText);
-
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'btn btn-ghost btn-danger correction-remove';
@@ -2333,8 +2314,7 @@ function makeCorrectionRow(rule = {}) {
     setCorrectionsHeaderVisible(false);
   };
 
-  controls.append(enabledLabel, remove);
-  row.append(aliasField, arrow, canonicalField, controls);
+  row.append(aliasField, arrow, canonicalField, remove);
   row.addEventListener('input', (e) => {
     if (e.target && e.target.classList) e.target.classList.remove('input-error');
   });
@@ -2384,7 +2364,6 @@ async function saveCorrections() {
     const canonicalEl = row.querySelector('[data-field="canonical"]');
     const aliasesRaw = aliasesEl.value.trim();
     const canonical = canonicalEl.value.trim();
-    const enabled = row.querySelector('[data-field="enabled"]').checked;
     if (!aliasesRaw && !canonical) continue;
     rowNumber++;
     if (!aliasesRaw) {
@@ -2402,7 +2381,7 @@ async function saveCorrections() {
       return;
     }
     const aliases = aliasesRaw.split(',').map(s => s.trim()).filter(Boolean);
-    replacements.push({ canonical, aliases, caseInsensitive: true, wholePhrase: true, enabled });
+    replacements.push({ canonical, aliases, caseInsensitive: true, wholePhrase: true, enabled: true });
   }
 
   const profile = (glossary && glossary.profiles && glossary.profiles.work) || {};
@@ -4027,7 +4006,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.1'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

@@ -4,6 +4,13 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.1 — simpler Corrections, new Settings order
+
+- **Settings order:** Voice models → Recognition → Corrections → Cleanup prompts → Cleanup models → Account & security.
+- **Corrections rules are always on.** The Enabled toggle is gone; a rule exists, so it applies. Delete the rule to stop using it.
+- **Full-width correction rows.** The two fields now flex to fill the card, with the delete X at the far right. On mobile, rules remain cards with the X at the bottom-right.
+- Existing saved rules were already enabled; any legacy disabled rule becomes enabled on its next save.
+
 ## What's New in v7.1.0 — bigger controls, redesigned Corrections row
 
 - **Touch targets are bigger.** Buttons are 38 px (36 px compact) on desktop and 44 px on touch devices. Header icons, tabs, segmented chips, selects and inputs follow the same sizing, with focus rings on every interactive control.

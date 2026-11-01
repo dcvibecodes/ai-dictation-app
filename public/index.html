@@ -9,12 +9,12 @@
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#000000">
   <script>(function(){var t=localStorage.getItem('dictationTheme');if(t){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme',window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}})()</script>
-  <link rel="manifest" href="/manifest.json?v=23">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=23">
+  <link rel="manifest" href="/manifest.json?v=24">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=24">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preload" href="/fonts/fraunces-latin-var.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/outfit-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
   <div class="app">
@@ -163,18 +163,6 @@
         </div>
       </section>
 
-      <!-- Cleanup model -->
-      <section class="settings-card">
-        <div class="card-head">
-          <div>
-            <h2>Cleanup models</h2>
-            <p class="card-desc">Auto-clean repairs punctuation and fillers. Tap a row to switch.</p>
-          </div>
-          <button type="button" class="btn btn-primary btn-sm" data-add-profile="cleanup">+ Add provider</button>
-        </div>
-        <div id="cleanupProfiles" class="profile-list" role="radiogroup" aria-label="Cleanup models"></div>
-      </section>
-
       <!-- Recognition -->
       <section class="settings-card">
         <div class="card-head">
@@ -195,6 +183,49 @@
           <span class="test-result" id="recognitionResult"></span>
           <button type="button" class="btn btn-primary btn-sm" id="saveRecognitionBtn">Save recognition</button>
         </div>
+      </section>
+
+      <!-- Correction dictionary -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Corrections</h2>
+            <p class="card-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add rule</button>
+        </div>
+        <div class="corrections-header" id="correctionsHeader" aria-hidden="true">
+          <span>Heard as</span><span></span><span>Replace with</span><span></span>
+        </div>
+        <div id="correctionsList" class="corrections-list"></div>
+        <div class="row-end">
+          <span class="test-result" id="correctionsResult"></span>
+          <button type="button" class="btn btn-primary btn-sm" id="saveCorrectionsBtn">Save corrections</button>
+        </div>
+      </section>
+
+      <!-- Cleanup prompts -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Cleanup prompts</h2>
+            <p class="card-desc">The active prompt is sent as a system message to the cleanup model.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" id="addPromptBtn" onclick="openAddPromptModal()">+ Add prompt</button>
+        </div>
+        <div id="promptsList" class="prompts-list"></div>
+      </section>
+
+      <!-- Cleanup models -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Cleanup models</h2>
+            <p class="card-desc">Auto-clean repairs punctuation and fillers. Tap a row to switch.</p>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" data-add-profile="cleanup">+ Add provider</button>
+        </div>
+        <div id="cleanupProfiles" class="profile-list" role="radiogroup" aria-label="Cleanup models"></div>
       </section>
 
       <!-- Account & security -->
@@ -244,36 +275,6 @@
         </div>
       </section>
 
-      <!-- Cleanup prompts -->
-      <section class="settings-card">
-        <div class="card-head">
-          <div>
-            <h2>Cleanup prompts</h2>
-            <p class="card-desc">The active prompt is sent as a system message to the cleanup model.</p>
-          </div>
-          <button class="btn btn-primary btn-sm" id="addPromptBtn" onclick="openAddPromptModal()">+ Add prompt</button>
-        </div>
-        <div id="promptsList" class="prompts-list"></div>
-      </section>
-
-      <!-- Correction dictionary -->
-      <section class="settings-card">
-        <div class="card-head">
-          <div>
-            <h2>Corrections</h2>
-            <p class="card-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone.</p>
-          </div>
-          <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add rule</button>
-        </div>
-        <div class="corrections-header" id="correctionsHeader" aria-hidden="true">
-          <span>Heard as</span><span></span><span>Replace with</span><span>Enabled</span>
-        </div>
-        <div id="correctionsList" class="corrections-list"></div>
-        <div class="row-end">
-          <span class="test-result" id="correctionsResult"></span>
-          <button type="button" class="btn btn-primary btn-sm" id="saveCorrectionsBtn">Save corrections</button>
-        </div>
-      </section>
 
 
     </div>
@@ -350,6 +351,6 @@
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
   <script src="lib/profiles-ui.js?v=1"></script>
-  <script src="script.js?v=43"></script>
+  <script src="script.js?v=44"></script>
 </body>
 </html>
