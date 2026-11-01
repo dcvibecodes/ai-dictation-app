@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.2 — Settings order
+
+- **New Settings order:** Voice models → Cleanup models → Cleanup prompts → Corrections → Recognition → Account & security.
+
 ## What's New in v7.1.1 — simpler Corrections, new Settings order
 
 - **Settings order:** Voice models → Recognition → Corrections → Cleanup prompts → Cleanup models → Account & security.
