@@ -116,6 +116,15 @@ test('transcribe profiles are routed to the native Gemini provider', () => {
   assert.equal(again.TRANSCRIPTION_PROFILES[0].provider, 'gemini_transcribe');
 });
 
+test('OpenCode Go is available as a cleanup-only preset', () => {
+  const go = providers.CLEANUP_PROVIDERS.opencode_go;
+  assert.ok(go);
+  assert.equal(go.baseUrl, 'https://opencode.ai/inference/go/openai/v1');
+  assert.equal(go.modelsUrl, 'https://opencode.ai/inference/go/v1/models');
+  assert.ok(go.models.includes('glm-5.3-flash'));
+  assert.equal(providers.TRANSCRIPTION_PROVIDERS.opencode_go, undefined);
+});
+
 test('model filtering removes noise and keeps the right family', () => {
   const raw = [
     'models/gemini-3.5-transcribe',

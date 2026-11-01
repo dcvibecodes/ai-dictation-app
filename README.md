@@ -4,6 +4,12 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.3 — simpler settings, OpenCode Go cleanup, inbuilt default prompt
+
+- **OpenCode Go cleanup provider.** Settings → Cleanup model now offers **OpenCode Go** as a preset. Its OpenAI-compatible base URL (`https://opencode.ai/inference/go/openai/v1`), curated model list and live model browser are built in. Paste your Go API key, pick a model, Test & save. Transcription is unchanged — Go has no speech-to-text endpoint. Note: OpenCode documents Go for coding-agent traffic and monitors usage, so using it for dictation cleanup is at your discretion.
+- **Cleanup animation removed.** There is no longer a Shatter / Word-by-word option; cleaned text always replaces the raw text instantly. The settings section, code path and animation CSS are gone.
+- **The live default prompt is now built in.** The edited Default prompt that was running in production has been moved into the app code, and the stored override is dropped once on startup. The prompt list shows it as **Built-in**; Restore now returns to this version instead of the older original.
+
 ## What's New in v7.0.2 — model list, Gemini Transcribe and ElevenLabs fixes
 
 - **Gemini Transcribe now returns text.** Recordings are converted to WAV before upload, the language code is mapped to the BCP-47 form the transcribe model expects (or omitted so it auto-detects), and the response parser reads both `parts[].text` and `parts[].audioTranscription.text`. Empty responses now log the provider's finish reason instead of silently succeeding.
@@ -32,7 +38,7 @@ AI-powered voice-to-text for people who can't install software on their computer
 - **Username + account settings.** New installs choose a username at `/setup`; existing installs get a one-time "Choose your username" screen after signing in (the existing password keeps working). You can change the username and the password from Settings → Account & security.
 - **Stronger sessions.** Passwords are now 12+ characters and capped at 72 bytes (bcrypt's limit) with a clear error instead of silent truncation. Sessions expire after 180 days, and changing your password invalidates every other session — this browser stays signed in.
 - **CSRF hardening.** Sensitive mutations validate the Origin/Referer host on top of the SameSite cookie.
-- **Redesigned Settings tab.** A profile-driven page with card-based voice/cleanup model lists, provider sheets, account & security, recognition, prompts, corrections and animation. The Dictate tab keeps its original layout with one improvement: Auto-clean / Live / Append are one segmented chip and the prompt selector is a rounded pill.
+- **Redesigned Settings tab.** A profile-driven page with card-based voice/cleanup model lists, provider sheets, account & security, recognition, prompts and corrections. The Dictate tab keeps its original layout with one improvement: Auto-clean / Live / Append are one segmented chip and the prompt selector is a rounded pill.
 - **Live is now a model capability, not a toggle.** The old 3–60 s chunking mode is gone. A streaming model (Cartesia ink-2) transcribes continuously while you speak — no context lost at chunk boundaries. Every other model records once and transcribes at Stop. The Live chip is locked to show which behaviour the active model uses.
 - **Cartesia true streaming.** The browser streams 16 kHz PCM through a same-origin WebSocket; the server proxies it to Cartesia with the API key kept server-side. Partial turns appear while speaking, the final text runs through the normal cleanup/copy pipeline, and a broken stream falls back to transcribing the saved recording.
 
@@ -262,7 +268,6 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
 - **Live streaming where the model supports it** — with a Cartesia ink-2 profile active, audio streams continuously through a WebSocket while you speak; partial text appears live and the final text is finalized once at Stop. With every other model, recording is transcribed once at Stop (more context, better accuracy). There is no chunking mode and no Live toggle; the Live chip is locked to the active model's capability.
 - **Recording safety net** — the recorder only shows "recording" once real audio is confirmed; a silence watchdog warns if the mic is muted or in use; mic loss mid-session is caught and the audio is saved; and a rolling backup means an interrupted recording is recoverable on the next open.
-- **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
 - **Elapsed time display** — processing time shown in status during transcription and cleanup
 - **Single transcript display** — one clean text area; shows cleaned or raw text depending on auto-clean toggle
@@ -285,7 +290,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Prompt dropdown** — select cleanup prompt from a dropdown; always visible on the Dictate tab
 - **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5); re-clean with a different prompt anytime
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
-- **Settings tab** — profile-driven voice models and cleanup models, shared recognition fields, account & security, prompt management, corrections and animation
+- **Settings tab** — profile-driven voice models and cleanup models, shared recognition fields, account & security, prompt management and corrections
 - **Locked settings** — API config is read-only by default, click Edit to modify
 - **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, O, N, U, A, T, L, 1–5, M, D, H, S
 - **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)

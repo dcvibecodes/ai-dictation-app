@@ -24,6 +24,8 @@ const {
 } = require('./lib/owner');
 const providers = require('./lib/providers');
 const adapters = require('./lib/adapters');
+const APP_VERSION = require('./package.json').version;
+const OPENCODE_SESSION_ID = crypto.randomUUID();
 const { extensionForMime } = require('./lib/media');
 
 const app    = express();
@@ -43,6 +45,8 @@ const GEN_FILE      = path.join(DATA_DIR, 'session.generation');
 const SECRET_FILE   = path.join(DATA_DIR, 'session.secret');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
+const PROMPTS_VERSION_FILE = path.join(DATA_DIR, 'prompts.version');
+const PROMPTS_VERSION = '2'; // bump when the built-in default replaces stored overrides
 const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
 const BCRYPT_ROUNDS = 12;
 // Deliberate change from the old no-expiry session: tokens now have an absolute
@@ -813,19 +817,38 @@ wss.on('connection', (client, req) => {
 });
 
 // --- Prompts API ---
+// Version 2 moves the "Default" prompt into the client code. Any stored default
+// override (the old editable copy) is dropped once, so Restore now reveals the
+// new built-in text instead of an older one.
+function migratePromptOverrides(list) {
+  const safe = Array.isArray(list) ? list : [];
+  if (fs.existsSync(PROMPTS_VERSION_FILE)) return safe;
+  const filtered = safe.filter(p => p && p.id !== 'default');
+  if (filtered.length !== safe.length) {
+    fs.writeFileSync(PROMPTS_FILE, JSON.stringify(filtered, null, 2));
+  }
+  fs.writeFileSync(PROMPTS_VERSION_FILE, PROMPTS_VERSION);
+  return filtered;
+}
+
 function loadPrompts() {
   if (promptsCache) return promptsCache;
   if (!fs.existsSync(PROMPTS_FILE) && fs.existsSync(LEGACY_PROMPTS_FILE)) {
     try {
       const legacy = JSON.parse(fs.readFileSync(LEGACY_PROMPTS_FILE, 'utf8'));
-      fs.writeFileSync(PROMPTS_FILE, JSON.stringify(legacy, null, 2));
+      const migrated = migratePromptOverrides(legacy);
+      fs.writeFileSync(PROMPTS_FILE, JSON.stringify(migrated, null, 2));
       fs.unlinkSync(LEGACY_PROMPTS_FILE);
-      promptsCache = legacy;
+      promptsCache = migrated;
       return promptsCache;
     } catch { promptsCache = []; return promptsCache; }
   }
-  if (!fs.existsSync(PROMPTS_FILE)) { promptsCache = []; return promptsCache; }
-  try { promptsCache = JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8')); }
+  if (!fs.existsSync(PROMPTS_FILE)) {
+    migratePromptOverrides([]);
+    promptsCache = [];
+    return promptsCache;
+  }
+  try { promptsCache = migratePromptOverrides(JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8'))); }
   catch { promptsCache = []; }
   return promptsCache;
 }
@@ -901,10 +924,28 @@ function getCleanupProfile() {
   };
 }
 
+// OpenCode Go asks non-OpenCode clients to identify themselves with a session
+// header and a custom user agent.
+function openCodeHeaders(profileOrProvider) {
+  const provider = typeof profileOrProvider === 'string' ? profileOrProvider : profileOrProvider && profileOrProvider.provider;
+  if (provider !== 'opencode_go') return {};
+  return {
+    'x-opencode-session': OPENCODE_SESSION_ID,
+    'User-Agent': `ai-dictation-app/${APP_VERSION}`
+  };
+}
+
 function getCleanupClient() {
   const profile = getCleanupProfile();
   if (!profile) throw new Error('Cleanup API key not configured. Go to Settings tab.');
-  return new OpenAI({ apiKey: profile.apiKey, baseURL: profile.baseUrl || undefined, timeout: AI_TIMEOUT_MS, maxRetries: 2 });
+  const headers = openCodeHeaders(profile);
+  return new OpenAI({
+    apiKey: profile.apiKey,
+    baseURL: profile.baseUrl || undefined,
+    timeout: AI_TIMEOUT_MS,
+    maxRetries: 2,
+    ...(Object.keys(headers).length ? { defaultHeaders: headers } : {})
+  });
 }
 
 function getCleanupModel() {
@@ -1193,10 +1234,12 @@ app.post('/api/test-cleanup', requireOwner, async (req, res) => {
     const profile = buildProfileFromRequest(req.body, 'cleanup');
     if (!profile || !profile.apiKey) return res.status(400).json({ ok: false, error: 'Cleanup API key is required.' });
     const started = Date.now();
+    const headers = openCodeHeaders(profile);
     const client = new OpenAI({
       apiKey: profile.apiKey,
       baseURL: profile.baseUrl || undefined,
-      timeout: AI_TIMEOUT_MS
+      timeout: AI_TIMEOUT_MS,
+      ...(Object.keys(headers).length ? { defaultHeaders: headers } : {})
     });
     await client.chat.completions.create({
       model: profile.model || 'gpt-4.1-mini',
@@ -1271,7 +1314,25 @@ app.post('/api/models', requireOwner, async (req, res) => {
     if (!apiKey) return res.json({ ok: true, models: curated });
 
     let fetched = [];
-    if (!kind && (provider === 'gemini' || provider === 'gemini_transcribe')) {
+    if (preset.modelsUrl) {
+      // Some providers (OpenCode Go) expose the model list outside the
+      // OpenAI-compatible base path.
+      const resp = await fetch(preset.modelsUrl, {
+        headers: { 'Authorization': `Bearer ${apiKey}`, ...openCodeHeaders(provider) },
+        signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) {
+          const err = new Error('The provider rejected this API key (' + resp.status + '). Check the key in this profile.');
+          err.status = resp.status;
+          throw err;
+        }
+        throw new Error(`Model list failed (${resp.status})`);
+      }
+      const data = await resp.json();
+      const ids = (data.data || data.models || []).map(m => m.id || m.name || m);
+      fetched = providers.filterModelIds(provider, ids);
+    } else if (!kind && (provider === 'gemini' || provider === 'gemini_transcribe')) {
       fetched = await listNativeGeminiModels(provider, preset, apiKey);
     } else {
       const client = new OpenAI({
@@ -1430,6 +1491,10 @@ app.use((req, res, next) => {
   if (!req.isOwner) return res.status(401).send('Unauthorized');
   express.static(path.join(__dirname, 'public'))(req, res, next);
 });
+
+// Run the one-time prompts migration at startup so a stored Default override is
+// dropped even before the first page load.
+loadPrompts();
 
 const server = app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 

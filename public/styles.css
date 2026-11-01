@@ -376,15 +376,6 @@ header {
   outline-offset: 6px;
 }
 
-/* Pop-in animation */
-@keyframes transcript-pop {
-  0% { opacity: 0; transform: translateY(8px) scale(0.98); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-.transcript-display.pop-in {
-  animation: transcript-pop 0.3s ease-out;
-}
-
 /* Streaming cursor indicator */
 .transcript-display.streaming::after {
   content: '';
@@ -405,48 +396,6 @@ header {
   filter: blur(1px);
   opacity: 0.7;
   transition: filter 0.25s, opacity 0.25s, color 0.25s;
-}
-
-/* Word-by-word "magic" pop-in for the cleaned text */
-@keyframes clean-pop {
-  0% { opacity: 0; transform: translateY(6px) scale(0.92); filter: blur(2px); }
-  60% { opacity: 1; }
-  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-}
-.clean-pop {
-  display: inline-block;
-  animation: clean-pop 0.28s ease-out;
-}
-
-/* Shatter & Fade — raw pieces fly apart on top of the cleaned text fading in */
-.shatter-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  pointer-events: none;
-}
-.shatter-piece {
-  display: inline-block;
-  animation: shatter-fly 0.7s cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
-  animation-delay: var(--delay, 0s);
-  will-change: transform, opacity;
-}
-@keyframes shatter-fly {
-  0% { opacity: 1; transform: translate(0, 0) rotate(0) scale(1); }
-  100% {
-    opacity: 0;
-    transform: translate(var(--dx, 80px), var(--dy, -90px)) rotate(var(--rot, 25deg)) scale(0.7);
-    filter: blur(3px);
-  }
-}
-/* Cleaned text fades in as the raw shatters away */
-.clean-fade {
-  animation: clean-fade-in 0.7s ease-out forwards;
-}
-@keyframes clean-fade-in {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
 }
 
 /* ── Inputs ── */
@@ -523,29 +472,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .test-result { font-size: 0.7rem; font-weight: 500; }
 .test-ok { color: var(--success); }
 .test-fail { color: var(--danger); }
-
-/* ── Animation options ── */
-.animation-options { display: flex; flex-direction: column; gap: 8px; }
-.animation-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-.animation-option:hover { border-color: var(--border); }
-.animation-option input { margin-top: 3px; accent-color: var(--accent); cursor: pointer; }
-.animation-option:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-.animation-option-body { display: flex; flex-direction: column; gap: 2px; }
-.animation-option-name { font-size: 0.8rem; font-weight: 600; }
-.animation-option-desc { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
 
 /* ── Correction dictionary ── */
 .corrections-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1090,16 +1016,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   border: none; flex-shrink: 0; cursor: default;
 }
 
-/* Segmented cards (animation options) */
-.segmented-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.segmented-cards .animation-option { border: 1px solid var(--border-subtle); border-radius: 12px; padding: 11px; position: relative; cursor: pointer; transition: border-color var(--dur-state), background var(--dur-state); }
-.segmented-cards .animation-option:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
-.segmented-cards .animation-option input { position: absolute; opacity: 0; }
-.segmented-cards .animation-option-name { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; font-weight: 600; }
-.segmented-cards .animation-option-name::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
-.segmented-cards .animation-option:has(input:checked) .animation-option-name::before { background: var(--success); }
-.segmented-cards .animation-option-desc { display: block; font-size: 0.66rem; color: var(--text-faint); margin-top: 3px; }
-
 /* Sheets */
 .sheet-overlay {
   position: fixed; inset: 0; z-index: 120;
@@ -1172,7 +1088,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
   .prompt-pill { padding-left: 8px; }
   .prompt-pill select { max-width: 120px; font-size: 0.68rem; }
   .settings-grid.two-col { grid-template-columns: 1fr; }
-  .segmented-cards { grid-template-columns: 1fr; }
   .provider-grid { grid-template-columns: 1fr; }
   .sheet-overlay { align-items: flex-end; padding: 0; }
   .sheet { max-width: 100%; border-radius: 18px 18px 0 0; max-height: 90vh; transform: translateY(16px); }
