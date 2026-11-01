@@ -2239,6 +2239,24 @@ loadAccount();
 // ── Corrections settings UI ──
 let correctionsDirty = false; // protect unsaved edits from settings refreshes
 
+function setCorrectionsHeaderVisible(visible) {
+  const header = document.getElementById('correctionsHeader');
+  if (header) header.style.display = visible ? '' : 'none';
+}
+
+function makeCorrectionsEmpty() {
+  const wrap = document.createElement('div');
+  wrap.className = 'corrections-empty';
+  const title = document.createElement('span');
+  title.className = 'corrections-empty-title';
+  title.textContent = 'No correction rules yet';
+  const desc = document.createElement('span');
+  desc.className = 'corrections-empty-desc';
+  desc.textContent = 'Use + Add rule to map a misheard phrase to the spelling you want.';
+  wrap.append(title, desc);
+  return wrap;
+}
+
 function makeCorrectionRow(rule = {}) {
   const row = document.createElement('div');
   row.className = 'correction-row';
@@ -2251,9 +2269,17 @@ function makeCorrectionRow(rule = {}) {
   aliases.value = (rule.aliases || []).join(', ');
   aliases.setAttribute('aria-label', 'Heard as');
 
+  const aliasField = document.createElement('label');
+  aliasField.className = 'correction-field correction-field-alias';
+  const aliasLabel = document.createElement('span');
+  aliasLabel.className = 'correction-field-label';
+  aliasLabel.textContent = 'Heard as';
+  aliasField.append(aliasLabel, aliases);
+
   const arrow = document.createElement('span');
   arrow.className = 'correction-arrow';
   arrow.textContent = '→';
+  arrow.setAttribute('aria-hidden', 'true');
 
   const canonical = document.createElement('input');
   canonical.className = 'input';
@@ -2263,20 +2289,38 @@ function makeCorrectionRow(rule = {}) {
   canonical.value = rule.canonical || '';
   canonical.setAttribute('aria-label', 'Replace with');
 
+  const canonicalField = document.createElement('label');
+  canonicalField.className = 'correction-field correction-field-canonical';
+  const canonicalLabel = document.createElement('span');
+  canonicalLabel.className = 'correction-field-label';
+  canonicalLabel.textContent = 'Replace with';
+  canonicalField.append(canonicalLabel, canonical);
+
+  const controls = document.createElement('div');
+  controls.className = 'correction-controls';
+
   const enabledLabel = document.createElement('label');
   enabledLabel.className = 'correction-enabled';
+  const switchEl = document.createElement('span');
+  switchEl.className = 'toggle-switch';
   const enabled = document.createElement('input');
   enabled.type = 'checkbox';
   enabled.dataset.field = 'enabled';
   enabled.checked = rule.enabled !== false;
-  enabledLabel.appendChild(enabled);
-  enabledLabel.appendChild(document.createTextNode(' On'));
+  enabled.setAttribute('aria-label', 'Enable rule');
+  const slider = document.createElement('span');
+  slider.className = 'toggle-slider';
+  switchEl.append(enabled, slider);
+  const onText = document.createElement('span');
+  onText.textContent = 'On';
+  enabledLabel.append(switchEl, onText);
 
   const remove = document.createElement('button');
   remove.type = 'button';
-  remove.className = 'btn btn-ghost btn-sm btn-danger correction-remove';
-  remove.textContent = '×';
-  remove.setAttribute('aria-label', 'Remove correction');
+  remove.className = 'btn btn-ghost btn-danger correction-remove';
+  remove.title = 'Remove rule';
+  remove.setAttribute('aria-label', 'Remove rule');
+  remove.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
   remove.onclick = () => {
     correctionsDirty = true;
     row.remove();
@@ -2285,13 +2329,15 @@ function makeCorrectionRow(rule = {}) {
     // Show the empty state directly. Re-rendering from `glossary` here would
     // bring the saved rules back and make "delete every rule" impossible.
     list.innerHTML = '';
-    const empty = document.createElement('p');
-    empty.className = 'corrections-empty';
-    empty.textContent = 'No corrections yet. Add one below.';
-    list.appendChild(empty);
+    list.appendChild(makeCorrectionsEmpty());
+    setCorrectionsHeaderVisible(false);
   };
 
-  row.append(aliases, arrow, canonical, enabledLabel, remove);
+  controls.append(enabledLabel, remove);
+  row.append(aliasField, arrow, canonicalField, controls);
+  row.addEventListener('input', (e) => {
+    if (e.target && e.target.classList) e.target.classList.remove('input-error');
+  });
   return row;
 }
 
@@ -2303,11 +2349,9 @@ function renderCorrectionsUI() {
   if (correctionsDirty) return;
   list.innerHTML = '';
   const rules = (glossary && glossary.profiles && glossary.profiles.work && glossary.profiles.work.replacements) || [];
+  setCorrectionsHeaderVisible(rules.length > 0);
   if (!rules.length) {
-    const empty = document.createElement('p');
-    empty.className = 'corrections-empty';
-    empty.textContent = 'No corrections yet. Add one below.';
-    list.appendChild(empty);
+    list.appendChild(makeCorrectionsEmpty());
     return;
   }
   for (const rule of rules) list.appendChild(makeCorrectionRow(rule));
@@ -2321,6 +2365,7 @@ function addCorrectionRow() {
   if (empty) empty.remove();
   const row = makeCorrectionRow();
   list.appendChild(row);
+  setCorrectionsHeaderVisible(true);
   const input = row.querySelector('[data-field="aliases"]');
   if (input) input.focus();
 }
@@ -2334,17 +2379,24 @@ async function saveCorrections() {
   let rowNumber = 0;
 
   for (const row of rows) {
-    const aliasesRaw = row.querySelector('[data-field="aliases"]').value.trim();
-    const canonical = row.querySelector('[data-field="canonical"]').value.trim();
+    row.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+    const aliasesEl = row.querySelector('[data-field="aliases"]');
+    const canonicalEl = row.querySelector('[data-field="canonical"]');
+    const aliasesRaw = aliasesEl.value.trim();
+    const canonical = canonicalEl.value.trim();
     const enabled = row.querySelector('[data-field="enabled"]').checked;
     if (!aliasesRaw && !canonical) continue;
     rowNumber++;
     if (!aliasesRaw) {
+      aliasesEl.classList.add('input-error');
+      aliasesEl.focus();
       result.textContent = `Row ${rowNumber}: enter what you hear.`;
       result.className = 'test-result test-fail';
       return;
     }
     if (!canonical) {
+      canonicalEl.classList.add('input-error');
+      canonicalEl.focus();
       result.textContent = `Row ${rowNumber}: enter what to replace it with.`;
       result.className = 'test-result test-fail';
       return;
@@ -3975,7 +4027,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.0.7'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

@@ -155,6 +155,7 @@ h1, h2, h3 { font-family: 'Fraunces', serif; letter-spacing: -0.01em; }
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
+  min-height: 44px;
   transition: opacity 0.15s;
   margin-top: 2px;
   font-family: inherit;

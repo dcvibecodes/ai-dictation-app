@@ -4,6 +4,16 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.0 — bigger controls, redesigned Corrections row
+
+- **Touch targets are bigger.** Buttons are 38 px (36 px compact) on desktop and 44 px on touch devices. Header icons, tabs, segmented chips, selects and inputs follow the same sizing, with focus rings on every interactive control.
+- **Corrections got a proper row layout.**
+  - Desktop: column headers (Heard as / Replace with / Enabled), fields capped at 300 px, theme-native toggle instead of the blue browser checkbox, and a 40 px square X button that matches the field height.
+  - Mobile: each rule becomes a small card with visible field labels; the toggle and delete button sit in a footer row.
+  - Empty rules show a designed dashed panel instead of bare text.
+  - Missing fields are outlined and focused instead of only showing a bottom-of-card error.
+- **The header, theme, logout, tab and secondary buttons all gained a consistent minimum size and focus treatment.**
+
 ## What's New in v7.0.7 — built-in cleanup prompt v6
 
 - **Cleanup prompt v6 is now the built-in default.** The prompt migration version is now `6`, so any stored Default override is dropped once on startup and the prompt list shows **Built-in**. Restore returns v6; custom prompts are untouched.
