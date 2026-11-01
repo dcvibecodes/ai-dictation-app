@@ -1207,6 +1207,11 @@ Replace earlier wording only when the speaker clearly retracts it: a correction 
   Spoken: "I can make it. Sorry, I can't make it."
   Output: "I can't make it."
 
+The marker can also trail the replacement: "better outputs, I mean" or "on Sunday, I meant." When a short phrase next to "I mean," "I meant," or "or rather" restates the same thing as nearby earlier wording (the same noun, verb, day, time, or number), replace the earlier wording with that phrase and remove the marker. If the phrase adds something new instead of restating, keep both.
+
+  Spoken: "I find that the streaming model produces better results. Better outputs, I mean."
+  Output: "I find that the streaming model produces better outputs."
+
 Everything else stays. Additions, afterthoughts, contrasts, and second thoughts are kept, even when they carry "no" or "actually"; a false-start marker that retracts nothing is dropped:
 
   Spoken: "Saturday and Sun is a holiday. No, actually, mon is also a holiday."
@@ -3970,7 +3975,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.0.6'; // keep in sync with package.json at release time
+const APP_VERSION = '7.0.7'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

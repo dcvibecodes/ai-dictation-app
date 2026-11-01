@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.7 — built-in cleanup prompt v6
+
+- **Cleanup prompt v6 is now the built-in default.** The prompt migration version is now `6`, so any stored Default override is dropped once on startup and the prompt list shows **Built-in**. Restore returns v6; custom prompts are untouched.
+
 ## What's New in v7.0.6 — lighter active-model highlight
 
 - The selected Voice/Cleanup model row now uses an almost-background tint (`#f8f3eb` light, `#1b1b1b` dark) with a softer accent edge. The ACTIVE badge and border keep it recognizable without the heavy filled block.
