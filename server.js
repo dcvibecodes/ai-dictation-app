@@ -742,6 +742,7 @@ wss.on('connection', (client, req) => {
   let upstreamReady = false;
   const pendingAudio = [];
   let closed = false;
+  let clientGone = false;
 
   const shutdown = (code, reason) => {
     if (closed) return;
@@ -782,6 +783,14 @@ wss.on('connection', (client, req) => {
   upstream.on('close', (code, reason) => {
     console.log(`Stream upstream closed: ${code} ${reason || ''}`.trim());
     if (!closed) {
+      if (!clientGone && code !== 1000) {
+        try {
+          client.send(JSON.stringify({
+            type: 'error',
+            error: `Streaming provider closed unexpectedly (${code})` + (reason ? ': ' + reason : '')
+          }));
+        } catch {}
+      }
       try { client.send(JSON.stringify({ type: 'done' })); } catch {}
       shutdown(1000);
     }
@@ -799,7 +808,7 @@ wss.on('connection', (client, req) => {
     if (message.type === 'close') shutdown(1000);
   });
 
-  client.on('close', () => shutdown(1000));
+  client.on('close', () => { clientGone = true; shutdown(1000); });
   client.on('error', () => shutdown(1011));
 });
 
@@ -1104,8 +1113,10 @@ async function probeProfile(profile) {
         audioPath: tmp,
         mimeType: 'audio/wav',
         profile,
-        language: '',
-        hint: '',
+        // Use the same recognition settings as a real transcription so the
+        // test catches parameter errors (e.g. ElevenLabs language codes).
+        language: getEffectiveSetting('TRANSCRIPTION_LANGUAGE'),
+        hint: getEffectiveSetting('TRANSCRIPTION_PROMPT'),
         timeoutMs: AI_TIMEOUT_MS
       };
       if (protocol === 'elevenlabs') await adapters.transcribeWithElevenLabs(common);
@@ -1218,11 +1229,19 @@ async function listNativeGeminiModels(providerId, preset, key) {
   const base = (preset.baseUrl || 'https://generativelanguage.googleapis.com/v1beta')
     .replace(/\/openai\/?$/, '')
     .replace(/\/+$/, '');
-  const resp = await fetch(`${base}/models`, {
+  const resp = await fetch(`${base}/models?key=${encodeURIComponent(key)}`, {
     headers: { 'x-goog-api-key': key },
     signal: AbortSignal.timeout(AI_TIMEOUT_MS)
   });
-  if (!resp.ok) throw new Error(`Model list failed (${resp.status})`);
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    if (resp.status === 401 || resp.status === 403) {
+      const err = new Error('Google rejected this API key (' + resp.status + '). Check the key in this profile.');
+      err.status = resp.status;
+      throw err;
+    }
+    throw new Error(`Model list failed (${resp.status})` + (detail ? ': ' + detail.slice(0, 200) : ''));
+  }
   const data = await resp.json();
   const ids = (data.models || [])
     .filter(m => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
@@ -1231,13 +1250,20 @@ async function listNativeGeminiModels(providerId, preset, key) {
 }
 
 app.post('/api/models', requireOwner, async (req, res) => {
-  const { provider, key, baseUrl, kind } = req.body || {};
+  const { provider, key, baseUrl, kind, profileId } = req.body || {};
   const catalog = kind === 'cleanup' ? providers.CLEANUP_PROVIDERS : providers.TRANSCRIPTION_PROVIDERS;
   const preset = catalog[provider] || {};
   const curated = Array.isArray(preset.models) ? preset.models : [];
   try {
-    // Never send one provider's saved key to a different provider.
+    // Prefer the key of the profile being edited. Never send one provider's
+    // saved key to a different provider.
     let apiKey = key;
+    if (!apiKey && profileId) {
+      const current = loadSettings();
+      const list = kind === 'cleanup' ? current.CLEANUP_PROFILES : current.TRANSCRIPTION_PROFILES;
+      const saved = (list || []).find(p => p.id === profileId);
+      if (saved && saved.provider === provider && saved.apiKey) apiKey = saved.apiKey;
+    }
     if (!apiKey) {
       const active = providers.getActiveProfile(loadSettings(), kind === 'cleanup' ? 'cleanup' : 'transcription');
       if (active && active.provider === provider) apiKey = active.apiKey;

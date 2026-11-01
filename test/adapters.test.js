@@ -7,6 +7,15 @@ const os = require('node:os');
 const path = require('node:path');
 const adapters = require('../lib/adapters');
 
+test('language codes are mapped for providers that expect them', () => {
+  assert.equal(adapters.elevenLabsLanguage('en'), 'eng');
+  assert.equal(adapters.elevenLabsLanguage('eng'), 'eng');
+  assert.equal(adapters.elevenLabsLanguage('xx'), '');
+  assert.equal(adapters.geminiLanguage('en'), 'en-US');
+  assert.equal(adapters.geminiLanguage('en-GB'), 'en-GB');
+  assert.equal(adapters.geminiLanguage('xx'), '');
+});
+
 function tmpAudio(contents = 'audio-bytes', ext = 'webm') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dictation-adapter-'));
   const file = path.join(dir, `sample.${ext}`);
@@ -32,7 +41,7 @@ test('ElevenLabs: multipart, xi-api-key header, response text', async () => {
   };
   const text = await adapters.transcribeWithElevenLabs({
     audioPath, mimeType: 'audio/webm', profile: { apiKey: 'xi-123', model: 'scribe_v2' },
-    language: 'en', hint: 'Acme', fetchImpl
+    language: 'en', hint: 'Acme, Globex', fetchImpl
   });
   assert.equal(text, 'hello world');
   assert.equal(seen.url, 'https://api.elevenlabs.io/v1/speech-to-text');
@@ -40,8 +49,8 @@ test('ElevenLabs: multipart, xi-api-key header, response text', async () => {
   assert.equal(seen.init.headers['xi-api-key'], 'xi-123');
   assert.ok(seen.init.body instanceof FormData);
   assert.equal(seen.init.body.get('model_id'), 'scribe_v2');
-  assert.equal(seen.init.body.get('language_code'), 'en');
-  assert.equal(seen.init.body.get('keyterms'), 'Acme');
+  assert.equal(seen.init.body.get('language_code'), 'eng');
+  assert.deepEqual(seen.init.body.getAll('keyterms'), ['Acme', 'Globex']);
 });
 
 test('Deepgram: Token auth (not Bearer), raw body, nested transcript', async () => {
@@ -144,10 +153,35 @@ test('Gemini Transcribe: native generateContent with inline audio', async () => 
   assert.equal(seen.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent');
   assert.equal(seen.init.headers['x-goog-api-key'], 'AIza-test');
   const body = JSON.parse(seen.init.body);
-  assert.equal(body.contents[0].parts[0].inlineData.mimeType, 'audio/wav');
-  assert.ok(body.contents[0].parts[0].inlineData.data);
-  assert.deepEqual(body.generationConfig.audioTranscriptionConfig.languageCodes, ['en']);
-  assert.deepEqual(body.generationConfig.audioTranscriptionConfig.customVocabulary, ['Acme', 'Jira']);
+  assert.equal(body.contents[0].parts[0].inline_data.mime_type, 'audio/wav');
+  assert.ok(body.contents[0].parts[0].inline_data.data);
+  assert.deepEqual(body.generation_config.audio_transcription_config.languageCodes, ['en-US']);
+  assert.deepEqual(body.generation_config.audio_transcription_config.customVocabulary, ['Acme', 'Jira']);
+});
+
+test('Gemini Transcribe: reads audioTranscription text and tolerates an empty response', async () => {
+  const audioPath = tmpAudio('wav-bytes', 'wav');
+  const profile = { apiKey: 'k', model: 'gemini-3.5-transcribe', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' };
+  const viaParts = await adapters.transcribeWithGeminiTranscribe({
+    audioPath, mimeType: 'audio/wav', profile,
+    fetchImpl: async () => jsonResponse({ candidates: [{ content: { parts: [{ audioTranscription: { text: 'from audio transcription' } }] } }] })
+  });
+  assert.equal(viaParts, 'from audio transcription');
+
+  const empty = await adapters.transcribeWithGeminiTranscribe({
+    audioPath, mimeType: 'audio/wav', profile,
+    fetchImpl: async () => jsonResponse({ candidates: [{ finishReason: 'STOP', content: { parts: [] } }] })
+  });
+  assert.equal(empty, '');
+});
+
+test('provider errors include the response body', async () => {
+  const audioPath = tmpAudio();
+  const fetchImpl = async () => ({ ok: false, status: 400, text: async () => '{"detail":{"message":"bad keyterms"}}' });
+  await assert.rejects(
+    adapters.transcribeWithElevenLabs({ audioPath, mimeType: 'audio/webm', profile: { apiKey: 'x' }, fetchImpl }),
+    /bad keyterms/
+  );
 });
 
 test('pcmFromWav strips header and returns s16le payload', () => {

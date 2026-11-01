@@ -1609,7 +1609,12 @@ function renderFallbackSelect() {
 }
 
 async function activateProfile(kind, profile) {
-  if (profile.active) { openProfileForm(kind, profile.provider, profile); return; }
+  // Clicking an already-active row is a no-op. Edit is only reachable from the
+  // Edit pill, so a double click can never open the form by accident.
+  if (profile.active) {
+    liveAnnounce(`${profile.label} is already the active ${kind === 'cleanup' ? 'cleanup model' : 'voice model'}`);
+    return;
+  }
   const previous = profile.active;
   try {
     await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}/activate`, { method: 'POST' });
@@ -1825,6 +1830,7 @@ function openProfileForm(kind, providerId, profile) {
         body: JSON.stringify({
           kind,
           provider: provider.id,
+          profileId: profile ? profile.id : undefined,
           key: keyField.input.value.trim() || undefined,
           baseUrl: baseField ? baseField.input.value.trim() : undefined
         })
@@ -2608,7 +2614,7 @@ async function transcribeAudioBlob(audioBlob) {
         let uploadBlob = audioBlob;
         let uploadName = 'rec.' + audioExtension(audioBlob.type);
         const alreadyWav = /wav/i.test(audioBlob.type || '');
-        if (!alreadyWav && (activeProfileProtocol === 'cartesia' || activeProfileProtocol === 'gemini')) {
+        if (!alreadyWav && ['cartesia', 'gemini', 'gemini-transcribe'].includes(activeProfileProtocol)) {
           uploadBlob = await convertToWav16k(audioBlob);
           uploadName = 'rec.wav';
         }
@@ -2646,7 +2652,13 @@ async function transcribeAudioBlob(audioBlob) {
     const uData = await uRes.json();
     if (uData.error) throw new Error(uData.error);
 
-    const result = await applyProviderTranscript(uData.rawTranscript || '', { signal: abortController.signal });
+    // An empty transcript is a failure, not a successful copy of nothing.
+    const providerRaw = String(uData.rawTranscript || '');
+    if (!providerRaw.trim()) {
+      throw new Error('No speech was detected — nothing was transcribed. The recording is saved for retry.');
+    }
+
+    const result = await applyProviderTranscript(providerRaw, { signal: abortController.signal });
     if (!result.ok) {
       clearInterval(procTimer);
       if (result.unauthorized) { handleUnauthorized(); return; }
@@ -4002,7 +4014,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.0.1'; // keep in sync with package.json at release time
+const APP_VERSION = '7.0.2'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

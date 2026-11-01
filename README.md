@@ -4,6 +4,15 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.2 — model list, Gemini Transcribe and ElevenLabs fixes
+
+- **Gemini Transcribe now returns text.** Recordings are converted to WAV before upload, the language code is mapped to the BCP-47 form the transcribe model expects (or omitted so it auto-detects), and the response parser reads both `parts[].text` and `parts[].audioTranscription.text`. Empty responses now log the provider's finish reason instead of silently succeeding.
+- **An empty transcript is a failure.** If a provider returns no text, the app shows a clear error, keeps the recording for Retry/Download and never adds an empty history entry or says “copied” with nothing on screen.
+- **Browse Models uses the right key and endpoint.** It passes the profile being edited (`profileId`) so its saved key is used, and the Gemini model list authenticates with `?key=`. A rejected key now says “Google rejected this API key” instead of dumping the raw OAuth error.
+- **ElevenLabs fixed.** Language codes are mapped to ISO-639-3 (`en` → `eng`) and vocabulary hints are sent as separate `keyterms` fields. Provider errors include the response body, and Test & save now uses the same language/keyterms as real dictation, so a broken configuration cannot pass the test.
+- **Profile cards only activate.** Clicking an already-active card no longer opens the editor — only the Edit button does.
+- **Login username field** is just “Username”; the confusing migration hint is gone.
+
 ## What's New in v7.0.1 — bug fixes for models, keys and live streaming
 
 - **Gemini 3.5 Transcribe works properly.** It is a dedicated speech model, not a chat model, so it now has its own provider (“Google Gemini Transcribe”) and uses Google's native `generateContent` API. Existing profiles whose Gemini model contains `transcribe` are moved to the new provider automatically on startup — the saved key is kept.
