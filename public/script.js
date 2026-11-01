@@ -1,8 +1,8 @@
 let mediaRecorder, audioChunks = [], audioContext, analyser, source, animationId;
 let timerInterval, secondsElapsed = 0;
 let isRecording = false;
-let recordingCaptureMode = 'standard'; // frozen at record start; Stop uses this, not the live toggle
-let liveStopping = false;          // true while a live take is draining/finishing
+let recordingCaptureMode = 'standard'; // frozen at record start; Stop uses this, not a changing setting
+let streamStopping = false;          // true while a live take is draining/finishing
 let isPaused = false;
 let cancelled = false;
 // Load history defensively: a corrupted/partial value must never throw at startup
@@ -32,46 +32,23 @@ const AUTH_FRESH_MS = 60000;      // a recent OK means Record can skip the netwo
 const AUTH_REFRESH_INTERVAL_MS = AuthRefreshLib ? AuthRefreshLib.DEFAULT_REFRESH_INTERVAL_MS : 45000;
 let audioPrewarmed = false;       // true once the idle pre-warm has run
 
-// --- Live transcription mode ---
-// When enabled, audio is captured in chunks and transcribed as you speak, so
-// long dictations are transcribed during recording instead of all at the end.
-// Default OFF — the Live toggle or the L shortcut turns it on, and that choice
-// persists across sessions and app updates (localStorage survives both).
-let liveMode = localStorage.getItem('liveMode') === 'true'; // default OFF
-let liveStream = null;            // the mic MediaStream while live-recording
-let liveScriptNode = null;        // ScriptProcessorNode fallback capturing raw PCM
-let liveWorkletNode = null;       // AudioWorkletNode (preferred — off main thread)
-let livePcmSamples = new Float32Array(0); // growable raw sample buffer (mic rate)
-let liveWriteIndex = 0;           // samples written into livePcmSamples
-let liveCaptureBaseSample = 0;    // absolute mic-sample index of livePcmSamples[0]
-let liveSession = null;           // frozen state for the active live recording
-let liveLedger = null;            // AudioLedger (independent persistence cursor)
-let recoveryLedger = null;        // ledger kept in memory when IndexedDB failed
-let liveResampler = null;         // StreamingResampler mic rate -> 16 kHz, chunk-stable
-let liveDocumentCleared = false;  // true while a live start has blanked the on-screen document
-const LIVE_MAX_INFLIGHT = 2;      // bound concurrent chunk requests
-const LIVE_MAX_QUEUE = 6;         // bound unsent chunks waiting for a slot
-// Live chunk interval — how often Live mode sends audio to be transcribed, and
-// therefore how soon text appears while dictating. Configurable in Settings,
-// persisted in localStorage; default 10s. Applies from the next recording.
-const LIVE_CHUNK_SECONDS_DEFAULT = 10;
-const LIVE_CHUNK_SECONDS_MIN = 3;
-const LIVE_CHUNK_SECONDS_MAX = 60;
-function getLiveChunkSeconds() {
-  const raw = localStorage.getItem('dictationLiveChunkSeconds');
-  if (raw === null) return LIVE_CHUNK_SECONDS_DEFAULT;
-  const v = Number(raw);
-  if (!Number.isFinite(v)) return LIVE_CHUNK_SECONDS_DEFAULT;
-  return Math.min(LIVE_CHUNK_SECONDS_MAX, Math.max(LIVE_CHUNK_SECONDS_MIN, Math.round(v)));
-}
-function setLiveChunkSeconds(v) {
-  const n = Number(v);
-  const clamped = Math.min(LIVE_CHUNK_SECONDS_MAX, Math.max(LIVE_CHUNK_SECONDS_MIN, Number.isFinite(n) ? Math.round(n) : LIVE_CHUNK_SECONDS_DEFAULT));
-  localStorage.setItem('dictationLiveChunkSeconds', clamped);
-  return clamped;
-}
-function getChunkDurationMs() { return getLiveChunkSeconds() * 1000; }
-const MIN_CHUNK_SAMPLES_FACTOR = 0.4; // skip chunks shorter than 0.4s (too tiny for the API)
+// --- Live streaming mode (Cartesia) ---
+// There is no user toggle: the mode is chosen automatically from the active
+// voice model's capability. A streaming model transcribes while you speak;
+// every other model records first and transcribes once at Stop (more context,
+// better accuracy). The Live chip is locked to reflect the active model.
+let streamingSupported = false;
+let streamSocket = null;
+let streamReady = false;
+let streamPendingAudio = [];
+let streamAssembler = null;
+let streamMediaStream = null;      // the mic MediaStream while streaming
+let streamScriptNode = null;       // ScriptProcessorNode fallback capturing raw PCM
+let streamWorkletNode = null;      // AudioWorkletNode (preferred — off main thread)
+let streamSession = null;          // frozen state for the active streaming take
+let streamLedger = null;           // AudioLedger (independent persistence cursor)
+let recoveryLedger = null;         // ledger kept in memory when IndexedDB failed
+let streamResampler = null;        // StreamingResampler mic rate -> 16 kHz, block-stable
 const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
 
 // --- Auto-stop limit ---
@@ -137,14 +114,23 @@ if (appendToggle) {
   });
 }
 
-// ── Live mode toggle ──
+// ── Live chip (capability indicator, not a user toggle) ──
+// Locked ON when the active voice model streams; locked OFF otherwise. The
+// recording path is chosen from the same capability at Start.
 const liveToggle = document.getElementById('liveToggle');
-if (liveToggle) {
-  liveToggle.checked = liveMode;
-  liveToggle.addEventListener('change', () => {
-    liveMode = liveToggle.checked;
-    localStorage.setItem('liveMode', liveMode);
-  });
+const liveChip = document.getElementById('liveChip');
+function syncLiveChip() {
+  if (!liveToggle) return;
+  liveToggle.checked = !!streamingSupported;
+  liveToggle.disabled = true;
+  liveToggle.setAttribute('aria-disabled', 'true');
+  if (liveChip) {
+    liveChip.title = streamingSupported
+      ? 'Live streaming is built into the active voice model'
+      : 'Live needs a streaming voice model (Cartesia)';
+    liveChip.classList.toggle('is-locked-on', !!streamingSupported);
+    liveChip.classList.toggle('is-locked-off', !streamingSupported);
+  }
 }
 
 // ── Animation preference ──
@@ -165,16 +151,6 @@ if (animationRadios.length) {
     r.addEventListener('change', () => {
       if (r.checked) setAnimationPref(r.value);
     });
-  });
-}
-
-// ── Live chunk interval preference (Settings) ──
-// Persisted in localStorage; applied when the next recording starts.
-const liveChunkSecondsInput = document.getElementById('setLiveChunkSeconds');
-if (liveChunkSecondsInput) {
-  liveChunkSecondsInput.value = getLiveChunkSeconds();
-  liveChunkSecondsInput.addEventListener('change', () => {
-    liveChunkSecondsInput.value = setLiveChunkSeconds(liveChunkSecondsInput.value);
   });
 }
 
@@ -328,7 +304,7 @@ function withStoreRequest(storeName, mode, fn) {
 
 // IndexedDB adapter used by the audio ledger. Blocks are immutable and numbered;
 // the session manifest is the only thing rewritten.
-const liveLedgerAdapter = {
+const streamLedgerAdapter = {
   async putBlock(block) {
     const pcm = block.pcm;
     const record = {
@@ -441,7 +417,7 @@ function formatDuration(totalSeconds) {
 // The most recent immutable-block live session, if any. Recovery only builds a
 // WAV when Retry/Download actually needs it.
 async function getLatestLiveBackup() {
-  const sessions = await liveLedgerAdapter.getSessions();
+  const sessions = await streamLedgerAdapter.getSessions();
   const usable = (sessions || [])
     .filter(s => s && (s.persistedSamples || 0) > 0)
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -464,7 +440,7 @@ async function getLatestLiveBackup() {
     gaps: s.gaps || 0,
     overlaps: s.overlaps || 0,
     getBlob: async () => {
-      const recovered = await LedgerLib.loadSessionAudio(liveLedgerAdapter, s.id, s.sampleRate || TARGET_SAMPLE_RATE);
+      const recovered = await LedgerLib.loadSessionAudio(streamLedgerAdapter, s.id, s.sampleRate || TARGET_SAMPLE_RATE);
       return recovered.blob;
     }
   };
@@ -530,7 +506,7 @@ async function getBestAudioBackup() {
 
 async function deleteLiveSession(sessionId) {
   if (!sessionId) return;
-  try { await liveLedgerAdapter.deleteSession(sessionId); } catch {}
+  try { await streamLedgerAdapter.deleteSession(sessionId); } catch {}
 }
 
 function parkLedgerForRecovery(ledger) {
@@ -1238,13 +1214,16 @@ async function clearDocument() {
   if (isRecording) { silentCancel = true; await cancelRecording(); }
   // An explicit Clear during stop/cleanup is a discard: never let a stale
   // session write its text back into the cleared document.
-  if (liveSession) {
-    liveSession.cancelled = true;
-    liveSession = null;
+  if (streamSession) {
+    streamSession.cancelled = true;
+    streamSession = null;
   }
-  if (liveLedger) {
-    try { await liveLedger.discard(); } catch {}
-    liveLedger = null;
+  if (streamSocket) { try { streamSocket.close(); } catch {} }
+  streamSocket = null;
+  streamAssembler = null;
+  if (streamLedger) {
+    try { await streamLedger.discard(); } catch {}
+    streamLedger = null;
   }
   if (recoveryLedger) {
     try { await recoveryLedger.discard(); } catch {}
@@ -1476,38 +1455,717 @@ function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHisto
 function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
 
 // ── Settings ──
-let settingsLocked = true;
+let settingsState = null;
+let activeProfileProtocol = 'whisper';
+let accountState = { username: null, needsUsername: false };
+const ProfilesUI = window.ProfilesUI || {
+  initials: n => String(n || '?').slice(0, 2).toUpperCase(),
+  monogram: n => String(n || '?').slice(0, 1).toUpperCase(),
+  descriptor: () => 'Key + model only',
+  formatLatency: ms => (Number(ms) >= 1000 ? (Number(ms) / 1000).toFixed(1) + ' s' : Math.round(Number(ms)) + ' ms')
+};
+
+function liveAnnounce(message) {
+  let el = document.getElementById('liveAnnouncer');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'liveAnnouncer';
+    el.className = 'sr-only';
+    el.setAttribute('aria-live', 'polite');
+    document.body.appendChild(el);
+  }
+  el.textContent = '';
+  setTimeout(() => { el.textContent = message; }, 30);
+}
+
+async function apiJson(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+async function loadAccount() {
+  try {
+    accountState = await apiJson('/api/account');
+    renderAccount();
+  } catch (e) {
+    if (e.message !== 'Unauthorized') console.error('loadAccount error:', e);
+  }
+}
+
+function renderAccount() {
+  const name = accountState.username || 'No username';
+  const initials = ProfilesUI.initials(accountState.username || 'DC');
+  const avatar = document.getElementById('accountAvatar');
+  if (avatar) avatar.textContent = initials;
+  const nameEl = document.getElementById('accountName');
+  if (nameEl) nameEl.textContent = name;
+  const input = document.getElementById('accountUsernameInput');
+  if (input && document.activeElement !== input) input.value = accountState.username || '';
+
+  const gate = document.getElementById('usernameGate');
+  if (gate) {
+    const show = !!accountState.needsUsername;
+    gate.classList.toggle('open', show);
+    gate.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (show) setTimeout(() => document.getElementById('gateUsername')?.focus(), 60);
+  }
+}
+
+function providerList(kind) {
+  const map = kind === 'cleanup'
+    ? (settingsState && settingsState.cleanupProviders)
+    : (settingsState && settingsState.transcriptionProviders);
+  return Object.values(map || {});
+}
+
+function renderProfiles(kind) {
+  const container = document.getElementById(kind === 'cleanup' ? 'cleanupProfiles' : 'transcriptionProfiles');
+  if (!container || !settingsState) return;
+  const list = kind === 'cleanup' ? settingsState.cleanupProfiles : settingsState.transcriptionProfiles;
+  const activeId = kind === 'cleanup' ? settingsState.activeCleanupProfile : settingsState.activeTranscriptionProfile;
+  container.innerHTML = '';
+
+  if (!list.length) {
+    const empty = document.createElement('p');
+    empty.className = 'profile-empty';
+    empty.textContent = kind === 'cleanup'
+      ? 'No cleanup model yet. Add a provider to enable auto-clean.'
+      : 'No voice model yet. Add a provider to start transcribing.';
+    container.appendChild(empty);
+  }
+
+  let index = 0;
+  for (const profile of list) {
+    const row = document.createElement('div');
+    row.className = 'profile-row' + (profile.active ? ' is-active' : '');
+    row.setAttribute('role', 'radio');
+    row.setAttribute('aria-checked', profile.active ? 'true' : 'false');
+    row.setAttribute('tabindex', profile.active ? '0' : '-1');
+    row.dataset.profileId = profile.id;
+    row.style.setProperty('--stagger', String(index * 24) + 'ms');
+
+    const tile = document.createElement('span');
+    tile.className = 'profile-monogram';
+    tile.textContent = ProfilesUI.monogram(profile.providerName || profile.label);
+
+    const body = document.createElement('span');
+    body.className = 'profile-body';
+    const label = document.createElement('span');
+    label.className = 'profile-label';
+    label.textContent = profile.label;
+    if (profile.active) {
+      const badge = document.createElement('span');
+      badge.className = 'active-badge';
+      badge.textContent = 'Active';
+      label.appendChild(badge);
+    }
+    const meta = document.createElement('span');
+    meta.className = 'profile-meta';
+    meta.textContent = [profile.model || 'default model', profile.maskedKey || 'no key'].join(' · ');
+    body.append(label, meta);
+
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'btn btn-ghost btn-sm profile-edit';
+    edit.textContent = 'Edit';
+    edit.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openProfileForm(kind, profile.provider, profile);
+    });
+
+    row.append(tile, body, edit);
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.profile-edit')) return;
+      activateProfile(kind, profile);
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateProfile(kind, profile); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const rows = [...container.querySelectorAll('.profile-row')];
+        const i = rows.indexOf(row);
+        const next = rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length];
+        next.focus();
+      }
+    });
+    container.appendChild(row);
+    index++;
+  }
+
+  if (kind === 'transcription') renderFallbackSelect();
+}
+
+function renderFallbackSelect() {
+  const sel = document.getElementById('fallbackProfileSelect');
+  if (!sel || !settingsState) return;
+  const activeId = settingsState.activeTranscriptionProfile;
+  sel.innerHTML = '<option value="">None (fail and keep the recording)</option>' + (settingsState.transcriptionProfiles || [])
+    .filter(p => p.id !== activeId)
+    .map(p => `<option value="${escapeHtml(p.id)}" ${settingsState.fallbackTranscriptionProfile === p.id ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
+    .join('');
+}
+
+async function activateProfile(kind, profile) {
+  if (profile.active) { openProfileForm(kind, profile.provider, profile); return; }
+  const previous = profile.active;
+  try {
+    await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}/activate`, { method: 'POST' });
+    const list = kind === 'cleanup' ? settingsState.cleanupProfiles : settingsState.transcriptionProfiles;
+    list.forEach(p => { p.active = p.id === profile.id; });
+    if (kind === 'cleanup') settingsState.activeCleanupProfile = profile.id;
+    else settingsState.activeTranscriptionProfile = profile.id;
+    renderProfiles(kind);
+    if (kind === 'transcription') {
+      activeProfileProtocol = profile.protocol || 'whisper';
+      streamingSupported = !!profile.supportsStreaming;
+      syncLiveChip();
+    }
+    liveAnnounce(`${profile.label} is now the active ${kind === 'cleanup' ? 'cleanup model' : 'voice model'}`);
+  } catch (e) {
+    if (e.message !== 'Unauthorized') liveAnnounce('Could not switch model: ' + e.message);
+    if (previous) renderProfiles(kind);
+  }
+}
+
+let sheetReturnFocus = null;
+
+function openSheet(title) {
+  const overlay = document.getElementById('sheetOverlay');
+  sheetReturnFocus = document.activeElement;
+  document.getElementById('sheetTitle').textContent = title;
+  document.getElementById('sheetBody').innerHTML = '';
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('sheet-open');
+  setTimeout(() => {
+    const first = overlay.querySelector('input, button, select');
+    if (first) first.focus();
+  }, 60);
+}
+
+function closeSheet(e) {
+  if (e && e.target && e.target !== document.getElementById('sheetOverlay')) return;
+  const overlay = document.getElementById('sheetOverlay');
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('sheet-open');
+  if (sheetReturnFocus && typeof sheetReturnFocus.focus === 'function') {
+    sheetReturnFocus.focus();
+    sheetReturnFocus = null;
+  }
+}
+
+// Sheets trap focus and close on Escape (accessibility requirement).
+function trapSheetFocus(e) {
+  const overlay = document.getElementById('sheetOverlay');
+  if (!overlay || !overlay.classList.contains('open')) return false;
+  if (e.key === 'Escape') { e.preventDefault(); closeSheet(); return true; }
+  if (e.key !== 'Tab') return false;
+  const sheet = document.getElementById('sheet');
+  const items = [...sheet.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.offsetParent !== null);
+  if (!items.length) return false;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); return true; }
+  if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); return true; }
+  return false;
+}
+
+function openProviderPicker(kind) {
+  openSheet(kind === 'cleanup' ? 'Add cleanup provider' : 'Add voice provider');
+  const body = document.getElementById('sheetBody');
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'input sheet-search';
+  search.placeholder = 'Search providers…';
+  search.setAttribute('aria-label', 'Search providers');
+
+  const grid = document.createElement('div');
+  grid.className = 'provider-grid';
+
+  const providers = providerList(kind);
+  const render = (query) => {
+    const q = String(query || '').toLowerCase();
+    grid.innerHTML = '';
+    providers
+      .filter(p => !q || p.name.toLowerCase().includes(q) || ProfilesUI.descriptor(p).toLowerCase().includes(q))
+      .forEach(p => {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'provider-tile';
+        const mono = document.createElement('span');
+        mono.className = 'provider-monogram';
+        mono.textContent = ProfilesUI.monogram(p.name);
+        const info = document.createElement('span');
+        info.className = 'provider-info';
+        const name = document.createElement('span');
+        name.className = 'provider-name';
+        name.textContent = p.name;
+        const desc = document.createElement('span');
+        desc.className = 'provider-desc';
+        desc.textContent = ProfilesUI.descriptor(p);
+        info.append(name, desc);
+        tile.append(mono, info);
+        tile.addEventListener('click', () => openProfileForm(kind, p.id, null));
+        grid.appendChild(tile);
+      });
+    if (!grid.children.length) {
+      const none = document.createElement('p');
+      none.className = 'profile-empty';
+      none.textContent = 'No matching provider.';
+      grid.appendChild(none);
+    }
+  };
+  search.addEventListener('input', () => render(search.value));
+  body.append(search, grid);
+  render('');
+}
+
+function openProfileForm(kind, providerId, profile) {
+  const provider = (settingsState && (kind === 'cleanup' ? settingsState.cleanupProviders : settingsState.transcriptionProviders))[providerId]
+    || { id: providerId, name: providerId, models: [] };
+  openSheet(profile ? 'Edit ' + (profile.label || provider.name) : provider.name);
+
+  const body = document.getElementById('sheetBody');
+  const form = document.createElement('form');
+  form.className = 'profile-form';
+  form.noValidate = true;
+
+  const head = document.createElement('div');
+  head.className = 'profile-form-head';
+  const mono = document.createElement('span');
+  mono.className = 'provider-monogram';
+  mono.textContent = ProfilesUI.monogram(provider.name);
+  const headInfo = document.createElement('div');
+  const headName = document.createElement('strong');
+  headName.textContent = provider.name;
+  const headSub = document.createElement('span');
+  headSub.className = 'provider-desc';
+  headSub.textContent = provider.id === 'custom'
+    ? 'OpenAI-compatible URL — you provide the endpoint'
+    : 'No base URL needed — it is built in';
+  headInfo.append(headName, headSub);
+  head.append(mono, headInfo);
+
+  const labelField = field('Profile name', 'text', profile ? profile.label : (provider.name || ''));
+  const keyField = field('API key', 'password', '');
+  keyField.input.placeholder = profile && profile.hasKey ? profile.maskedKey : 'Paste your API key';
+  keyField.input.autocomplete = 'off';
+  const keyHelp = document.createElement('span');
+  keyHelp.className = 'field-help';
+  if (profile && profile.hasKey) keyHelp.textContent = 'Leave blank to keep the saved key.';
+  const keyUrl = profile ? profile.keyUrl : provider.keyUrl;
+  if (keyUrl) {
+    const link = document.createElement('a');
+    link.href = keyUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Get a key ↗';
+    link.className = 'field-link';
+    keyHelp.append(' ', link);
+  }
+  keyField.wrap.appendChild(keyHelp);
+
+  const modelField = field('Model', 'text', profile ? profile.model : (provider.models && provider.models[0]) || '');
+  modelField.input.setAttribute('list', 'modelSuggestions');
+  const datalist = document.createElement('datalist');
+  datalist.id = 'modelSuggestions';
+  (provider.models || []).forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    datalist.appendChild(opt);
+  });
+  const browse = document.createElement('button');
+  browse.type = 'button';
+  browse.className = 'btn btn-ghost btn-sm';
+  browse.textContent = 'Browse models';
+  browse.addEventListener('click', async () => {
+    browse.disabled = true;
+    browse.textContent = 'Loading…';
+    try {
+      const data = await apiJson('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind,
+          provider: provider.id,
+          key: keyField.input.value.trim() || undefined,
+          baseUrl: baseField ? baseField.input.value.trim() : undefined
+        })
+      });
+      datalist.innerHTML = '';
+      (data.models || []).forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        datalist.appendChild(opt);
+      });
+      if ((data.models || []).length) modelField.input.value = data.models[0];
+    } catch (e) {
+      result.textContent = e.message;
+      result.className = 'test-result test-fail';
+    } finally {
+      browse.disabled = false;
+      browse.textContent = 'Browse models';
+    }
+  });
+
+  let baseField = null;
+  if (provider.id === 'custom') {
+    baseField = field('Base URL', 'url', profile ? profile.baseUrl : '');
+    baseField.input.placeholder = 'https://my-server:8000/v1';
+  }
+
+  const result = document.createElement('span');
+  result.className = 'test-result';
+  result.setAttribute('role', 'status');
+
+  const actions = document.createElement('div');
+  actions.className = 'form-actions';
+  const testSave = document.createElement('button');
+  testSave.type = 'submit';
+  testSave.className = 'btn btn-primary';
+  testSave.textContent = 'Test & save';
+  const saveOnly = document.createElement('button');
+  saveOnly.type = 'button';
+  saveOnly.className = 'btn btn-ghost';
+  saveOnly.textContent = 'Save anyway';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-ghost';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => closeSheet());
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-ghost btn-danger';
+  remove.textContent = 'Delete';
+  remove.style.display = profile ? '' : 'none';
+
+  actions.append(testSave, saveOnly);
+  if (profile) actions.append(remove);
+  actions.append(cancel);
+
+  form.append(head, labelField.wrap, keyField.wrap, modelField.wrap, datalist);
+  const modelRow = document.createElement('div');
+  modelRow.className = 'browse-row';
+  modelRow.appendChild(browse);
+  form.appendChild(modelRow);
+  if (baseField) form.appendChild(baseField.wrap);
+  form.append(result, actions);
+  body.appendChild(form);
+
+  const payload = () => ({
+    label: labelField.input.value.trim(),
+    provider: provider.id,
+    key: keyField.input.value.trim(),
+    model: modelField.input.value.trim(),
+    baseUrl: baseField ? baseField.input.value.trim() : undefined,
+    engine: provider.protocol === 'gemini' ? 'gemini' : (provider.id === 'custom' ? 'whisper' : undefined)
+  });
+
+  async function testConnection() {
+    testSave.disabled = true;
+    saveOnly.disabled = true;
+    const original = testSave.textContent;
+    testSave.textContent = 'Testing…';
+    result.textContent = '';
+    result.className = 'test-result';
+    try {
+      const body = payload();
+      const request = { ...body };
+      if (!body.key && profile) request.profileId = profile.id;
+      const data = await apiJson(kind === 'cleanup' ? '/api/test-cleanup' : '/api/test-transcription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request)
+      });
+      const latency = ProfilesUI.formatLatency(data.latencyMs);
+      result.textContent = '✓ Connected' + (latency ? ' — ' + latency : '');
+      result.className = 'test-result test-ok';
+      return true;
+    } catch (e) {
+      if (e.message === 'Unauthorized') return false;
+      result.textContent = '✗ ' + e.message;
+      result.className = 'test-result test-fail';
+      return false;
+    } finally {
+      testSave.disabled = false;
+      saveOnly.disabled = false;
+      testSave.textContent = original;
+    }
+  }
+
+  async function persist() {
+    const body = payload();
+    if (profile) {
+      await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    } else {
+      if (!body.key) throw new Error('API key is required.');
+      await apiJson(`/api/profiles/${kind}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    }
+    closeSheet();
+    await loadSettingsUI();
+    liveAnnounce('Profile saved.');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ok = await testConnection();
+    if (!ok) return;
+    try { await persist(); } catch (err) {
+      if (err.message !== 'Unauthorized') {
+        result.textContent = '✗ ' + err.message;
+        result.className = 'test-result test-fail';
+      }
+    }
+  });
+
+  saveOnly.addEventListener('click', async () => {
+    try { await persist(); } catch (err) {
+      if (err.message !== 'Unauthorized') {
+        result.textContent = '✗ ' + err.message;
+        result.className = 'test-result test-fail';
+      }
+    }
+  });
+
+  remove.addEventListener('click', async () => {
+    if (!profile) return;
+    if (!confirm(`Delete "${profile.label}"?`)) return;
+    try {
+      await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}`, { method: 'DELETE' });
+      closeSheet();
+      await loadSettingsUI();
+      liveAnnounce('Profile deleted.');
+    } catch (err) {
+      if (err.message !== 'Unauthorized') {
+        result.textContent = '✗ ' + err.message;
+        result.className = 'test-result test-fail';
+      }
+    }
+  });
+}
+
+function field(labelText, type, value) {
+  const wrap = document.createElement('label');
+  wrap.className = 'field';
+  const span = document.createElement('span');
+  span.textContent = labelText;
+  const input = document.createElement('input');
+  input.type = type;
+  input.className = 'input';
+  input.value = value || '';
+  wrap.append(span, input);
+  return { wrap, input };
+}
 
 async function loadSettingsUI() {
-  // Lock the settings fields immediately (before the network request) so they
-  // gray out as soon as the tab is clicked, rather than waiting for /api/settings
-  // to respond (which could take a couple of seconds).
-  settingsLocked = true;
-  applySettingsLock();
   renderCorrectionsUI();
+  loadAccount();
   try {
-    const res = await fetch('/api/settings');
-    if (res.status === 401) { handleUnauthorized(); return; }
-    const s = await res.json();
-    document.getElementById('setTranscriptionEngine').value = s.transcriptionEngine || 'whisper';
-    document.getElementById('setTranscriptionKey').value = '';
-    document.getElementById('setTranscriptionKey').placeholder = s.transcriptionKey || 'sk-...';
-    document.getElementById('setTranscriptionUrl').value = s.transcriptionUrl;
-    document.getElementById('setTranscriptionModel').value = s.transcriptionModel;
-    document.getElementById('setGeminiTranscriptionKey').value = '';
-    document.getElementById('setGeminiTranscriptionKey').placeholder = s.geminiTranscriptionKey || 'AIza...';
-    document.getElementById('setGeminiTranscriptionUrl').value = s.geminiTranscriptionUrl || '';
-    document.getElementById('setGeminiTranscriptionModel').value = s.geminiTranscriptionModel || '';
-    document.getElementById('setTranscriptionLanguage').value = s.transcriptionLanguage || '';
-    document.getElementById('setTranscriptionHint').value = s.transcriptionHint || '';
-    document.getElementById('setCleanupKey').value = '';
-    document.getElementById('setCleanupKey').placeholder = s.cleanupKey || 'sk-...';
-    document.getElementById('setCleanupUrl').value = s.cleanupUrl;
-    document.getElementById('setCleanupModel').value = s.cleanupModel;
-    updateEngineFields();
+    settingsState = await apiJson('/api/settings');
+    renderProfiles('transcription');
+    renderProfiles('cleanup');
+
+    const lang = document.getElementById('setTranscriptionLanguage');
+    if (lang) lang.value = settingsState.transcriptionLanguage || '';
+    const hint = document.getElementById('setTranscriptionHint');
+    if (hint) hint.value = settingsState.transcriptionHint || '';
+
+    const active = (settingsState.transcriptionProfiles || []).find(p => p.active);
+    activeProfileProtocol = active ? active.protocol : 'none';
+    streamingSupported = !!(active && active.supportsStreaming);
+    syncLiveChip();
+
+    const saveRecognition = document.getElementById('saveRecognitionBtn');
+    saveRecognition.onclick = saveRecognitionSettings;
+    const fallback = document.getElementById('fallbackProfileSelect');
+    fallback.onchange = async () => {
+      try {
+        await apiJson('/api/settings/fallback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profileId: fallback.value || null })
+        });
+        settingsState.fallbackTranscriptionProfile = fallback.value || null;
+        liveAnnounce(fallback.value ? 'Fallback model set.' : 'Fallback model disabled.');
+      } catch (e) {
+        if (e.message !== 'Unauthorized') alert(e.message);
+      }
+    };
     renderCorrectionsUI();
-  } catch (e) { console.error('loadSettingsUI error:', e); }
+  } catch (e) {
+    if (e.message !== 'Unauthorized') console.error('loadSettingsUI error:', e);
+    const list = document.getElementById('transcriptionProfiles');
+    if (list) list.innerHTML = '<p class="profile-empty">Could not load settings.</p>';
+  }
 }
+
+async function saveRecognitionSettings() {
+  const result = document.getElementById('recognitionResult');
+  const btn = document.getElementById('saveRecognitionBtn');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Saving…';
+  result.textContent = '';
+  result.className = 'test-result';
+  try {
+    await apiJson('/api/settings/recognition', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcriptionLanguage: document.getElementById('setTranscriptionLanguage').value.trim(),
+        transcriptionHint: document.getElementById('setTranscriptionHint').value.trim()
+      })
+    });
+    result.textContent = 'Saved ✓';
+    result.className = 'test-result test-ok';
+    setTimeout(() => { result.textContent = ''; result.className = 'test-result'; }, 2500);
+  } catch (e) {
+    if (e.message !== 'Unauthorized') {
+      result.textContent = e.message;
+      result.className = 'test-result test-fail';
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+// ── Account & security UI ──
+function wireAccountUI() {
+  const editNameBtn = document.getElementById('editNameBtn');
+  const nameForm = document.getElementById('usernameForm');
+  const passwordForm = document.getElementById('passwordForm');
+  const changePasswordBtn = document.getElementById('changePasswordBtn');
+  if (editNameBtn && nameForm) {
+    editNameBtn.addEventListener('click', () => {
+      nameForm.style.display = nameForm.style.display === 'none' ? '' : 'none';
+      const input = document.getElementById('accountUsernameInput');
+      if (input) { input.value = accountState.username || ''; input.focus(); }
+    });
+  }
+  const cancelName = document.getElementById('cancelNameBtn');
+  if (cancelName && nameForm) cancelName.addEventListener('click', () => { nameForm.style.display = 'none'; });
+  if (changePasswordBtn && passwordForm) {
+    changePasswordBtn.addEventListener('click', () => {
+      passwordForm.style.display = passwordForm.style.display === 'none' ? '' : 'none';
+    });
+  }
+  const cancelPassword = document.getElementById('cancelPasswordBtn');
+  if (cancelPassword && passwordForm) cancelPassword.addEventListener('click', () => { passwordForm.style.display = 'none'; });
+
+  if (nameForm) {
+    nameForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const result = document.getElementById('usernameResult');
+      result.textContent = '';
+      result.className = 'test-result';
+      try {
+        const data = await apiJson('/api/account/username', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('accountUsernameInput').value,
+            currentPassword: document.getElementById('accountUsernamePassword').value
+          })
+        });
+        accountState.username = data.username;
+        accountState.needsUsername = false;
+        renderAccount();
+        nameForm.reset();
+        nameForm.style.display = 'none';
+        result.textContent = 'Saved ✓';
+        result.className = 'test-result test-ok';
+      } catch (err) {
+        if (err.message !== 'Unauthorized') {
+          result.textContent = err.message;
+          result.className = 'test-result test-fail';
+        }
+      }
+    });
+  }
+
+  if (passwordForm) {
+    passwordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const result = document.getElementById('passwordResult');
+      result.textContent = '';
+      result.className = 'test-result';
+      try {
+        await apiJson('/api/account/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentPassword: document.getElementById('accountCurrentPassword').value,
+            newPassword: document.getElementById('accountNewPassword').value,
+            confirm: document.getElementById('accountConfirmPassword').value
+          })
+        });
+        passwordForm.reset();
+        passwordForm.style.display = 'none';
+        result.textContent = 'Password updated — other sessions signed out.';
+        result.className = 'test-result test-ok';
+      } catch (err) {
+        if (err.message !== 'Unauthorized') {
+          result.textContent = err.message;
+          result.className = 'test-result test-fail';
+        }
+      }
+    });
+  }
+
+  const gateForm = document.getElementById('gateForm');
+  if (gateForm) {
+    gateForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.getElementById('gateError');
+      error.style.display = 'none';
+      try {
+        const data = await apiJson('/api/account/username', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('gateUsername').value,
+            currentPassword: document.getElementById('gatePassword').value
+          })
+        });
+        accountState.username = data.username;
+        accountState.needsUsername = false;
+        renderAccount();
+        liveAnnounce('Username saved.');
+      } catch (err) {
+        if (err.message !== 'Unauthorized') {
+          error.textContent = err.message;
+          error.style.display = 'block';
+        }
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-add-profile]').forEach(btn => {
+    btn.addEventListener('click', () => openProviderPicker(btn.dataset.addProfile));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (trapSheetFocus(e)) e.stopPropagation();
+  }, true);
+}
+
+wireAccountUI();
+loadAccount();
 
 // ── Corrections settings UI ──
 let correctionsDirty = false; // protect unsaved edits from settings refreshes
@@ -1668,22 +2326,6 @@ async function saveCorrections() {
   }
 }
 
-// Show/hide the engine-specific fields based on the selected transcription engine.
-// Note: we set 'flex' (not '') so the inline style overrides the CSS
-// `#engineGemini { display: none; }` rule. Setting '' would clear the inline
-// style and let the CSS rule hide the fields again.
-function updateEngineFields() {
-  const engine = document.getElementById('setTranscriptionEngine').value;
-  document.getElementById('engineWhisper').style.display = engine === 'whisper' ? 'flex' : 'none';
-  document.getElementById('engineGemini').style.display = engine === 'gemini' ? 'flex' : 'none';
-}
-
-// Wire up the engine dropdown to toggle its fields.
-const engineSelect = document.getElementById('setTranscriptionEngine');
-if (engineSelect) {
-  engineSelect.addEventListener('change', updateEngineFields);
-}
-
 // Correction rows are independent of the API configuration lock: saved with
 // their own button, so API keys are not needed to change a spelling rule.
 const addCorrectionBtn = document.getElementById('addCorrectionBtn');
@@ -1696,150 +2338,179 @@ if (correctionsList) {
   correctionsList.addEventListener('change', () => { correctionsDirty = true; });
 }
 
-function applySettingsLock() {
-  const inputs = document.querySelectorAll('.settings-group .input');
-  inputs.forEach(el => {
-    el.disabled = settingsLocked;
-    el.classList.toggle('input-locked', settingsLocked);
-  });
-  document.getElementById('settingsSaveBtn').style.display = settingsLocked ? 'none' : '';
-  document.getElementById('settingsEditBtn').style.display = settingsLocked ? '' : 'none';
-}
-
-function unlockSettings() {
-  settingsLocked = false;
-  applySettingsLock();
-}
-
-async function saveSettings() {
-  const body = {
-    transcriptionEngine: document.getElementById('setTranscriptionEngine').value,
-    transcriptionKey: document.getElementById('setTranscriptionKey').value.trim(),
-    transcriptionUrl: document.getElementById('setTranscriptionUrl').value.trim(),
-    transcriptionModel: document.getElementById('setTranscriptionModel').value.trim(),
-    transcriptionLanguage: document.getElementById('setTranscriptionLanguage').value.trim(),
-    transcriptionHint: document.getElementById('setTranscriptionHint').value.trim(),
-    geminiTranscriptionKey: document.getElementById('setGeminiTranscriptionKey').value.trim(),
-    geminiTranscriptionUrl: document.getElementById('setGeminiTranscriptionUrl').value.trim(),
-    geminiTranscriptionModel: document.getElementById('setGeminiTranscriptionModel').value.trim(),
-    cleanupKey: document.getElementById('setCleanupKey').value.trim(),
-    cleanupUrl: document.getElementById('setCleanupUrl').value.trim(),
-    cleanupModel: document.getElementById('setCleanupModel').value.trim()
-  };
-  const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (res.status === 401) { handleUnauthorized(); return; }
-  if (res.ok) { loadSettingsUI(); }
-}
-
-// ── Test connection ──
-// These read the values currently in the Settings form (not the saved settings),
-// so the user can test before saving. A green/red message appears next to the button.
-async function testTranscription() {
-  const btn = document.getElementById('testTranscriptionBtn');
-  const result = document.getElementById('testTranscriptionResult');
-  btn.disabled = true; btn.textContent = 'Testing…';
-  result.textContent = ''; result.className = 'test-result';
-
-  const engine = document.getElementById('setTranscriptionEngine').value;
-  const body = {
-    engine,
-    key: document.getElementById('setTranscriptionKey').value.trim(),
-    url: document.getElementById('setTranscriptionUrl').value.trim(),
-    model: document.getElementById('setTranscriptionModel').value.trim(),
-    geminiKey: document.getElementById('setGeminiTranscriptionKey').value.trim(),
-    geminiUrl: document.getElementById('setGeminiTranscriptionUrl').value.trim(),
-    geminiModel: document.getElementById('setGeminiTranscriptionModel').value.trim()
-  };
-
+// ── Active profile (protocol) ──
+// Cached so the Record tab knows whether the active profile needs a WAV
+// handover (Cartesia). Refreshed when Settings change.
+async function refreshActiveProfile() {
   try {
-    const res = await fetch('/api/test-transcription', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 401) { handleUnauthorized(); return; }
+    const res = await fetch('/api/active-profile');
+    if (res.status === 401) return;
     const data = await res.json();
-    if (data.ok) {
-      result.textContent = '✓ ' + (data.message || 'Connected');
-      result.className = 'test-result test-ok';
-    } else {
-      result.textContent = '✗ ' + (data.error || 'Connection failed');
-      result.className = 'test-result test-fail';
-    }
-  } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.className = 'test-result test-fail';
-  }
-  btn.disabled = false; btn.textContent = 'Test connection';
+    activeProfileProtocol = data.protocol || 'none';
+    streamingSupported = !!data.supportsStreaming;
+    syncLiveChip();
+  } catch {}
 }
 
-async function testCleanup() {
-  const btn = document.getElementById('testCleanupBtn');
-  const result = document.getElementById('testCleanupResult');
-  btn.disabled = true; btn.textContent = 'Testing…';
-  result.textContent = ''; result.className = 'test-result';
-
-  const body = {
-    key: document.getElementById('setCleanupKey').value.trim(),
-    url: document.getElementById('setCleanupUrl').value.trim(),
-    model: document.getElementById('setCleanupModel').value.trim()
-  };
-
+// Decode any recorded blob and re-encode it as 16 kHz mono WAV.
+async function convertToWav16k(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) throw new Error('This browser cannot prepare audio for Cartesia.');
+  const ac = new AC();
   try {
-    const res = await fetch('/api/test-cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 401) { handleUnauthorized(); return; }
-    const data = await res.json();
-    if (data.ok) {
-      result.textContent = '✓ ' + (data.message || 'Connected');
-      result.className = 'test-result test-ok';
-    } else {
-      result.textContent = '✗ ' + (data.error || 'Connection failed');
-      result.className = 'test-result test-fail';
+    const decoded = await ac.decodeAudioData(await blob.arrayBuffer());
+    const channels = decoded.numberOfChannels;
+    const mono = new Float32Array(decoded.length);
+    for (let c = 0; c < channels; c++) {
+      const data = decoded.getChannelData(c);
+      for (let i = 0; i < data.length; i++) mono[i] += data[i] / channels;
     }
-  } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.className = 'test-result test-fail';
+    return encodeWav(resample(mono, decoded.sampleRate, TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
+  } finally {
+    try { await ac.close(); } catch {}
   }
-  btn.disabled = false; btn.textContent = 'Test connection';
 }
 
 // ── Recording ──
-// Transcribe a blob. With { silent: true } it only uploads and returns the raw
-// text — no status changes, cleanup, history, or clipboard — used internally to
-// re-transcribe a live session after chunk failures.
-async function transcribeAudioBlob(audioBlob, opts = {}) {
-  const silent = !!opts.silent;
-  if (!silent && isEditingTranscript) setTranscriptEditing(false);
-  if (!silent) {
-    toggleBtn.classList.add('processing');
-    toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
-    retryRecordingBtn.disabled = true;
+// Apply one provider transcript to the document: exact corrections, optional
+// cleanup, history, clipboard. Shared by the standard upload path and the live
+// streaming path so both behave identically. The caller owns audio cleanup,
+// timers, buttons and status reset.
+async function applyProviderTranscript(providerRaw, { signal } = {}) {
+  const raw = applyCorrections(providerRaw);
+  const baseRaw = currentRaw;
+  const baseCleaned = currentCleaned;
+  const baseOriginalRaw = currentOriginalRaw;
+  setOriginalRaw(isAppendMode()
+    ? appendSegment(baseOriginalRaw || baseRaw, providerRaw)
+    : (providerRaw !== raw ? providerRaw : ''));
+  currentRaw = raw;
+
+  let copiedLabel = '';
+  let copyFailed = false;
+
+  if (cleanToggle.checked && raw.trim()) {
+    setStatusProcessing('Cleaning up…');
+
+    let cleaned = '';
+    let streamSuccess = false;
+    try {
+      ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, signal));
+    } catch (streamErr) {
+      if (streamErr.name === 'UnauthorizedError') return { unauthorized: true };
+      if (streamErr.name === 'AbortError') throw streamErr;
+      cleaned = '';
+      streamSuccess = false;
+    }
+
+    cleaned = applyCorrections(cleaned);
+
+    if (!streamSuccess || !cleaned) {
+      const cRes = await fetch('/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }),
+        signal
+      });
+      if (cRes.status === 401) return { unauthorized: true };
+      if (!cRes.ok) {
+        if (isAppendMode()) {
+          currentRaw = appendSegment(baseRaw, raw);
+          copyFailed = !(await copyToClipboard(currentRaw));
+        } else {
+          currentCleaned = '';
+          copyFailed = !(await copyToClipboard(raw));
+        }
+        updateTranscriptDisplay(true);
+        addToHistory(raw, raw, currentOriginalRaw);
+        return {
+          ok: true,
+          cleanupFailed: true,
+          copiedLabel: 'Cleanup failed — use Clean up to retry',
+          copyFailed
+        };
+      }
+      const cData = await cRes.json();
+      if (cData.error) throw new Error(cData.error);
+      cleaned = applyCorrections(cData.cleanedTranscript || '');
+    }
+
+    showingRaw = false;
+    if (isAppendMode() && cleaned) {
+      currentCleaned = appendSegment(baseCleaned, cleaned);
+      currentRaw = appendSegment(baseRaw, raw);
+      updateTranscriptDisplay(true);
+      addToHistory(raw, cleaned, currentOriginalRaw);
+      copyFailed = !(await copyToClipboard(currentCleaned));
+      copiedLabel = copyFailed
+        ? 'Appended — copy blocked, tap the transcript'
+        : ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied');
+    } else {
+      currentCleaned = cleaned;
+      updateTranscriptDisplay(true);
+      if (cleaned) {
+        addToHistory(raw, cleaned, currentOriginalRaw);
+        copyFailed = !(await copyToClipboard(cleaned));
+        copiedLabel = copyFailed ? 'Cleaned — copy blocked, tap the transcript' : 'Cleaned copied';
+      }
+    }
+  } else {
+    currentCleaned = '';
+    showingRaw = false;
+    if (isAppendMode() && raw.trim()) {
+      currentRaw = appendSegment(baseRaw, raw);
+      updateTranscriptDisplay(true);
+      addToHistory(raw, raw, currentOriginalRaw);
+      copyFailed = !(await copyToClipboard(currentRaw));
+      copiedLabel = copyFailed
+        ? 'Appended — copy blocked, tap the transcript'
+        : (baseRaw ? 'Appended & copied' : 'Raw copied');
+    } else {
+      updateTranscriptDisplay(true);
+      addToHistory(raw, raw, currentOriginalRaw);
+      copyFailed = !(await copyToClipboard(raw));
+      copiedLabel = copyFailed ? 'Raw — copy blocked, tap the transcript' : 'Raw copied';
+    }
   }
+
+  return { ok: true, copiedLabel, copyFailed };
+}
+
+// Transcribe a recorded/uploaded blob through the server, then apply the result.
+async function transcribeAudioBlob(audioBlob) {
+  if (isEditingTranscript) setTranscriptEditing(false);
+  toggleBtn.classList.add('processing');
+  toggleBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.3;1" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
+  retryRecordingBtn.disabled = true;
 
   const abortController = new AbortController();
-  if (!silent) processingAbortController = abortController;
-  // A silent recovery still needs to obey Clear/Cancel. Forward an external
-  // signal instead of leaving an un-abortable provider call running.
-  if (opts.signal) {
-    if (opts.signal.aborted) abortController.abort();
-    else opts.signal.addEventListener('abort', () => abortController.abort(), { once: true });
-  }
+  processingAbortController = abortController;
 
-  // Elapsed time counter during processing
   let procSeconds = 0;
-  const procTimer = silent ? null : setInterval(() => {
+  const procTimer = setInterval(() => {
     procSeconds++;
     statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
   }, 1000);
 
-  if (!silent) setStatusProcessing('Transcribing…');
+  setStatusProcessing('Transcribing…');
 
   try {
-    // Upload with automatic retry on transient failures (5xx / 429 / network glitch).
-    // The audio blob is still in memory, so rebuilding the FormData is safe.
     let uRes = null;
     let lastUploadErr = null;
     const UPLOAD_RETRIES = 2; // total attempts = retries + 1
     for (let attempt = 1; attempt <= UPLOAD_RETRIES; attempt++) {
       try {
         const fd = new FormData();
-        fd.append('audio', audioBlob, 'rec.' + audioExtension(audioBlob.type));
+        // Cartesia/Gemini need 16 kHz mono WAV. MediaRecorder output (WebM/MP4)
+        // cannot be decoded on the server, so the browser converts it here.
+        let uploadBlob = audioBlob;
+        let uploadName = 'rec.' + audioExtension(audioBlob.type);
+        const alreadyWav = /wav/i.test(audioBlob.type || '');
+        if (!alreadyWav && (activeProfileProtocol === 'cartesia' || activeProfileProtocol === 'gemini')) {
+          uploadBlob = await convertToWav16k(audioBlob);
+          uploadName = 'rec.wav';
+        }
+        fd.append('audio', uploadBlob, uploadName);
         uRes = await fetch('/upload', { method: 'POST', body: fd, signal: abortController.signal });
         const transientStatuses = [500, 502, 503, 504, 429];
         if (!transientStatuses.includes(uRes.status)) break;
@@ -1849,16 +2520,18 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
         lastUploadErr = fetchErr;
       }
       if (attempt < UPLOAD_RETRIES) {
-        if (!silent) setStatusProcessing(`Transcribing… (retry ${attempt})`);
-        await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, 2s backoff
+        setStatusProcessing(`Transcribing… (retry ${attempt})`);
+        await new Promise(r => setTimeout(r, 1000 * attempt));
       }
     }
     if (!uRes) throw lastUploadErr;
     if (uRes.status === 401) {
-      if (procTimer) clearInterval(procTimer);
+      clearInterval(procTimer);
       handleUnauthorized();
-      if (!silent) { showRecoveryRow('failed'); retryRecordingBtn.disabled = false; resetButton(); }
-      return silent ? '' : undefined;
+      showRecoveryRow('failed');
+      retryRecordingBtn.disabled = false;
+      resetButton();
+      return undefined;
     }
     if (uRes.status === 413) {
       const errData = await uRes.json().catch(() => ({}));
@@ -1868,120 +2541,30 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
     const uData = await uRes.json();
     if (uData.error) throw new Error(uData.error);
 
-    const providerRaw = uData.rawTranscript || '';
-    // Silent recovery hands the provider text back untouched so the caller can
-    // keep the original and apply the current rules once.
-    if (silent) { if (procTimer) clearInterval(procTimer); return providerRaw; }
-    const raw = applyCorrections(providerRaw);
-    // Keep the existing on-screen document so append mode can add below it.
-    const baseRaw = currentRaw;
-    const baseCleaned = currentCleaned;
-    const baseOriginalRaw = currentOriginalRaw;
-    // In append mode the original view must cover the WHOLE document. If the
-    // existing document had no corrections, its raw text is its original text.
-    setOriginalRaw(isAppendMode()
-      ? appendSegment(baseOriginalRaw || baseRaw, providerRaw)
-      : (providerRaw !== raw ? providerRaw : ''));
-    currentRaw = raw;
-
-    let copiedLabel = '';
-    let copyFailed = false;
-    if (cleanToggle.checked && raw.trim()) {
-      setStatusProcessing('Cleaning up…');
-
-      // Try streaming cleanup first
-      let cleaned = '';
-      let streamSuccess = false;
-      try {
-        ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
-      } catch (streamErr) {
-        if (streamErr.name === 'UnauthorizedError') { clearInterval(procTimer); handleUnauthorized(); return; }
-        if (streamErr.name === 'AbortError') throw streamErr;
-        // Fallback to non-streaming
-        cleaned = '';
-        streamSuccess = false;
-      }
-
-      // Cleanup can reintroduce the original spelling, so apply the exact rules
-      // to its output as well.
-      cleaned = applyCorrections(cleaned);
-
-      // Fallback: non-streaming cleanup
-      if (!streamSuccess || !cleaned) {
-        const cRes = await fetch('/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }), signal: abortController.signal });
-        if (cRes.status === 401) { clearInterval(procTimer); handleUnauthorized(); return; }
-        if (!cRes.ok) {
-          // Cleanup failed — keep the raw. In append mode, append it to the document.
-          if (isAppendMode()) {
-            currentRaw = appendSegment(baseRaw, raw);
-            copyFailed = !(await copyToClipboard(currentRaw));
-          } else {
-            currentCleaned = '';
-            copyFailed = !(await copyToClipboard(raw));
-          }
-          updateTranscriptDisplay(true);
-          addToHistory(raw, raw, currentOriginalRaw);
-          await clearAudioBackup();
-          await clearInMemoryAudioBackup();
-          hideRecoveryRow();
-          clearInterval(procTimer);
-          setStatus('Cleanup failed — use Clean up to retry', 'error');
-          setTimeout(() => setStatus('Ready'), 3000);
-          processingAbortController = null;
-          return true;
-        }
-        const cData = await cRes.json();
-        if (cData.error) throw new Error(cData.error);
-        cleaned = applyCorrections(cData.cleanedTranscript || '');
-      }
-
-      showingRaw = false;
-
-      if (isAppendMode() && cleaned) {
-        // Append the new cleaned segment to the document.
-        currentCleaned = appendSegment(baseCleaned, cleaned);
-        currentRaw = appendSegment(baseRaw, raw);
-        updateTranscriptDisplay(true);
-        addToHistory(raw, cleaned, currentOriginalRaw);
-        copyFailed = !(await copyToClipboard(currentCleaned));
-        copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied');
-      } else {
-        currentCleaned = cleaned;
-        updateTranscriptDisplay(true);
-        if (cleaned) {
-          addToHistory(raw, cleaned, currentOriginalRaw);
-          copyFailed = !(await copyToClipboard(cleaned));
-          copiedLabel = copyFailed ? 'Cleaned — copy blocked, tap the transcript' : 'Cleaned copied';
-        }
-      }
-    } else {
-      currentCleaned = '';
-      showingRaw = false;
-
-      if (isAppendMode() && raw.trim()) {
-        // Append the new raw segment to the document.
-        currentRaw = appendSegment(baseRaw, raw);
-        updateTranscriptDisplay(true);
-        addToHistory(raw, raw, currentOriginalRaw);
-        copyFailed = !(await copyToClipboard(currentRaw));
-        copiedLabel = copyFailed ? 'Appended — copy blocked, tap the transcript' : (baseRaw ? 'Appended & copied' : 'Raw copied');
-      } else {
-        updateTranscriptDisplay(true);
-        addToHistory(raw, raw, currentOriginalRaw);
-        copyFailed = !(await copyToClipboard(raw));
-        copiedLabel = copyFailed ? 'Raw — copy blocked, tap the transcript' : 'Raw copied';
-      }
+    const result = await applyProviderTranscript(uData.rawTranscript || '', { signal: abortController.signal });
+    if (!result.ok) {
+      clearInterval(procTimer);
+      if (result.unauthorized) { handleUnauthorized(); return; }
+      return false;
     }
-
-    if (silent) { clearInterval(procTimer); return raw; }
 
     processingAbortController = null;
     await clearAudioBackupIfIdle();
     await clearInMemoryAudioBackup();
     hideRecoveryRow();
     clearInterval(procTimer);
+
+    if (result.cleanupFailed) {
+      setStatus(result.copiedLabel, 'error');
+      setTimeout(() => setStatus('Ready'), 3000);
+      clearProcessingUI();
+      retryRecordingBtn.disabled = false;
+      resetButton();
+      return true;
+    }
+
     if (!autoStopped) {
-      setStatus(copiedLabel, copyFailed ? 'error' : 'done');
+      setStatus(result.copiedLabel, result.copyFailed ? 'error' : 'done');
       clearProcessingUI();
       retryRecordingBtn.disabled = false;
       resetButton();
@@ -1994,8 +2577,7 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
     processingAbortController = null;
     return true;
   } catch (e) {
-    if (procTimer) clearInterval(procTimer);
-    if (silent) return false; // caller decides what to do; leave audio/backups intact
+    clearInterval(procTimer);
     if (e.name === 'AbortError') {
       setStatus('Cancelled', 'error');
       clearProcessingUI();
@@ -2010,12 +2592,9 @@ async function transcribeAudioBlob(audioBlob, opts = {}) {
       setTimeout(() => setStatus('Ready'), 3000);
       showRecoveryRow('failed');
     }
+    processingAbortController = null;
     return false;
   }
-  processingAbortController = null;
-  clearProcessingUI();
-  retryRecordingBtn.disabled = false;
-  resetButton();
 }
 
 // Standard (non-live) recorder. Starts a 1s-timeslice recording and resolves
@@ -2171,7 +2750,7 @@ function authIsFresh() {
 // is stale (laptop slept, a check failed), Record runs the same check first,
 // exactly as before.
 function authBackgroundBusy() {
-  return isRecording || isStarting || liveStopping || !!processingAbortController;
+  return isRecording || isStarting || streamStopping || !!processingAbortController;
 }
 
 async function runBackgroundAuthCheck() {
@@ -2203,7 +2782,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function startRecording() {
-  if (isRecording || isStarting || liveStopping) return;
+  if (isRecording || isStarting || streamStopping) return;
   if (processingAbortController) {
     setStatus('Still processing the last take — press Escape to cancel it first', 'error');
     setTimeout(() => setStatus('Ready'), 3000);
@@ -2222,13 +2801,11 @@ async function startRecording() {
     if (await checkAuthOnce() === false) { isStarting = false; resetButton(); handleUnauthorized(); return; }
   }
 
-  // Freeze the capture mode for this take. Changing the Live toggle later cannot
-  // switch the teardown path under a running session.
-  recordingCaptureMode = liveMode ? 'live' : 'standard';
-  if (recordingCaptureMode === 'live' && !LedgerLib) {
-    // An old cached shell can pair the new page with a missing ledger script.
-    // Standard mode still records, so the microphone is never blocked.
-    recordingCaptureMode = 'standard';
+  // Freeze the capture mode for this take. The active model decides: a
+  // streaming model uses the continuous WebSocket path; every other model
+  // records first and transcribes once at Stop (more context, better accuracy).
+  recordingCaptureMode = (streamingSupported && LedgerLib) ? 'stream' : 'standard';
+  if (streamingSupported && !LedgerLib) {
     console.warn('Audio ledger library missing — falling back to Standard mode.');
   }
 
@@ -2260,8 +2837,15 @@ async function startRecording() {
     });
 
     // Confirm the recorder is genuinely capturing audio BEFORE showing "recording".
-    if (recordingCaptureMode === 'live') {
-      await startLiveCapture(stream);
+    if (recordingCaptureMode === 'stream') {
+      try {
+        await startStreamingCapture(stream);
+      } catch (streamErr) {
+        console.warn('Live streaming unavailable — using Standard mode:', streamErr.message);
+        resetStreamCaptureState();
+        recordingCaptureMode = 'standard';
+        await startStandardRecorder(stream);
+      }
     } else {
       await startStandardRecorder(stream);
     }
@@ -2290,27 +2874,8 @@ async function startRecording() {
     const recorderRunning = mediaRecorder && mediaRecorder.state !== 'inactive';
     if (recorderRunning) { cancelled = true; silentCancel = true; }
     try { if (recorderRunning) mediaRecorder.stop(); } catch {}
-    const failedSession = liveSession;
-    if (failedSession) {
-      failedSession.cancelled = true;
-      failedSession.accepting = false;
-      clearInterval(failedSession.chunkTimer);
-      for (const ac of failedSession.controllers) { try { ac.abort(); } catch {} }
-      liveSession = null;
-    }
-    if (liveLedger) { liveLedger.discard().catch(() => {}); liveLedger = null; }
-    if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} liveScriptNode = null; }
-    if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} liveWorkletNode = null; }
-    if (liveStream) { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
-    // If a live start blanked the document, put the user's text back.
-    if (liveDocumentCleared) {
-      currentRaw = failedSession ? failedSession.baseRaw : currentRaw;
-      currentCleaned = failedSession ? failedSession.baseCleaned : currentCleaned;
-      if (failedSession) setOriginalRaw(failedSession.baseOriginalRaw);
-      showingRaw = false;
-      liveDocumentCleared = false;
-      updateTranscriptDisplay();
-    }
+    resetStreamCaptureState();
+    teardownStreamAudio();
     clearLimitCheck();
     stream.getTracks().forEach(t => t.stop());
     if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
@@ -2366,7 +2931,7 @@ function stopSilenceWatch() {
 }
 
 
-// ── Live transcription helpers ──
+// ── Live streaming helpers (Cartesia) ──
 // Encode a mono Float32Array (values -1..1) into a WAV Blob. WAV is accepted by
 // transcription APIs, unlike short webm chunks.
 function encodeWav(samples, sampleRate) {
@@ -2420,239 +2985,183 @@ function newSessionId() {
   return 's-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-function isLiveSessionActive(session) {
-  return !!session && liveSession === session && !session.cancelled;
+// ── Live streaming helpers (Cartesia) ──
+const STREAM_DRAIN_MS = 500;
+const STREAM_FINALIZE_MS = 6000;
+
+function isStreamSessionActive(session) {
+  return !!session && streamSession === session && !session.cancelled;
 }
 
-function liveEndSample(session) {
-  return liveCaptureBaseSample + liveWriteIndex;
-}
-
-function hasSpeech(samples, threshold = 0.004) {
+function floatToPcm16(samples) {
+  const buffer = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(buffer);
   for (let i = 0; i < samples.length; i++) {
-    if (Math.abs(samples[i]) >= threshold) return true;
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
   }
-  return false;
+  return buffer;
 }
 
-// Append transcribed chunks in order, even if responses arrive out of order.
-// Only the active session may render; a late reply from a cancelled take is
-// dropped instead of mutating the new document.
-function liveFlushPending(session) {
-  while (session.chunks.has(session.nextSeq)) {
-    const item = session.chunks.get(session.nextSeq);
-    session.chunks.delete(session.nextSeq);
-    if (item && item.text) {
-      session.raw += (session.raw ? ' ' : '') + item.text;
-      if (isLiveSessionActive(session)) {
-        currentRaw = applyCorrections(session.raw);
-        try { updateTranscriptDisplay(); } catch (e) { console.error('liveFlushPending render error:', e); }
-      }
+function streamSendPcm(samples) {
+  if (!samples || !samples.length) return;
+  const frame = floatToPcm16(samples);
+  if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+  if (streamReady) streamSocket.send(frame);
+  else if (streamPendingAudio.length < 200) streamPendingAudio.push(frame);
+}
+
+function streamSendControl(message) {
+  if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+  try { streamSocket.send(JSON.stringify(message)); } catch {}
+}
+
+function streamResolveDone(session) {
+  if (session && session.resolveDone) {
+    const resolve = session.resolveDone;
+    session.resolveDone = null;
+    resolve();
+  }
+}
+
+function updateStreamPreview(session) {
+  if (!isStreamSessionActive(session) || !streamAssembler) return;
+  const preview = streamAssembler.text();
+  if (!preview.trim()) return;
+  const base = session.baseRaw || '';
+  const shown = appendSegment(base, preview);
+  transcriptDisplay.textContent = shown;
+  transcriptDisplay.classList.remove('transcript-placeholder');
+  metaWordCount = countWords(shown);
+  setTranscriptMeta();
+}
+
+function handleStreamEvent(raw) {
+  const session = streamSession;
+  if (!session) return;
+  let event;
+  try { event = JSON.parse(typeof raw === 'string' ? raw : ''); } catch { return; }
+  if (event.type === 'ready') {
+    streamReady = true;
+    for (const frame of streamPendingAudio.splice(0)) {
+      try { streamSocket.send(frame); } catch {}
     }
-    session.nextSeq++;
-  }
-}
-
-const CHUNK_RETRIES = 2;          // total attempts per chunk (browser is the retry owner)
-const CHUNK_TIMEOUT_MS = 75_000;  // per-attempt budget
-const STOP_DRAIN_MS = 500;        // wait for the worklet's partial block
-const STOP_TOTAL_BUDGET_MS = 45_000; // drain in-flight chunks before marking incomplete
-
-function enqueueLiveChunk(session, wavBlob, meta) {
-  if (!isLiveSessionActive(session)) return;
-  if (session.queue.length >= LIVE_MAX_QUEUE) {
-    // The audio is still safe in the ledger; skip the request rather than
-    // building an unbounded queue. The stop-time full-session recovery can
-    // still transcribe it.
-    session.errors++;
-    session.failedRanges.push({ ...meta, reason: 'queue full' });
-    // Fill the sequence hole so later successful chunks can still appear.
-    session.chunks.set(meta.seq, { text: '', ok: false });
-    liveFlushPending(session);
-    setStatus('Transcription is falling behind — audio saved locally for full recovery', 'error');
     return;
   }
-  session.queue.push({ wavBlob, meta });
-  pumpLiveQueue(session);
-}
-
-function pumpLiveQueue(session) {
-  if (!isLiveSessionActive(session)) return;
-  while (session.inflight.size < LIVE_MAX_INFLIGHT && session.queue.length) {
-    const task = session.queue.shift();
-    // Track a caught promise so a provider/JSON failure cannot surface as an
-    // unhandled rejection while the take continues.
-    const p = liveTranscribeChunk(session, task).catch(e => {
-      console.error('Chunk transcription pipeline error:', e);
-      session.errors++;
-      session.chunks.set(task.meta.seq, { text: '', ok: false });
-      liveFlushPending(session);
-    });
-    session.inflight.add(p);
-    p.finally(() => {
-      session.inflight.delete(p);
-      if (isLiveSessionActive(session)) pumpLiveQueue(session);
-    });
-  }
-}
-
-async function liveTranscribeChunk(session, task) {
-  const { wavBlob, meta } = task;
-  let lastErr = '';
-  for (let attempt = 1; attempt <= CHUNK_RETRIES; attempt++) {
-    if (!isLiveSessionActive(session)) return;
-    const ac = new AbortController();
-    session.controllers.add(ac);
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; ac.abort(); }, CHUNK_TIMEOUT_MS);
-    try {
-      const fd = new FormData();
-      fd.append('audio', wavBlob, 'chunk.wav');
-      const res = await fetch('/upload-chunk', { method: 'POST', body: fd, signal: ac.signal });
-      if (!isLiveSessionActive(session)) return;
-      if (res.status === 401) {
-        // Never redirect mid-recording: keep capturing locally.
-        session.errors++;
-        session.expired = true;
-        session.failedRanges.push({ ...meta, reason: 'session expired' });
-        setStatus('Session expired — open /login in a new tab. Recording continues locally.', 'error');
-        try { showRecoveryRow('failed'); } catch {}
-        session.chunks.set(meta.seq, { text: '', ok: false });
-        liveFlushPending(session);
-        return;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        if (!isLiveSessionActive(session)) return;
-        session.successes++;
-        session.chunks.set(meta.seq, { text: (data.rawTranscript || '').trim(), ok: true });
-        liveFlushPending(session);
-        return;
-      }
-      const d = await res.json().catch(() => ({}));
-      lastErr = d.error || ('HTTP ' + res.status);
-      if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
-    } catch (e) {
-      if (!isLiveSessionActive(session)) return;
-      lastErr = timedOut ? 'request timed out' : (e.message || 'network error');
-    } finally {
-      clearTimeout(timer);
-      session.controllers.delete(ac);
-    }
-    if (attempt < CHUNK_RETRIES) {
-      session.retries++;
-      setStatus(`Chunk retry ${attempt}/${CHUNK_RETRIES - 1}…`, 'processing');
-      const jitter = Math.floor(Math.random() * 250);
-      await new Promise(r => setTimeout(r, 800 * attempt + jitter));
-    }
-  }
-  if (!isLiveSessionActive(session)) return;
-  // All attempts failed — record the gap honestly, but keep recording. The full
-  // session is still in the ledger and is retried on stop.
-  session.errors++;
-  session.failedRanges.push({ ...meta, reason: lastErr || 'failed' });
-  console.error('chunk failed after retries:', lastErr);
-  setStatus('Chunk failed: ' + lastErr + ' — audio saved locally, will retry on stop', 'error');
-  session.chunks.set(meta.seq, { text: '', ok: false });
-  liveFlushPending(session);
-}
-
-// Send the newest captured samples as a 16kHz WAV chunk. The send cursor is
-// independent of the persistence cursor: this function never appends to the
-// ledger and never consumes audio that persistence has not seen.
-// force=true sends while paused (used before Pause); final=true is Stop.
-function liveSendChunk(sessionArg, { force = false, final = false } = {}) {
-  const session = sessionArg || liveSession;
-  if (!session || !isLiveSessionActive(session)) return;
-  const end = liveEndSample(session);
-  const start = session.sendCursor;
-  if (end <= start) return;
-  const chunkLen = end - start;
-
-  // Don't consume a short chunk: leave it in the buffer so the next send (or
-  // Stop with final=true) includes it. This is what previously dropped the tail.
-  const minMicSamples = MIN_CHUNK_SAMPLES_FACTOR * session.micRate;
-  if (chunkLen < minMicSamples && !final && !force) return;
-
-  const localStart = Math.max(0, start - liveCaptureBaseSample);
-  const localEnd = Math.min(liveWriteIndex, end - liveCaptureBaseSample);
-  if (localEnd <= localStart) return;
-  const chunkSamples = livePcmSamples.slice(localStart, localEnd);
-
-  // A final/pause fragment with no speech is noise, not a lost word. Discard it
-  // explicitly (and advance the cursor) rather than sending an empty request.
-  if ((final || force) && !hasSpeech(chunkSamples)) {
-    session.sendCursor = end;
+  if (event.type === 'error') {
+    session.streamError = event.error || 'Live stream failed';
+    setStatus('Live preview unavailable — the full recording is still saved', 'error');
     return;
   }
-
-  session.sendCursor = end;
-  // Release the send buffer once everything has been sent (persistence has
-  // already seen every sample). Keep at least 30 s so short sessions don't churn.
-  if (session.sendCursor >= liveEndSample(session) && (liveEndSample(session) - liveCaptureBaseSample) > session.micRate * 30) {
-    liveCaptureBaseSample = liveEndSample(session);
-    livePcmSamples = new Float32Array(0);
-    liveWriteIndex = 0;
+  if (event.type === 'done') {
+    session.streamDone = true;
+    streamResolveDone(session);
+    return;
   }
-  const resampled = resample(chunkSamples, session.micRate, TARGET_SAMPLE_RATE);
-  if (!resampled.length) return;
-  const wav = encodeWav(resampled, TARGET_SAMPLE_RATE);
-  const meta = {
-    seq: session.seq++,
-    startSec: start / session.micRate,
-    endSec: end / session.micRate
+  if (event.type === 'transcript' && event.text && streamAssembler) {
+    streamAssembler.apply(event);
+    updateStreamPreview(session);
+  }
+}
+
+async function openStreamSocket(session) {
+  const res = await fetch('/api/stream-token', { method: 'POST' });
+  if (!res.ok) throw new Error('Live streaming is unavailable for the active voice model.');
+  const data = await res.json();
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${window.location.host}/stt-stream?token=${encodeURIComponent(data.token)}`);
+  ws.binaryType = 'arraybuffer';
+  session.donePromise = new Promise(resolve => { session.resolveDone = resolve; });
+  ws.onmessage = (ev) => handleStreamEvent(ev.data);
+  ws.onerror = () => {
+    session.streamError = session.streamError || 'Live stream connection failed';
+    streamResolveDone(session);
   };
-  enqueueLiveChunk(session, wav, meta);
+  ws.onclose = () => { streamResolveDone(session); };
+  streamSocket = ws;
 }
 
-// Set up WAV chunk capture on the existing audioContext/source.
-// In append mode, keep a snapshot of the existing document so the live recording
-// can build its own segment and append it at the end.
-function startLiveCapture(stream) {
+function teardownStreamAudio() {
+  if (streamScriptNode) { try { streamScriptNode.disconnect(); } catch {} streamScriptNode = null; }
+  if (streamWorkletNode) {
+    try { streamWorkletNode.port.close(); } catch {}
+    try { streamWorkletNode.disconnect(); } catch {}
+    streamWorkletNode = null;
+  }
+  if (streamMediaStream) {
+    streamMediaStream.getTracks().forEach(t => t.stop());
+    streamMediaStream = null;
+  }
+}
+
+function resetStreamCaptureState() {
+  if (streamSocket) { try { streamSocket.close(); } catch {} }
+  streamSocket = null;
+  streamReady = false;
+  streamPendingAudio = [];
+  streamAssembler = null;
+  streamSession = null;
+  streamResampler = null;
+  if (streamLedger) { streamLedger.discard().catch(() => {}); streamLedger = null; }
+}
+
+// Capture 16 kHz PCM through the AudioWorklet (ScriptProcessor fallback) and
+// relay it to the server while the user speaks. No chunk timer: the stream is
+// continuous, so the provider keeps the context that 10 s chunks used to lose.
+function startStreamingCapture(mediaStream) {
   return new Promise((resolve, reject) => {
     const session = {
       id: newSessionId(),
       startedAt: Date.now(),
       micRate: audioContext.sampleRate,
-      chunkMs: getChunkDurationMs(),
       accepting: true,
-      draining: false,
       paused: false,
       cancelled: false,
-      raw: '',
-      chunks: new Map(),
-      nextSeq: 0,
-      seq: 0,
-      sendCursor: 0,
-      successes: 0,
-      errors: 0,
-      retries: 0,
-      failedRanges: [],
-      inflight: new Set(),
-      controllers: new Set(),
-      queue: [],
-      drainResolve: null,
+      streamError: '',
+      streamDone: false,
+      resolveDone: null,
+      donePromise: null,
       baseRaw: currentRaw,
       baseCleaned: currentCleaned,
       baseOriginalRaw: currentOriginalRaw
     };
-    liveSession = session;
-    liveStream = stream;
-    livePcmSamples = new Float32Array(0);
-    liveWriteIndex = 0;
-    liveCaptureBaseSample = 0;
-    liveResampler = new LedgerLib.StreamingResampler(session.micRate, TARGET_SAMPLE_RATE, 0);
-    liveLedger = new LedgerLib.AudioLedger({
+    streamSession = session;
+    streamMediaStream = mediaStream;
+    streamAssembler = {
+      finals: [],
+      partial: '',
+      apply(event) {
+        if (event.isFinal) {
+          const text = String(event.text || '').trim();
+          const joined = this.finals.join(' ').trim();
+          if (text && joined && (text === joined || text.startsWith(joined))) {
+            // Some providers resend the cumulative transcript instead of deltas.
+            this.finals.length = 0;
+            this.finals.push(text);
+          } else if (text) {
+            this.finals.push(text);
+          }
+          this.partial = '';
+        } else {
+          this.partial = event.text;
+        }
+      },
+      text() {
+        const joined = this.finals.join(' ').trim();
+        if (!this.partial) return joined;
+        return (joined ? joined + ' ' : '') + this.partial;
+      },
+      finalText() { return this.finals.join(' ').trim(); }
+    };
+    streamResampler = new LedgerLib.StreamingResampler(session.micRate, TARGET_SAMPLE_RATE, 0);
+    streamLedger = new LedgerLib.AudioLedger({
       sessionId: session.id,
-      adapter: liveLedgerAdapter,
+      adapter: streamLedgerAdapter,
       sampleRate: TARGET_SAMPLE_RATE,
       startedAt: session.startedAt
     });
-    currentRaw = '';
-    currentCleaned = '';
-    setOriginalRaw('');
-    showingRaw = false;
-    liveDocumentCleared = true;
+    streamReady = false;
+    streamPendingAudio = [];
     lastBackupFlush = 0;
     backupSession++;
 
@@ -2663,63 +3172,50 @@ function startLiveCapture(stream) {
       reject(new Error('no audio was captured'));
     }, 3000);
 
-    // Shared handler for one block of mono PCM samples. Used by both the
-    // AudioWorklet path and the ScriptProcessor fallback.
-    const handleLiveBlock = (channel) => {
-      if (!isLiveSessionActive(session)) return;
-      if ((!session.accepting && !session.draining) || session.paused) return;
+    const handleStreamBlock = (channel) => {
+      if (!isStreamSessionActive(session)) return;
+      if (!session.accepting || session.paused) return;
       if (!channel || !channel.length) return;
 
-      // Persist every captured sample exactly once, independent of sending.
-      // StreamingResampler keeps output positions stable across block sizes.
       try {
-        const res = liveResampler.process(channel);
+        const res = streamResampler.process(channel);
         if (res.samples.length) {
-          liveLedger.append(res.samples, res.outStart).catch(e => {
+          streamLedger.append(res.samples, res.outStart).catch(e => {
             console.error('Audio ledger append failed:', e);
           });
+          streamSendPcm(res.samples);
         }
       } catch (e) {
-        console.error('Audio ledger resample failed:', e);
+        console.error('Stream resample failed:', e);
       }
 
-      // Grow the send buffer only when needed (amortized O(1) per sample).
-      if (liveWriteIndex + channel.length > livePcmSamples.length) {
-        const newLen = Math.max(livePcmSamples.length * 2, liveWriteIndex + channel.length);
-        const nb = new Float32Array(newLen);
-        nb.set(livePcmSamples.subarray(0, liveWriteIndex), 0);
-        livePcmSamples = nb;
-      }
-      livePcmSamples.set(channel, liveWriteIndex);
-      liveWriteIndex += channel.length;
-
-      // First real audio callback = capture is genuinely running.
-      if (!settled) { settled = true; clearTimeout(timer); liveDocumentCleared = false; resolve(); }
+      if (!settled) { settled = true; clearTimeout(timer); resolve(); }
     };
-    session.handleLiveBlock = handleLiveBlock;
 
-    // Preferred path: AudioWorklet runs off the main thread (no UI jank).
+    openStreamSocket(session).catch(err => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resetStreamCaptureState();
+      reject(err);
+    });
+
     try {
       if (audioContext.audioWorklet) {
         audioContext.audioWorklet.addModule('/live-capture-worklet.js').then(() => {
-          if (settled && liveWriteIndex === 0 && !liveWorkletNode) {
-            // Timed out while loading the module — startRecording's catch tears down.
-            return;
-          }
-          if (!isLiveSessionActive(session)) return;
+          if (settled && !streamWorkletNode) return;
+          if (!isStreamSessionActive(session)) return;
           try {
             const node = new AudioWorkletNode(audioContext, 'live-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
-            liveWorkletNode = node;
+            streamWorkletNode = node;
             node.port.onmessage = (e) => {
               if (e.data && e.data.type === 'flushed') {
                 if (session.drainResolve) { const r = session.drainResolve; session.drainResolve = null; r(); }
                 return;
               }
-              handleLiveBlock(e.data);
+              handleStreamBlock(e.data);
             };
             source.connect(node);
-            session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
-            updateTranscriptDisplay();
           } catch (err) {
             console.warn('AudioWorklet node failed, falling back to ScriptProcessor:', err.message);
             startScriptProcessorFallback();
@@ -2735,153 +3231,222 @@ function startLiveCapture(stream) {
       startScriptProcessorFallback();
     }
 
-    // Legacy path: ScriptProcessorNode runs on the main thread (can jank long
-    // sessions) and only runs while connected to the destination.
     function startScriptProcessorFallback() {
-      if (settled) return; // already resolved (worklet running) or rejected (timed out)
-      if (liveWorkletNode || liveScriptNode) return;
-      if (!isLiveSessionActive(session)) return;
+      if (settled && !streamWorkletNode) return;
+      if (streamWorkletNode || streamScriptNode) return;
+      if (!isStreamSessionActive(session)) return;
       try {
-        liveScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+        streamScriptNode = audioContext.createScriptProcessor(4096, 1, 1);
       } catch (err) {
-        clearTimeout(timer);
-        reject(new Error('live capture is not supported by this browser'));
+        if (!settled) { settled = true; clearTimeout(timer); reject(new Error('live capture is not supported by this browser')); }
         return;
       }
-      liveScriptNode.onaudioprocess = (e) => {
-        handleLiveBlock(e.inputBuffer.getChannelData(0));
+      streamScriptNode.onaudioprocess = (e) => {
+        handleStreamBlock(e.inputBuffer.getChannelData(0));
       };
-      source.connect(liveScriptNode);
-      liveScriptNode.connect(audioContext.destination);
-
-      session.chunkTimer = setInterval(() => liveSendChunk(session), session.chunkMs);
-      updateTranscriptDisplay();
+      source.connect(streamScriptNode);
+      streamScriptNode.connect(audioContext.destination);
     }
   });
 }
 
 // Ask the worklet to emit its partial 4096-sample buffer, and wait briefly.
-function drainLiveCapture(session) {
-  if (!session || !liveWorkletNode || !liveWorkletNode.port) return Promise.resolve();
+function drainStreamCapture(session) {
+  if (!session || !streamWorkletNode || !streamWorkletNode.port) return Promise.resolve();
   return new Promise(resolve => {
     let done = false;
     const finish = () => { if (done) return; done = true; session.drainResolve = null; resolve(); };
     session.drainResolve = finish;
-    session.draining = true;
-    try { liveWorkletNode.port.postMessage('flush'); } catch { finish(); return; }
-    setTimeout(finish, STOP_DRAIN_MS);
-  }).finally(() => { session.draining = false; });
+    try { streamWorkletNode.port.postMessage('flush'); } catch { finish(); return; }
+    setTimeout(finish, STREAM_DRAIN_MS);
+  });
 }
 
-async function finalizeLiveLedger(session) {
-  if (!liveLedger || !session) return;
+async function finalizeStreamLedger() {
+  if (!streamLedger) return;
   try {
-    const tail = liveResampler ? liveResampler.flush() : null;
-    if (tail && tail.samples.length) await liveLedger.append(tail.samples, tail.outStart);
-  } catch (e) {
-    console.error('Live resampler flush failed:', e);
-  }
-  await liveLedger.flush();
-}
-
-async function waitForLiveQueue(session, budgetMs) {
-  const deadline = Date.now() + budgetMs;
-  while ((session.inflight.size || session.queue.length) && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 100));
-  }
-  if (session.inflight.size || session.queue.length) {
-    // Bounded time budget exceeded. Keep the audio; mark the unsent work as
-    // failed so the transcript is never presented as complete.
-    for (const ac of session.controllers) { try { ac.abort(); } catch {} }
-    for (const task of session.queue) {
-      session.errors++;
-      session.failedRanges.push({ ...task.meta, reason: 'stop budget exceeded' });
-      session.chunks.set(task.meta.seq, { text: '', ok: false });
+    const tail = streamResampler ? streamResampler.flush() : null;
+    if (tail && tail.samples.length) {
+      streamSendPcm(tail.samples);
+      await streamLedger.append(tail.samples, tail.outStart);
     }
-    session.queue = [];
-    liveFlushPending(session);
-    session.timedOut = true;
-    return false;
+  } catch (e) {
+    console.error('Stream resampler flush failed:', e);
   }
-  return true;
+  await streamLedger.flush();
 }
 
-// Tear down live capture and process the accumulated transcript.
-async function stopLiveRecording() {
-  const session = liveSession;
+function restoreDocumentBase(session) {
   if (!session) return;
-  liveStopping = true;
+  currentRaw = session.baseRaw;
+  currentCleaned = session.baseCleaned;
+  currentOriginalRaw = session.baseOriginalRaw;
+  showingRaw = false;
+  showingOriginal = false;
+  updateTranscriptDisplay();
+}
+
+async function parkStreamForRecovery(session, reason) {
+  if (!streamLedger) return;
+  try {
+    streamLedger.markPartial(reason || 'streaming failed');
+    await streamLedger.drain();
+    parkLedgerForRecovery(streamLedger);
+  } catch (e) {
+    console.error('Could not park stream recording for recovery:', e);
+  }
+  streamLedger = null;
+  streamSession = null;
+}
+
+// Stop streaming: finalize the provider turn, then run the SAME cleanup and
+// display pipeline as the standard path. If the stream failed or returned no
+// text, transcribe the saved audio as a fallback.
+async function stopStreamingRecording() {
+  const session = streamSession;
+  if (!session) return;
+  streamStopping = true;
   session.accepting = false;
   clearLimitCheck();
   stopSilenceWatch();
-  if (session.chunkTimer) clearInterval(session.chunkTimer);
-  session.chunkTimer = null;
 
-  // Drain the worklet tail before closing the port; otherwise the last few
-  // hundred milliseconds (often the final word) vanish.
-  await drainLiveCapture(session);
-  liveSendChunk(session, { final: true });
-
-  cancelAnimationFrame(animationId);
-  stopTimer(); clearWaveform();
-  toggleBtn.classList.remove('recording');
-  isPaused = false;
-  pauseBtn.style.display = 'none';
-
-  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
-  if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} }
-  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
-  liveScriptNode = null;
-  liveWorkletNode = null;
-  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
-  liveStream = null;
-
-  // Make sure the complete session is on disk before we tear anything down.
-  await finalizeLiveLedger(session);
-
-  setStatusProcessing('Transcribing…');
-  let procSeconds = 0;
-  const procTimer = setInterval(() => {
-    procSeconds++;
-    statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+s\)$/, '') + ` (${procSeconds}s)`;
-  }, 1000);
-
-  await waitForLiveQueue(session, STOP_TOTAL_BUDGET_MS);
-  // Any sequence that never produced an entry must not block later text.
-  for (let seq = session.nextSeq; seq < session.seq; seq++) {
-    if (!session.chunks.has(seq)) session.chunks.set(seq, { text: '', ok: false });
-  }
-  if (isLiveSessionActive(session)) liveFlushPending(session);
-
-  let ok = false;
   try {
-    ok = await finishLiveRecording(session);
+    await drainStreamCapture(session);
+    cancelAnimationFrame(animationId);
+    stopTimer(); clearWaveform();
+    toggleBtn.classList.remove('recording');
+    isPaused = false;
+    pauseBtn.style.display = 'none';
+    teardownStreamAudio();
+    if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+    await finalizeStreamLedger();
+
+    setStatusProcessing('Finishing transcription…');
+    if (streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+      streamSendControl({ type: 'finalize' });
+      await Promise.race([session.donePromise || Promise.resolve(), new Promise(r => setTimeout(r, STREAM_FINALIZE_MS))]);
+    }
+    if (streamSocket) { try { streamSocket.close(); } catch {} }
+    streamSocket = null;
+    streamReady = false;
+    streamPendingAudio = [];
+
+    const providerRaw = streamAssembler
+      ? (streamAssembler.finalText() || streamAssembler.text())
+      : '';
+
+    // Fail-and-preserve: a broken stream or empty result falls back to the
+    // complete recording on disk, transcribed through the normal upload path.
+    if ((!providerRaw.trim() || session.streamError) && streamLedger) {
+      setStatusProcessing('Recovering the recording…');
+      let blob = null;
+      try { ({ blob } = await streamLedger.buildWav()); } catch (e) { console.error('Stream WAV build failed:', e); }
+      if (blob) {
+        restoreDocumentBase(session);
+        const ok = await transcribeAudioBlob(blob);
+        if (ok) { await streamLedger.discard(); streamLedger = null; }
+        else { await parkStreamForRecovery(session, 'streaming fallback failed'); }
+        streamSession = null;
+        return;
+      }
+    }
+
+    if (!providerRaw.trim()) {
+      restoreDocumentBase(session);
+      await parkStreamForRecovery(session, 'no text transcribed');
+      clearProcessingUI();
+      resetButton();
+      setStatus('Nothing was transcribed — full recording saved. Retry or Download.', 'error');
+      await showRecoveryRow('failed');
+      setTimeout(() => setStatus('Ready'), 4000);
+      return;
+    }
+
+    restoreDocumentBase(session);
+    toggleBtn.classList.add('processing');
+    const abortController = new AbortController();
+    processingAbortController = abortController;
+
+    try {
+      const result = await applyProviderTranscript(providerRaw, { signal: abortController.signal });
+      if (result.unauthorized) {
+        await parkStreamForRecovery(session, 'session expired');
+        handleUnauthorized();
+        clearProcessingUI();
+        resetButton();
+        return;
+      }
+      if (!result.ok) {
+        await parkStreamForRecovery(session, 'processing failed');
+        showRecoveryRow('failed');
+        clearProcessingUI();
+        resetButton();
+        return;
+      }
+
+      await clearAudioBackupIfIdle();
+      await clearInMemoryAudioBackup();
+      hideRecoveryRow();
+      if (streamLedger) { await streamLedger.discard(); streamLedger = null; }
+      streamSession = null;
+
+      if (result.cleanupFailed) {
+        setStatus(result.copiedLabel, 'error');
+        setTimeout(() => setStatus('Ready'), 3000);
+      } else if (autoStopped) {
+        const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
+        setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
+        setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
+      } else {
+        setStatus(result.copiedLabel, result.copyFailed ? 'error' : 'done');
+        setTimeout(() => setStatus('Ready'), 2000);
+      }
+      clearProcessingUI();
+      resetButton();
+    } catch (e) {
+      if (session.cancelled) return;
+      if (e.name === 'AbortError') {
+        setStatus('Cancelled', 'error');
+        setTimeout(() => setStatus('Ready'), 1500);
+      } else {
+        setStatus('Error: ' + e.message, 'error');
+        setTimeout(() => setStatus('Ready'), 3000);
+      }
+      await parkStreamForRecovery(session, 'cleanup or display failed');
+      await showRecoveryRow('failed');
+      clearProcessingUI();
+      resetButton();
+    } finally {
+      processingAbortController = null;
+    }
+  } catch (e) {
+    console.error('Streaming stop failed:', e);
+    if (!session.cancelled) {
+      await parkStreamForRecovery(session, 'streaming stop failed');
+      clearProcessingUI();
+      resetButton();
+      setStatus('Could not finish the recording — it is saved for retry. ' + e.message, 'error');
+      await showRecoveryRow('failed');
+    }
   } finally {
-    liveStopping = false;
-  }
-  clearInterval(procTimer);
-  if (autoStopped && ok) {
-    const mins = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 60000));
-    setStatus(`Recording auto-stopped after ${mins} minute${mins === 1 ? '' : 's'}`, 'done');
-    setTimeout(() => { autoStopped = false; setStatus('Ready'); }, 5000);
-  } else {
-    autoStopped = false;
+    streamStopping = false;
+    streamAssembler = null;
+    streamPendingAudio = [];
+    streamReady = false;
+    streamSocket = null;
   }
 }
 
-// Cancel live recording — discard everything, no cleanup, and make sure any
-// late provider replies cannot touch the document.
-async function cancelLiveRecording() {
-  const session = liveSession;
-  liveSession = null;
-  liveStopping = false;
-  if (session) {
-    session.cancelled = true;
-    session.accepting = false;
-    clearInterval(session.chunkTimer);
-    for (const ac of session.controllers) { try { ac.abort(); } catch {} }
-    session.queue = [];
-  }
+async function cancelStreamingRecording() {
+  const session = streamSession;
+  streamSession = null;
+  streamStopping = false;
+  if (session) session.cancelled = true;
+  if (streamSocket) { try { streamSocket.close(); } catch {} }
+  streamSocket = null;
+  streamReady = false;
+  streamPendingAudio = [];
+  streamAssembler = null;
   clearLimitCheck();
   stopSilenceWatch();
   cancelAnimationFrame(animationId);
@@ -2889,17 +3454,11 @@ async function cancelLiveRecording() {
   toggleBtn.classList.remove('recording');
   isPaused = false;
   pauseBtn.style.display = 'none';
-  if (liveScriptNode) { try { liveScriptNode.disconnect(); } catch {} }
-  if (liveWorkletNode) { try { liveWorkletNode.port.close(); } catch {} try { liveWorkletNode.disconnect(); } catch {} }
+  teardownStreamAudio();
   if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
-  liveScriptNode = null;
-  liveWorkletNode = null;
-  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
-  liveStream = null;
   cancelBtn.style.display = 'none';
   document.querySelector('.action-btns').style.display = '';
-  // A cancel discards the session — remove its ledger blocks and the legacy backup.
-  if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
+  if (streamLedger) { await streamLedger.discard(); streamLedger = null; }
   else if (session) { await deleteLiveSession(session.id); }
   await clearAudioBackup().catch(() => {});
   await clearInMemoryAudioBackup();
@@ -2907,230 +3466,6 @@ async function cancelLiveRecording() {
   resetButton();
   if (!silentCancel) { setStatus('Cancelled', 'error'); setTimeout(() => setStatus('Ready'), 1200); }
   silentCancel = false;
-}
-
-// On stop: if every chunk was transcribed, clean up/copy as usual. If any chunk
-// failed, try one whole-session re-transcription from the ledger. If that also
-// fails, show the partial text, keep the audio, and never auto-copy it.
-async function finishLiveRecording(session) {
-  if (session.cancelled) return false;
-  let providerRaw = session.raw;
-  let raw = applyCorrections(providerRaw);
-  let complete = session.errors === 0 && !session.timedOut;
-
-  if (!complete && liveLedger) {
-    setStatusProcessing('Recovering failed chunks…');
-    const recoveryAbort = new AbortController();
-    processingAbortController = recoveryAbort;
-    try {
-      const { blob } = await liveLedger.buildWav();
-      const recovered = await transcribeAudioBlob(blob, {
-        silent: true,
-        signal: recoveryAbort.signal
-      });
-      if (recovered && recovered.trim()) {
-        providerRaw = recovered;
-        raw = applyCorrections(providerRaw);
-        complete = true;
-        console.log('Recovered full live session after chunk failures.');
-      }
-    } catch (e) {
-      console.error('Full-session recovery failed:', e);
-    } finally {
-      if (processingAbortController === recoveryAbort) processingAbortController = null;
-    }
-  }
-
-  if (session.cancelled) return false;
-  const baseRaw = session.baseRaw;
-  const baseCleaned = session.baseCleaned;
-  const baseOriginalRaw = session.baseOriginalRaw;
-  // Same rule as standard mode: the original view covers the whole document,
-  // falling back to the existing raw text when it had no corrections.
-  if (raw.trim()) {
-    setOriginalRaw(isAppendMode()
-      ? appendSegment(baseOriginalRaw || baseRaw, providerRaw)
-      : (providerRaw !== raw ? providerRaw : ''));
-  }
-
-  if (!raw.trim()) {
-    clearProcessingUI();
-    resetButton();
-    if (liveLedger) {
-      // Audio exists but nothing was transcribed — keep it and say so.
-      liveLedger.markPartial('no text transcribed');
-      await liveLedger.drain();
-      parkLedgerForRecovery(liveLedger);
-      liveLedger = null;
-      liveSession = null;
-      setStatus('Nothing was transcribed — full recording saved. Retry or Download.', 'error');
-      await showRecoveryRow(session.errors > 0 ? 'incomplete' : 'failed');
-    } else {
-      await clearAudioBackupIfIdle().catch(() => {});
-      await clearInMemoryAudioBackup();
-      hideRecoveryRow();
-      setStatus('No audio was captured — check your microphone', 'error');
-    }
-    setTimeout(() => setStatus('Ready'), 4000);
-    return false;
-  }
-
-  if (!complete) {
-    if (session.cancelled) return false;
-    if (isAppendMode()) {
-      currentRaw = appendSegment(baseRaw, raw);
-      currentCleaned = baseCleaned;
-      showingRaw = !!baseCleaned;
-    } else {
-      currentRaw = raw;
-      currentCleaned = '';
-      showingRaw = true;
-    }
-    updateTranscriptDisplay();
-    liveLedger.markPartial('partial transcript');
-    await liveLedger.drain();
-    parkLedgerForRecovery(liveLedger);
-    liveLedger = null;
-    liveSession = null;
-    setStatus('Partial transcript — full recording saved. Retry or Download.', 'error');
-    await showRecoveryRow('incomplete');
-    processingAbortController = null;
-    clearProcessingUI();
-    resetButton();
-    return false;
-  }
-
-  // The preview may only contain the chunks that arrived. The final/recovered
-  // text is authoritative, so reset the raw state before cleanup/display.
-  if (!isAppendMode()) currentRaw = raw;
-
-  toggleBtn.classList.add('processing');
-  setStatusProcessing('Cleaning up…');
-  const abortController = new AbortController();
-  processingAbortController = abortController;
-
-  try {
-    if (cleanToggle.checked) {
-      // Try streaming cleanup first
-      let cleaned = '';
-      let streamSuccess = false;
-      try {
-        ({ cleaned, streamSuccess } = await streamCleanup(raw, getActivePrompt().text, abortController.signal));
-      } catch (streamErr) {
-        if (streamErr.name === 'UnauthorizedError') { handleUnauthorized(); return false; }
-        if (streamErr.name === 'AbortError') throw streamErr;
-        cleaned = '';
-        streamSuccess = false;
-      }
-      cleaned = applyCorrections(cleaned);
-      // Fallback: non-streaming cleanup
-      if (!streamSuccess || !cleaned) {
-        const cRes = await fetch('/cleanup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rawTranscript: raw, prompt: getActivePrompt().text }),
-          signal: abortController.signal
-        });
-        if (cRes.status === 401) { handleUnauthorized(); return false; }
-        if (!cRes.ok) {
-          // Cleanup failed — keep the raw. The transcript itself is complete, so
-          // the audio can be dropped.
-          if (isAppendMode()) {
-            currentRaw = appendSegment(baseRaw, raw);
-            copyFailed = !(await copyToClipboard(currentRaw));
-          } else {
-            currentCleaned = '';
-            copyFailed = !(await copyToClipboard(raw));
-          }
-          updateTranscriptDisplay(true);
-          addToHistory(raw, raw, currentOriginalRaw);
-          if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
-          await clearAudioBackupIfIdle();
-          await clearInMemoryAudioBackup();
-          hideRecoveryRow();
-          processingAbortController = null;
-          clearProcessingUI();
-          resetButton();
-          setStatus('Cleanup failed — use Clean up to retry', 'error');
-          setTimeout(() => setStatus('Ready'), 3000);
-          return true;
-        }
-        const cData = await cRes.json();
-        if (cData.error) throw new Error(cData.error);
-        cleaned = applyCorrections(cData.cleanedTranscript || '');
-      }
-      showingRaw = false;
-      if (isAppendMode() && cleaned) {
-        currentCleaned = appendSegment(baseCleaned, cleaned);
-        currentRaw = appendSegment(baseRaw, raw);
-        updateTranscriptDisplay(true);
-        addToHistory(raw, cleaned, currentOriginalRaw);
-        const copied = await copyToClipboard(currentCleaned);
-        setStatus(copied ? ((baseCleaned || baseRaw) ? 'Appended & copied' : 'Cleaned copied') : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
-      } else {
-        currentCleaned = cleaned;
-        updateTranscriptDisplay(true);
-        if (cleaned) {
-          addToHistory(raw, cleaned, currentOriginalRaw);
-          const copied = await copyToClipboard(cleaned);
-          setStatus(copied ? 'Cleaned copied' : 'Cleaned — copy blocked, tap the transcript', copied ? 'done' : 'error');
-        }
-      }
-    } else {
-      currentCleaned = '';
-      showingRaw = false;
-      if (isAppendMode() && raw.trim()) {
-        currentRaw = appendSegment(baseRaw, raw);
-        updateTranscriptDisplay(true);
-        addToHistory(raw, raw, currentOriginalRaw);
-        const copied = await copyToClipboard(currentRaw);
-        setStatus(copied ? (baseRaw ? 'Appended & copied' : 'Raw copied') : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
-      } else {
-        updateTranscriptDisplay(true);
-        addToHistory(raw, raw, currentOriginalRaw);
-        const copied = await copyToClipboard(raw);
-        setStatus(copied ? 'Raw copied' : 'Raw — copy blocked, tap the transcript', copied ? 'done' : 'error');
-      }
-    }
-
-    // Full coverage succeeded (or the whole-session recovery did) — the audio is
-    // no longer needed. Partial sessions never reach this branch.
-    if (liveLedger) { await liveLedger.discard(); liveLedger = null; }
-    liveSession = null;
-    await clearAudioBackupIfIdle();
-    await clearInMemoryAudioBackup();
-    hideRecoveryRow();
-    processingAbortController = null;
-    clearProcessingUI();
-    resetButton();
-    if (!autoStopped) {
-      setTimeout(() => setStatus('Ready'), 2500);
-    }
-    return true;
-  } catch (e) {
-    if (session.cancelled) return false;
-    if (e.name === 'AbortError') {
-      setStatus('Cancelled', 'error');
-      setTimeout(() => setStatus('Ready'), 1500);
-    } else {
-      setStatus('Error: ' + e.message, 'error');
-      setTimeout(() => setStatus('Ready'), 3000);
-    }
-    // Keep the audio for retry; mark it partial so it is never described as a
-    // complete transcription.
-    if (liveLedger) {
-      liveLedger.markPartial('cleanup or display failed');
-      await liveLedger.drain();
-      parkLedgerForRecovery(liveLedger);
-      liveLedger = null;
-    }
-    liveSession = null;
-    await showRecoveryRow('failed');
-    processingAbortController = null;
-    clearProcessingUI();
-    resetButton();
-    return false;
-  }
 }
 
 function resetButton() {
@@ -3149,7 +3484,7 @@ async function cancelRecording() {
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
   stopSilenceWatch();
-  if (recordingCaptureMode === 'live') { await cancelLiveRecording(); return; }
+  if (recordingCaptureMode === 'stream') { await cancelStreamingRecording(); return; }
   cancelled = true;
   try { mediaRecorder.stop(); } catch (e) {}
   // The mic track is released inside onstop, after the final data is flushed.
@@ -3160,7 +3495,7 @@ function stopRecording() {
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
   stopSilenceWatch();
-  if (recordingCaptureMode === 'live') { stopLiveRecording(); return; }
+  if (recordingCaptureMode === 'stream') { stopStreamingRecording(); return; }
   try { mediaRecorder.stop(); } catch (e) {}
   // The mic track is released inside onstop, after the final data is flushed.
 }
@@ -3178,9 +3513,9 @@ function togglePause() {
   if (!isRecording) return;
   if (navigator.vibrate) navigator.vibrate(10);
 
-  // Live mode: pause stops sending and discards audio captured while paused.
-  if (recordingCaptureMode === 'live' && liveSession) {
-    const session = liveSession;
+  // Streaming: pause stops sending; audio captured while paused is discarded.
+  if (recordingCaptureMode === 'stream' && streamSession) {
+    const session = streamSession;
     if (isPaused) {
       session.paused = false;
       resumeTimer();
@@ -3188,12 +3523,14 @@ function togglePause() {
       pauseBtn.textContent = 'Pause';
       setStatus('Recording…', 'active');
     } else {
-      liveSendChunk(session, { force: true }); // flush the last bit spoken before pausing
       // Flush the persistence resampler so the last sample is in the ledger
       // before audio captured during the pause is discarded.
       try {
-        const tail = liveResampler ? liveResampler.flush() : null;
-        if (tail && tail.samples.length) liveLedger.append(tail.samples, tail.outStart).catch(() => {});
+        const tail = streamResampler ? streamResampler.flush() : null;
+        if (tail && tail.samples.length) {
+          streamSendPcm(tail.samples);
+          streamLedger.append(tail.samples, tail.outStart).catch(() => {});
+        }
       } catch {}
       session.paused = true;
       pauseTimer();
@@ -3345,11 +3682,6 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     cleanToggle.checked = !cleanToggle.checked; cleanToggle.dispatchEvent(new Event('change'));
   }
-  // Toggle live transcription
-  if (e.key === 'l' && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault();
-    if (liveToggle) { liveToggle.checked = !liveToggle.checked; liveToggle.dispatchEvent(new Event('change')); }
-  }
   // New recording (clear + start)
   if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
@@ -3428,9 +3760,8 @@ window.addEventListener('offline', updateOnlineStatus);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden || !isRecording) return;
   try {
-    if (recordingCaptureMode === 'live' && liveSession) {
-      liveSendChunk(liveSession); // include the current partial chunk for transcription
-      if (liveLedger) liveLedger.flushPending(); // persist the <250 ms tail
+    if (recordingCaptureMode === 'stream' && streamLedger) {
+      streamLedger.flushPending(); // persist the <250 ms tail
     } else {
       flushRecordingBackup(audioChunks, false, true);
     }
@@ -3443,8 +3774,12 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => {
   if (!isRecording) return;
   try {
-    if (recordingCaptureMode === 'live' && liveLedger) liveLedger.flushPending();
-    else flushRecordingBackup(audioChunks, false, true);
+    if (recordingCaptureMode === 'stream') {
+      if (streamLedger) streamLedger.flushPending();
+      if (streamSocket) { try { streamSocket.close(); } catch {} }
+    } else {
+      flushRecordingBackup(audioChunks, false, true);
+    }
   } catch {}
 });
 
@@ -3501,7 +3836,7 @@ window.addEventListener('error', (e) => {
 
 // ── Idle audio pre-warm ──
 // Record-start speed, take one: creating the AudioContext and fetching the
-// Live worklet file both happen while you are reading the page, not while
+// capture worklet file both happen while you are reading the page, not while
 // "Opening mic…" is on screen. The microphone is never touched here, so the
 // browser mic indicator stays off. Runs once; every failure is silent because
 // startRecording redoes all of this anyway — pre-warming only ever saves time.
@@ -3529,6 +3864,7 @@ if (typeof requestIdleCallback === 'function') {
 document.body.classList.add('record-active');
 initOnboarding();
 loadPrompts();
+refreshActiveProfile();
 loadGlossaryFromServer();
 renderHistory();
 checkRecoveryOnLoad();

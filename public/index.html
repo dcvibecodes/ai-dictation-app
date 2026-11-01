@@ -9,12 +9,12 @@
   <meta name="apple-mobile-web-app-title" content="Dictate">
   <meta name="theme-color" content="#000000">
   <script>(function(){var t=localStorage.getItem('dictationTheme');if(t){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme',window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}})()</script>
-  <link rel="manifest" href="/manifest.json?v=14">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=14">
+  <link rel="manifest" href="/manifest.json?v=15">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=15">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="preload" href="/fonts/fraunces-latin-var.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/outfit-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=22">
+  <link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body>
   <div class="app">
@@ -42,7 +42,6 @@
           <svg class="theme-icon-sun" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
           <svg class="theme-icon-moon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
         </button>
-
         <a href="/logout" class="icon-btn" title="Logout" aria-label="Logout">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </a>
@@ -84,30 +83,27 @@
         </div>
       </div>
       <div class="prompt-row">
-        <div class="toggles-group">
-          <label class="clean-toggle-label">
-            <span class="toggle-switch">
-              <input type="checkbox" id="cleanToggle" checked>
-              <span class="toggle-slider"></span>
-            </span>
+        <div class="segmented" role="group" aria-label="Recording options">
+          <label class="seg-chip" title="Automatically clean up each transcript">
+            <input type="checkbox" id="cleanToggle" checked>
+            <span class="seg-dot" aria-hidden="true"></span>
             <span>Auto-clean</span>
           </label>
-          <label class="clean-toggle-label">
-            <span class="toggle-switch">
-              <input type="checkbox" id="liveToggle">
-              <span class="toggle-slider"></span>
-            </span>
+          <label class="seg-chip" id="liveChip" title="Live streaming needs a streaming voice model">
+            <input type="checkbox" id="liveToggle" disabled>
+            <span class="seg-dot" aria-hidden="true"></span>
             <span>Live</span>
           </label>
-          <label class="clean-toggle-label">
-            <span class="toggle-switch">
-              <input type="checkbox" id="appendToggle">
-              <span class="toggle-slider"></span>
-            </span>
+          <label class="seg-chip" title="Add to the current transcript">
+            <input type="checkbox" id="appendToggle">
+            <span class="seg-dot" aria-hidden="true"></span>
             <span>Append</span>
           </label>
         </div>
-        <select class="prompt-dropdown" id="promptBarSelect" aria-label="Select prompt"></select>
+        <label class="prompt-pill">
+          <span class="sr-only">Cleanup prompt</span>
+          <select id="promptBarSelect" aria-label="Select cleanup prompt"></select>
+        </label>
       </div>
 
       <!-- Single transcript display -->
@@ -139,121 +135,171 @@
 
     <!-- ═══ SETTINGS TAB ═══ -->
     <div class="tab-panel" id="panel-settings">
+      <div class="settings-hero">
+        <div>
+          <h1 class="settings-title">Settings</h1>
+          <p class="settings-sub">Voice models, cleanup, recognition and account.</p>
+        </div>
+      </div>
 
-      <!-- API Config -->
-      <div class="settings-section">
-        <div class="tab-panel-header">
-          <h2>API Configuration</h2>
-          <div class="settings-btns">
-            <button class="btn btn-ghost btn-sm" id="settingsEditBtn" onclick="unlockSettings()">Edit</button>
-            <button class="btn btn-primary btn-sm" id="settingsSaveBtn" onclick="saveSettings()" style="display:none">Save</button>
+      <!-- Voice models -->
+      <section class="settings-card" id="voiceSection">
+        <div class="card-head">
+          <div>
+            <h2>Voice models</h2>
+            <p class="card-desc">The active model transcribes every recording. Tap a row to switch.</p>
           </div>
         </div>
-        <div class="settings-grid">
-          <fieldset class="settings-group">
-            <legend>Transcription</legend>
-            <label>Engine
-              <select id="setTranscriptionEngine" class="input">
-                <option value="whisper">Whisper-compatible (Mistral Voxtral, OpenAI, Groq)</option>
-                <option value="gemini">Gemini (Google)</option>
-              </select>
-            </label>
-            <div class="engine-fields" id="engineWhisper">
-              <label>API Key<input type="text" id="setTranscriptionKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
-              <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setTranscriptionUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
-              <label>Model<input type="text" id="setTranscriptionModel" class="input" placeholder="whisper-1"></label>
-            </div>
-            <div class="engine-fields" id="engineGemini">
-              <label>API Key <span class="optional">(separate from cleanup — even if it's the same key)</span><input type="text" id="setGeminiTranscriptionKey" class="input input-masked" placeholder="AIza..." autocomplete="off"></label>
-              <label>Base URL <span class="optional">(defaults to Google's OpenAI-compatible API)</span><input type="text" id="setGeminiTranscriptionUrl" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta/openai"></label>
-              <label>Model<input type="text" id="setGeminiTranscriptionModel" class="input" placeholder="gemini-2.5-flash-lite"></label>
-            </div>
-            <label>Language <span class="optional">(optional — blank = auto-detect)</span><input type="text" id="setTranscriptionLanguage" class="input" placeholder="en"></label>
-            <label>Vocabulary hint <span class="optional">(optional — recognition bias for names, jargon, uncommon words)</span><textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea></label>
-            <div class="test-row">
-              <button type="button" class="btn btn-ghost btn-sm" id="testTranscriptionBtn" onclick="testTranscription()">Test connection</button>
-              <span class="test-result" id="testTranscriptionResult"></span>
-            </div>
-          </fieldset>
-          <fieldset class="settings-group">
-            <legend>Cleanup</legend>
-            <label>API Key<input type="text" id="setCleanupKey" class="input input-masked" placeholder="sk-..." autocomplete="off"></label>
-            <label>Base URL <span class="optional">(optional — leave blank for OpenAI, required for others)</span><input type="text" id="setCleanupUrl" class="input" placeholder="https://api.mistral.ai/v1"></label>
-            <label>Model<input type="text" id="setCleanupModel" class="input" placeholder="gpt-4.1-mini"></label>
-            <div class="test-row">
-              <button type="button" class="btn btn-ghost btn-sm" id="testCleanupBtn" onclick="testCleanup()">Test connection</button>
-              <span class="test-result" id="testCleanupResult"></span>
-            </div>
-          </fieldset>
-        </div>
-        <p class="settings-note">Transcription supports two engines: <strong>Whisper-compatible</strong> (Mistral Voxtral, OpenAI, Groq) or <strong>Gemini</strong> (Google). Each uses its own API key. Cleanup is configured separately. Enter a new key to update it.</p>
-      </div>
+        <div id="transcriptionProfiles" class="profile-list" role="radiogroup" aria-label="Voice models"></div>
+        <button type="button" class="add-row" data-add-profile="transcription">+ Add provider</button>
+      </section>
 
-      <!-- Prompts -->
-      <div class="settings-section">
-        <div class="tab-panel-header">
-          <h2>Cleanup Prompts</h2>
+      <!-- Cleanup model -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Cleanup model</h2>
+            <p class="card-desc">Auto-clean repairs punctuation and fillers using this model.</p>
+          </div>
+        </div>
+        <div id="cleanupProfiles" class="profile-list" role="radiogroup" aria-label="Cleanup models"></div>
+        <button type="button" class="add-row" data-add-profile="cleanup">+ Add provider</button>
+      </section>
+
+      <!-- Recognition -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Recognition</h2>
+            <p class="card-desc">Shared by every voice model. Language and vocabulary hint.</p>
+          </div>
+        </div>
+        <div class="settings-grid two-col">
+          <label>Language <span class="optional">(blank = auto-detect)</span>
+            <input type="text" id="setTranscriptionLanguage" class="input" placeholder="en">
+          </label>
+          <label>Vocabulary hint <span class="optional">(names, jargon, uncommon words)</span>
+            <textarea id="setTranscriptionHint" class="input input-textarea" placeholder="e.g. Acme, Globex, Jira, Scrum, WebM"></textarea>
+          </label>
+        </div>
+        <div class="row-end">
+          <button type="button" class="btn btn-primary btn-sm" id="saveRecognitionBtn">Save recognition</button>
+          <span class="test-result" id="recognitionResult"></span>
+        </div>
+        <label class="fallback-row">Fallback voice model <span class="optional">(optional — only used if the active model fails)</span>
+          <select id="fallbackProfileSelect" class="input">
+            <option value="">None (fail and keep the recording)</option>
+          </select>
+        </label>
+      </section>
+
+      <!-- Account & security -->
+      <section class="settings-card" id="accountSection">
+        <div class="card-head">
+          <div>
+            <h2>Account &amp; security</h2>
+            <p class="card-desc">Changing your password signs out every other session. Saved API keys are unaffected.</p>
+          </div>
+        </div>
+        <div class="account-row">
+          <span id="accountAvatar" class="account-avatar">DC</span>
+          <div class="account-identity">
+            <span id="accountName">No username</span>
+            <span class="account-sub">Owner</span>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="editNameBtn">Edit name</button>
+        </div>
+        <form id="usernameForm" class="stack-form" style="display:none">
+          <label>Username<input type="text" id="accountUsernameInput" class="input" maxlength="50" placeholder="Your name"></label>
+          <label>Current password<input type="password" id="accountUsernamePassword" class="input" autocomplete="current-password"></label>
+          <div class="row-end">
+            <button type="submit" class="btn btn-primary btn-sm">Save name</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="cancelNameBtn">Cancel</button>
+            <span class="test-result" id="usernameResult"></span>
+          </div>
+        </form>
+        <div class="account-row">
+          <div class="account-identity">
+            <span>Password</span>
+            <span class="account-sub">Minimum 12 characters</span>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="changePasswordBtn">Change password</button>
+        </div>
+        <form id="passwordForm" class="stack-form" style="display:none">
+          <label>Current password<input type="password" id="accountCurrentPassword" class="input" autocomplete="current-password"></label>
+          <label>New password<input type="password" id="accountNewPassword" class="input" minlength="12" autocomplete="new-password"></label>
+          <label>Confirm new password<input type="password" id="accountConfirmPassword" class="input" minlength="12" autocomplete="new-password"></label>
+          <div class="row-end">
+            <button type="submit" class="btn btn-primary btn-sm">Update password</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="cancelPasswordBtn">Cancel</button>
+            <span class="test-result" id="passwordResult"></span>
+          </div>
+        </form>
+        <div class="row-end">
+          <a href="/logout" class="btn btn-ghost btn-sm">Sign out</a>
+        </div>
+      </section>
+
+      <!-- Cleanup prompts -->
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Cleanup prompts</h2>
+            <p class="card-desc">The active prompt is sent as a system message to the cleanup model.</p>
+          </div>
           <button class="btn btn-primary btn-sm" id="addPromptBtn" onclick="openAddPromptModal()">+ Add</button>
         </div>
-        <p class="settings-desc">The active prompt is sent as a system message to the cleanup model. Select which prompt to use from the Record tab.</p>
         <div id="promptsList" class="prompts-list"></div>
-      </div>
+      </section>
 
       <!-- Correction dictionary -->
-      <div class="settings-section">
-        <div class="tab-panel-header">
-          <h2>Corrections</h2>
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Corrections</h2>
+            <p class="card-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone.</p>
+          </div>
           <button class="btn btn-primary btn-sm" id="addCorrectionBtn">+ Add</button>
         </div>
-        <p class="settings-desc">Exact replacements applied after transcription and again after cleanup. Matching is case-insensitive and whole-phrase, so <strong>fun control</strong> becomes <strong>fund control</strong> but <strong>fun controller</strong> is left alone. These rules run locally on the returned text: they do not change how audio is recognized and make no extra API calls. The original text stays available via <strong>Show original</strong>.</p>
         <div id="correctionsList" class="corrections-list"></div>
-        <div class="test-row">
+        <div class="row-end">
           <button type="button" class="btn btn-ghost btn-sm" id="saveCorrectionsBtn">Save corrections</button>
           <span class="test-result" id="correctionsResult"></span>
         </div>
-      </div>
+      </section>
 
       <!-- Animation settings -->
-      <div class="settings-section">
-        <div class="tab-panel-header">
-          <h2>Animation</h2>
+      <section class="settings-card">
+        <div class="card-head">
+          <div>
+            <h2>Cleanup animation</h2>
+            <p class="card-desc">How the cleaned transcript appears after dictation.</p>
+          </div>
         </div>
-        <p class="settings-desc">Choose how the cleaned transcript appears after dictation.</p>
-        <div class="animation-options">
+        <div class="animation-options segmented-cards">
           <label class="animation-option">
             <input type="radio" name="animation" value="none">
             <div class="animation-option-body">
               <span class="animation-option-name">No animation</span>
-              <span class="animation-option-desc">The cleaned transcript simply replaces the raw one. No transition effect.</span>
+              <span class="animation-option-desc">The cleaned transcript replaces the raw one instantly.</span>
             </div>
           </label>
           <label class="animation-option">
             <input type="radio" name="animation" value="shatter">
             <div class="animation-option-body">
               <span class="animation-option-name">Shatter</span>
-              <span class="animation-option-desc">The raw transcript breaks apart into pieces that fly away, while the cleaned version fades in at the same time. A dramatic, "magic" transformation.</span>
+              <span class="animation-option-desc">The raw text breaks apart while the cleaned version fades in.</span>
             </div>
           </label>
           <label class="animation-option">
             <input type="radio" name="animation" value="wordbyword">
             <div class="animation-option-body">
               <span class="animation-option-name">Word-by-word</span>
-              <span class="animation-option-desc">The cleaned transcript appears one word at a time, progressively replacing the raw transcript from the beginning.</span>
+              <span class="animation-option-desc">The cleaned text appears one word at a time.</span>
             </div>
           </label>
         </div>
-      </div>
-
-      <!-- Live transcription settings -->
-      <div class="settings-section">
-        <div class="tab-panel-header">
-          <h2>Live transcription</h2>
-        </div>
-        <p class="settings-desc">How often Live mode transcribes audio while you speak. Lower = text appears sooner, but each chunk carries less context, so <strong>accuracy drops</strong> (words split at chunk edges get misheard) and more API calls are made. <strong>Keep 10 seconds or higher</strong> unless you really need faster previews. Applies from the next recording.</p>
-        <label class="live-chunk-label">Chunk interval (seconds)
-          <input type="number" id="setLiveChunkSeconds" class="input live-chunk-input" min="3" max="60" step="1" placeholder="10">
-        </label>
-      </div>
+      </section>
 
     </div>
 
@@ -270,6 +316,31 @@
           <button class="btn btn-ghost" onclick="closePromptModal()">Cancel</button>
           <button class="btn btn-primary" onclick="savePrompt()">Save</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Provider picker / profile form sheet -->
+    <div class="sheet-overlay" id="sheetOverlay" aria-hidden="true" onclick="closeSheet(event)">
+      <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+        <div class="sheet-head">
+          <h3 id="sheetTitle">Add provider</h3>
+          <button class="modal-close" type="button" onclick="closeSheet()" aria-label="Close">&times;</button>
+        </div>
+        <div id="sheetBody" class="sheet-body"></div>
+      </div>
+    </div>
+
+    <!-- One-time username gate for existing installs -->
+    <div class="gate-overlay" id="usernameGate" aria-hidden="true">
+      <div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
+        <h2 id="gateTitle">Choose your username</h2>
+        <p>Your existing password keeps working. Pick a username once to finish setting up your account.</p>
+        <div class="auth-error" id="gateError" style="display:none"></div>
+        <form id="gateForm">
+          <input type="text" id="gateUsername" class="input" maxlength="50" placeholder="Username" autocomplete="username">
+          <input type="password" id="gatePassword" class="input" placeholder="Current password" autocomplete="current-password">
+          <button type="submit" class="btn btn-primary">Save username</button>
+        </form>
       </div>
     </div>
 
@@ -293,7 +364,6 @@
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
       <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
-      <div class="shortcut-item"><kbd>L</kbd><span>Toggle live transcription</span></div>
       <div class="shortcut-item"><kbd>M</kbd><span>Toggle light/dark theme</span></div>
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
@@ -304,6 +374,7 @@
   <script src="lib/auth-refresh.js?v=1"></script>
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
-  <script src="script.js?v=33"></script>
+  <script src="lib/profiles-ui.js?v=1"></script>
+  <script src="script.js?v=35"></script>
 </body>
 </html>

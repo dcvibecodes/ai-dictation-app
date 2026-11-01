@@ -4,6 +4,19 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.0.0 — provider profiles, stronger auth, new interface
+
+- **Saved voice models (profiles).** Settings now holds a list of provider + model + key profiles — OpenAI, Mistral, Groq, Gemini, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti and Cartesia, plus a Custom OpenAI-compatible endpoint. Tap a row to activate it; the base URL is built in for known providers, so you only paste a key and pick a model. Your existing single-slot setup is migrated automatically into profiles on first boot; nothing to re-enter.
+- **Real provider adapters.** Non-OpenAI providers are not faked with a URL: each one has its own request shape, auth header and response parser. Failures keep the recording. A different provider is used only if you explicitly configure a fallback model.
+- **Username + account settings.** New installs choose a username at `/setup`; existing installs get a one-time "Choose your username" screen after signing in (the existing password keeps working). You can change the username and the password from Settings → Account & security.
+- **Stronger sessions.** Passwords are now 12+ characters and capped at 72 bytes (bcrypt's limit) with a clear error instead of silent truncation. Sessions expire after 180 days, and changing your password invalidates every other session — this browser stays signed in.
+- **CSRF hardening.** Sensitive mutations validate the Origin/Referer host on top of the SameSite cookie.
+- **Redesigned Settings tab.** A profile-driven page with card-based voice/cleanup model lists, provider sheets, account & security, recognition, prompts, corrections and animation. The Dictate tab keeps its original layout with one improvement: Auto-clean / Live / Append are one segmented chip and the prompt selector is a rounded pill.
+- **Live is now a model capability, not a toggle.** The old 3–60 s chunking mode is gone. A streaming model (Cartesia ink-2) transcribes continuously while you speak — no context lost at chunk boundaries. Every other model records once and transcribes at Stop. The Live chip is locked to show which behaviour the active model uses.
+- **Cartesia true streaming.** The browser streams 16 kHz PCM through a same-origin WebSocket; the server proxies it to Cartesia with the API key kept server-side. Partial turns appear while speaking, the final text runs through the normal cleanup/copy pipeline, and a broken stream falls back to transcribing the saved recording.
+
+---
+
 ## What's New in v6.25.0
 
 ### Live is off by default — final transcripts get more context
@@ -139,7 +152,7 @@ Fixes:
 ### Diagnosed from real server logs: provider failures no longer lose recordings
 Server logs from a failed session showed the root cause: the **Gemini** transcription endpoint was rejecting audio with `"Invalid audio format \"aac\"... Valid formats are: [wav, mp3]"`, then returning `"Gemini returned an empty transcription."`, and finally `"Connection error."` — every chunk failed, so nothing was transcribed and, because the live backup was never finalized, there was nothing to recover.
 
-- **Provider fallback** — if Gemini rejects the audio format, returns an empty transcription, or throws (auth/connection/5xx), the server now **automatically retries with the Whisper-compatible engine** when it's configured. A provider hiccup is no longer a lost recording.
+- **Provider fallback (v7+)** — there is no silent switching between providers: a different provider means different cost, terms and privacy handling for your audio. Failures keep the recording, and a fallback model runs only if you explicitly choose one in Settings → Recognition.
 - **Honest format handling** — Gemini is only ever sent genuine `wav`/`mp3`. WebM (Chrome) and MP4/AAC (Safari) audio goes straight to Whisper instead of being mislabeled and rejected.
 - **Live backup is finalized on every exit path** — stop, error, "nothing transcribed", tab hidden, and page unload all write a complete, recoverable WAV, so the recovery strip always has real audio to offer.
 - **Recovery on load is unconditional** — any backup with audio is surfaced, in-progress or finished.
@@ -223,10 +236,10 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 ## Features
 
 - **Installable PWA** — runs as a standalone app window, no browser chrome
-- **Password-protected** — owner-only access, bcrypt hashed, no-expiry session (10-year cookie + sliding refresh)
+- **Password-protected** — owner-only access with username + password, bcrypt hashed, session valid for 180 days with a sliding refresh; changing the password invalidates every other session
 - **Append mode** — accumulate multiple dictation segments into one growing document on screen; only the new segment uses API credits
 - **Append mode keeps the document on screen** — the text you see is the whole append document, so you can switch between raw and cleaned views while appending
-- **Live transcription** (off by default; the Live toggle remembers your choice) — designed for long dictation sessions: audio is sent in chunks (default every 10 s; configurable 3–60 s in Settings → Live transcription) and transcribed as you go, so by the time you stop, most of the audio is already transcribed (much less waiting at the end). Longer chunks keep boundary errors low. Turn it on with the Live toggle, or press L.
+- **Live streaming where the model supports it** — with a Cartesia ink-2 profile active, audio streams continuously through a WebSocket while you speak; partial text appears live and the final text is finalized once at Stop. With every other model, recording is transcribed once at Stop (more context, better accuracy). There is no chunking mode and no Live toggle; the Live chip is locked to the active model's capability.
 - **Recording safety net** — the recorder only shows "recording" once real audio is confirmed; a silence watchdog warns if the mic is muted or in use; mic loss mid-session is caught and the audio is saved; and a rolling backup means an interrupted recording is recoverable on the next open.
 - **Animation settings** — choose how the cleaned transcript appears after dictation: No animation, Shatter (raw breaks apart while the cleaned version fades in), or Word-by-word (cleaned text replaces the raw progressively).
 - **Streaming cleanup** — progressive text rendering via Server-Sent Events; blinking cursor during streaming; automatic fallback to standard cleanup
@@ -251,17 +264,17 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 - **Prompt dropdown** — select cleanup prompt from a dropdown; always visible on the Dictate tab
 - **Multiple cleanup prompts** — up to 4 custom prompts + Default; switch via dropdown or keyboard (1–5); re-clean with a different prompt anytime
 - **History tab** — persistent session history (localStorage, 20 entries) with card-style items
-- **Settings tab** — API keys, models, base URLs, prompt management, and the correction dictionary in card-style sections
+- **Settings tab** — profile-driven voice models and cleanup models, shared recognition fields, account & security, prompt management, corrections and animation
 - **Locked settings** — API config is read-only by default, click Edit to modify
 - **Extensive keyboard shortcuts** — Enter, Esc, P, C, E, Z, K, R, O, N, U, A, T, L, 1–5, M, D, H, S
 - **Mobile-friendly undo** — on touch devices, clearing the transcript shows a tappable **Undo** link (desktop uses the Z keyboard shortcut)
 - **Shortcuts popover** — click "Shortcuts" in the header for a quick reference (desktop only)
 - **Auto-copy** — transcript copied to clipboard automatically
-- **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or discard from the recovery strip. Works in both standard and Live mode, and recovers interrupted recordings on the next open.
-- **Any provider** — works with Mistral, OpenAI, Grok, Gemini, or any compatible API
+- **Local backup** — recordings are flushed to IndexedDB while recording (rolling backup) and kept on failure, with an in-memory fallback; retry, download, or discard from the recovery strip. Works in both standard and live-streaming modes, and recovers interrupted recordings on the next open.
+- **Any provider** — saved provider profiles for OpenAI, Mistral, Groq, Gemini, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti, Cartesia, or any OpenAI-compatible endpoint
 - **Upload audio files** — supports MP3, WAV, OGG, WebM, M4A, FLAC, AAC up to 50 MB (shortcut: U)
 - **Comprehensive Settings help** — collapsible troubleshooting guide covering all features, error states, local storage, and offline usage
-- **Change password on login** — reset your password from the login screen using your current password
+- **Account & security** — change your username or password from Settings (or from the login screen). Password changes sign out every other session; saved API keys are unaffected
 - **Mobile-optimized recorder** — flat bottom bar, compact layout
 - **Inline status display** — processing status shown in the transcript area, visible on both mobile and desktop
 
@@ -281,13 +294,14 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 
 ## Authentication
 
-- First visit → `/setup` to create a password (min 8 characters)
-- Subsequent visits → `/login`
-- No-expiry session cookie (10-year + sliding refresh on visits)
+- First visit → `/setup` to create a username and password (password: min 12 characters, max 72 UTF-8 bytes)
+- Subsequent visits → `/login` (username + password once a username is set)
+- Sessions are signed cookies valid for **180 days**, refreshed while you stay active. Changing the password bumps a session generation counter, so every other cookie dies; this browser gets a fresh one immediately.
 - A dead session never interrupts recording/transcribing — re-login in a new tab, then Retry; idle pages still redirect to `/login`
-- All API routes protected
-- To change password: click "Change password" on the login screen
-- To reset if you've forgotten it: delete `data/owner.hash` and restart
+- All API routes protected. Mutations also reject cross-origin Origin/Referer hosts.
+- Change username/password: **Settings → Account & security** (both require the current password)
+- To reset a forgotten password: stop the app and delete `data/owner.json` (existing installs may still have `data/owner.hash`), then restart. The migration backup at `data/owner.hash.backup` is a safety net only — it is never served.
+- An existing `data/owner.hash` is migrated byte-for-byte into `data/owner.json` on boot, with a protected backup and readback verification. The existing password keeps working; the username is `null` until you set it once.
 
 ---
 
@@ -310,7 +324,6 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
 | `1–5` | Switch cleanup prompt by position |
-| `L` | Toggle live transcription |
 | `M` | Toggle light/dark theme |
 | `D` | Dictate tab |
 | `H` | History tab |
@@ -330,9 +343,10 @@ dictation-app/
 │   ├── setup.html         # First-time setup
 │   ├── auth.css           # Auth page styles
 │   ├── script.js          # Frontend logic
-│   ├── live-capture-worklet.js      # Live-mode mic capture (AudioWorklet)
+│   ├── live-capture-worklet.js      # Streaming mic capture (AudioWorklet)
 │   ├── lib/
-│   │   ├── audio-ledger.js          # Live-mode audio blocks
+│   │   ├── audio-ledger.js          # Streaming/live audio blocks
+│   │   ├── profiles-ui.js           # Settings profile helpers
 │   │   └── corrections.js           # Exact glossary/correction rules
 │   ├── styles.css         # Main styles
 │   ├── sw.js              # Service worker (PWA)
@@ -340,8 +354,12 @@ dictation-app/
 │   ├── favicon.svg        # App icon
 │   ├── icon-192.png       # PWA icon
 │   └── icon-512.png       # PWA icon
+├── lib/                   # Server modules (profiles, auth, adapters, streaming)
+├── test/                  # node --test suites
 ├── data/                  # Auto-created, gitignored
-│   ├── owner.hash         # Password hash
+│   ├── owner.json         # Account record: username + bcrypt hash
+│   ├── owner.hash.backup  # One-time migration backup (mode 0600, never served)
+│   ├── session.generation # Session invalidation counter
 │   ├── session.secret     # HMAC secret
 │   ├── settings.json      # API keys & config
 │   └── prompts.json       # Custom prompts
@@ -362,8 +380,11 @@ Configure from the Settings tab. Transcription supports **two engines**, chosen 
 
 | Engine | What it is | Fields |
 |---|---|---|
-| **Whisper-compatible** | Any provider exposing the OpenAI-style `/audio/transcriptions` endpoint: Mistral Voxtral, OpenAI Whisper, Groq, etc. | API Key, Base URL, Model |
-| **Gemini (Google)** | Google's OpenAI-compatible layer. Gemini is a multimodal LLM — audio is sent as an OpenAI-style `input_audio` part to the `/chat/completions` endpoint with a "transcribe verbatim" prompt. Often much cheaper than dedicated speech models. | API Key (separate from cleanup), Base URL, Model |
+| **OpenAI-compatible (profiles)** | OpenAI, Mistral Voxtral, Groq, OpenRouter, or a Custom endpoint — sent to `/audio/transcriptions`. Known providers have their base URL built in. | API key + model (Custom also asks for a base URL) |
+| **Gemini (Google)** | Google's OpenAI-compatible layer. Audio is sent as an OpenAI-style `input_audio` part to `/chat/completions` with a "transcribe verbatim" prompt. The browser converts recordings to 16 kHz WAV first, so Chrome/Safari recordings work without a format fallback. | API key + model |
+| **Native adapters** | ElevenLabs, Deepgram, Cohere (one call); AssemblyAI, Corti (submit + poll); Cartesia ink-2 (WebSocket, recorded audio). Each has its own protocol, auth header and response parser. | API key + model (Custom also asks for a base URL) |
+
+Each profile stores its own key, encrypted at rest. **Recognition** fields (Language, Vocabulary hint) are shared by every voice model. A **fallback** model is opt-in and runs only after the active model fails — never silently.
 
 **Key differences:**
 - **Cost** — Gemini bills per token (audio tokenizes very efficiently), so it's typically far cheaper per minute than Whisper-compatible models that bill per minute of audio.
@@ -372,26 +393,41 @@ Configure from the Settings tab. Transcription supports **two engines**, chosen 
 
 ### All settings fields
 
-| Field | Example |
-|---|---|
-| Transcription Engine | `whisper` (default) or `gemini` |
-| Transcription API Key | Mistral key, OpenAI key, etc. (Whisper engine) |
-| Transcription Base URL | `https://api.mistral.ai/v1` (required for non-OpenAI) |
-| Transcription Model | `whisper-1`, `voxtral-mini-latest` |
-| Gemini Transcription API Key | Google AI Studio key (Gemini engine) — separate from cleanup, even if it's the same key |
-| Gemini Transcription Base URL | `https://generativelanguage.googleapis.com/v1beta/openai` (defaults to Google's OpenAI-compatible layer; editable for other providers) |
-| Gemini Transcription Model | `gemini-2.5-flash-lite` |
-| Transcription Language | Optional — e.g. `en`; blank = auto-detect |
-| Vocabulary Hint | Optional — names/jargon to bias spelling, e.g. `Acme, Jira, WebM` |
-| Cleanup API Key | Your provider's key |
-| Cleanup Base URL | Provider URL (blank = OpenAI) |
-| Cleanup Model | `gpt-4.1-mini`, `mistral-large-latest` |
+| Field | Where | Example |
+|---|---|---|
+| Profile name | Voice / Cleanup profile form | `My OpenAI`, `Gemini cleanup` |
+| Provider | Provider picker | OpenAI, Mistral, Groq, Gemini, OpenRouter, ElevenLabs, Deepgram, Cohere, AssemblyAI, Corti, Cartesia, Custom |
+| API key | Profile form | Masked as `••••1234` in every response; never returned in plaintext |
+| Model | Profile form (with **Browse models**) | `whisper-1`, `voxtral-mini-latest`, `scribe_v2`, `nova-3` |
+| Base URL | **Custom** profiles only, under Advanced | `http://my-server:8000/v1` |
+| Transcription Language | Settings → Recognition (shared) | Optional — e.g. `en`; blank = auto-detect |
+| Vocabulary hint | Settings → Recognition (shared) | Optional — names/jargon, e.g. `Acme, Jira, WebM` |
+| Fallback voice model | Settings → Recognition | Optional — only runs after the active model fails |
+| Cleanup prompt | Settings → Cleanup prompts | Default or one of up to 4 custom prompts |
 
-The base URL must match the provider that issued the key.
+Every known provider has its base URL built in — you never see or edit one. Keys stay server-side and are encrypted at rest (AES-256-GCM, `enc:v1:`), and `GET /api/settings` only ever returns a bullet + last 4 mask.
+
+### Profile API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/settings` | Provider catalog + profiles (masked) + active ids + recognition fields |
+| POST | `/api/profiles/transcription` | Create a voice profile `{ label, provider, key, model, engine?, baseUrl? }` |
+| PATCH | `/api/profiles/transcription/:id` | Update; omit `key` to keep the saved one |
+| DELETE | `/api/profiles/transcription/:id` | Delete (the active profile is refused) |
+| POST | `/api/profiles/transcription/:id/activate` | Make it the active voice model |
+| POST | `/api/profiles/cleanup` (and `/:id`, DELETE, activate) | Same four for the cleanup model |
+| POST | `/api/settings/recognition` | Save shared language + vocabulary hint |
+| POST | `/api/settings/fallback` | Opt-in fallback voice model (or `null`) |
+| GET | `/api/account` | `{ username, needsUsername }` — never the hash |
+| POST | `/api/account/username` | Change username (requires `currentPassword`) |
+| POST | `/api/account/password` | Change password (bumps the session generation) |
+| POST | `/api/test-transcription` · `/api/test-cleanup` | Test form values or a saved `profileId`; returns measured latency |
+| POST | `/api/models` | Browse models for an OpenAI-compatible provider |
 
 ### Test connection
 
-Both the **Transcription** and **Cleanup** sections have a **Test connection** button. It verifies the credentials/URL/model currently in the form (before you save) and shows a green ✓ or red ✗ message right next to the button. This lets you confirm your API config works before committing it.
+Each profile form has **Test & save**. It verifies the credentials, endpoint and model, reports the measured latency, and only then saves. You can also save without testing. Nothing is promised about provider latency until it has actually been measured.
 
 ---
 
@@ -410,7 +446,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 | Auth | bcryptjs, cookie-parser, HMAC sessions |
 | AI | Any compatible speech-to-text + chat API |
 | Audio | Web Audio API (AudioWorklet live capture), MediaRecorder |
-| Streaming | Server-Sent Events |
+| Streaming | Server-Sent Events (cleanup) + WebSocket proxy (`ws`) to Cartesia ink-2 |
 
 ---
 
@@ -429,7 +465,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
-- **Live mode is off by default** — turn it on with the Live toggle or `L`; your choice persists across sessions and app updates. In Live mode the transcript fills in as you speak (chunks default to 10 s; configurable 3–60 s in Settings → Live transcription) and the full session is backed up locally as a WAV.
+- **Live streaming is automatic** — when the active voice model is a streaming model (Cartesia ink-2), the transcript fills in as you speak over a continuous WebSocket; the full session is still backed up locally as a WAV. Every other model records first and transcribes once at Stop. The Live segment of the Auto-clean / Live / Append chip is locked to reflect the active model.
 - **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Discard**.
 - **Clear during recording cancels the take** (it does not get transcribed back into the document).
 - **Corrections are exact, not fuzzy** — an alias matches the whole phrase, ignoring case, and is replaced with the canonical spelling. Add each mishearing as a separate alias; the vocabulary hint remains the tool for general recognition bias.
@@ -451,3 +487,29 @@ Rate limiters are created at server startup, so **restart the server after chang
 ### Spoken formatting commands
 
 The default cleanup prompt now recognizes **"new paragraph"**, **"new line"**, or **"newline"** as spoken commands that start a new paragraph at that point — useful for dictating structured documents like letters or multi-paragraph emails.
+
+
+## Live streaming behind nginx
+
+Cartesia streaming uses a same-origin WebSocket at `/stt-stream`. The reverse proxy must forward upgrades (and must not buffer the connection):
+
+```nginx
+location /stt-stream {
+    proxy_pass http://127.0.0.1:3003;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_read_timeout 600s;
+    proxy_buffering off;
+}
+```
+
+`ws` is a normal npm dependency (`npm install` installs it). Without the upgrade headers the browser falls back to record-then-transcribe automatically, so dictation still works — you just lose the live preview.
+
+## Security environment
+
+- `COOKIE_SECURE=1` — mark the session cookie `secure` (HTTPS deployments behind nginx only; leave off on plain-HTTP LAN or the browser refuses the cookie and login loops).
+- `ALLOWED_ORIGINS` — extra trusted hosts for the Origin/Referer check, comma-separated.
+- `SESSION_MAX_AGE_MS` is fixed at 180 days in `lib/sessions.js`.

@@ -25,9 +25,10 @@
     <!-- Login -->
     <div class="auth-card">
       <h2>Login</h2>
-      <p>Enter your password to access the dictation tool.</p>
+      <p>Enter your username and password to access the dictation tool.</p>
       <div id="errorMsg" class="auth-error" style="display:none"></div>
       <form action="/login" method="POST">
+        <input type="text" name="username" placeholder="Username (leave blank on first sign-in after upgrading)" maxlength="50" autocomplete="username">
         <input type="password" name="password" placeholder="Password" required autocomplete="current-password" autofocus>
         <button type="submit">Login</button>
       </form>
@@ -42,7 +43,7 @@
       <div id="changePwSuccess" class="auth-success" style="display:none"></div>
       <form id="changePwForm" onsubmit="return submitChangePassword(event)">
         <input type="password" id="currentPassword" placeholder="Current password" required autocomplete="current-password">
-        <input type="password" id="newPassword" placeholder="New password (min 8 chars)" required autocomplete="new-password">
+        <input type="password" id="newPassword" placeholder="New password (min 12 chars)" required autocomplete="new-password" minlength="12">
         <input type="password" id="confirmPassword" placeholder="Confirm new password" required autocomplete="new-password">
         <button type="submit">Update Password</button>
       </form>
@@ -55,7 +56,7 @@
     if (params.get('error') === '1') {
       const el = document.getElementById('errorMsg');
       el.style.display = 'block';
-      el.textContent = 'Incorrect password. Try again.';
+      el.textContent = 'Incorrect username or password. Try again.';
     }
 
     let changePwVisible = false;
@@ -81,8 +82,13 @@
       errorEl.style.display = 'none';
       successEl.style.display = 'none';
 
-      if (newPassword.length < 8) {
-        errorEl.textContent = 'New password must be at least 8 characters.';
+      if (newPassword.length < 12) {
+        errorEl.textContent = 'New password must be at least 12 characters.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (new TextEncoder().encode(newPassword).length > 72) {
+        errorEl.textContent = 'New password must be at most 72 bytes (UTF-8).';
         errorEl.style.display = 'block';
         return;
       }

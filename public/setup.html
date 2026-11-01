@@ -22,14 +22,15 @@
       <h1>Dictation Tool</h1>
     </div>
     <div class="auth-card">
-      <h2>Set Up Password</h2>
-      <p>One-time setup. Choose a password to protect your dictation tool.</p>
+      <h2>Create Your Account</h2>
+      <p>One-time setup. Choose a username and a password to protect your dictation tool.</p>
       <div id="errorMsg" class="auth-error" style="display:none"></div>
       <form action="/setup" method="POST">
-        <input type="password" name="password" placeholder="Choose a password" required minlength="8" autocomplete="new-password">
-        <span class="auth-hint">Minimum 8 characters</span>
-        <input type="password" name="confirm" placeholder="Confirm password" required minlength="8" autocomplete="new-password">
-        <button type="submit">Set Password</button>
+        <input type="text" name="username" placeholder="Username" required maxlength="50" autocomplete="username" autofocus>
+        <input type="password" name="password" placeholder="Choose a password" required minlength="12" autocomplete="new-password">
+        <span class="auth-hint">At least 12 characters (max 72 bytes)</span>
+        <input type="password" name="confirm" placeholder="Confirm password" required minlength="12" autocomplete="new-password">
+        <button type="submit">Create Account</button>
       </form>
     </div>
   </div>
@@ -39,8 +40,10 @@
     if (err) {
       const el = document.getElementById('errorMsg');
       el.style.display = 'block';
-      if (err === 'short') el.textContent = 'Password must be at least 8 characters.';
+      if (err === 'short') el.textContent = 'Password must be at least 12 characters.';
+      else if (err === 'long') el.textContent = 'Password must be at most 72 bytes (UTF-8). Choose a shorter password.';
       else if (err === 'mismatch') el.textContent = 'Passwords do not match.';
+      else if (err === 'username') el.textContent = 'Choose a username (1–50 characters).';
       else el.textContent = 'Something went wrong. Try again.';
     }
   </script>
