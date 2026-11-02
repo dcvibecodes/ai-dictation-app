@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.6 — Live appears only when streaming is active
+
+- The Dictate chip now shows **Auto-clean / Append** for normal models. The **Live** segment appears only when the active voice model supports streaming (Cartesia), where it is shown locked ON as a capability badge. Switching back to a non-streaming model hides it.
+
 ## What's New in v7.1.5 — built-in cleanup prompt v9
 
 - **Cleanup prompt v9 is now the built-in default.** The prompt migration version is `9`, so any stored Default override is dropped once on startup and the list shows **Built-in**. Restore returns v9; custom prompts are untouched.

@@ -125,11 +125,11 @@ function syncLiveChip() {
   liveToggle.disabled = true;
   liveToggle.setAttribute('aria-disabled', 'true');
   if (liveChip) {
-    liveChip.title = streamingSupported
-      ? 'Live streaming is built into the active voice model'
-      : 'Live needs a streaming voice model (Cartesia)';
+    // Live is a capability badge, not a mode users should see when it cannot
+    // apply. It appears only while a streaming model is the active voice model.
+    liveChip.style.display = streamingSupported ? '' : 'none';
+    liveChip.title = 'Live streaming is built into the active voice model';
     liveChip.classList.toggle('is-locked-on', !!streamingSupported);
-    liveChip.classList.toggle('is-locked-off', !streamingSupported);
   }
 }
 
@@ -4007,7 +4007,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.5'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.6'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
