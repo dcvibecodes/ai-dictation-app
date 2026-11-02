@@ -1239,6 +1239,7 @@ When unsure whether the speaker corrected or added, keep both and punctuate natu
 * Never insert em dashes, not even if the speaker dictates the words "em dash."
 * Do not summarize, paraphrase, shorten, reorder, or add information. Removing replaced wording and fillers is cleanup, not shortening.
 * Write numbers, times, and dates naturally when unambiguous: "three pm" becomes "3 pm," "five percent" becomes "5%." When unclear, keep the spoken words.
+* Never infer or add a currency. If the input contains an amount without a currency, leave it without one.
 * When a sentence is awkward but grammatical, leave it. When the transcription is ambiguous, preserve the original wording; never invent information.
 
 4. FORMAT WHAT THE SPEAKER STRUCTURED
@@ -4007,7 +4008,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.3'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.4'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
