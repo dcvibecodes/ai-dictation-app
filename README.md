@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.5 — built-in cleanup prompt v9
+
+- **Cleanup prompt v9 is now the built-in default.** The prompt migration version is `9`, so any stored Default override is dropped once on startup and the list shows **Built-in**. Restore returns v9; custom prompts are untouched.
+
 ## What's New in v7.1.4 — built-in cleanup prompt v8
 
 - **Cleanup prompt v8 is now the built-in default.** The prompt migration version is `8`, so any stored Default override is dropped once on startup and the list shows **Built-in**. Restore returns v8; custom prompts are untouched.
