@@ -4,6 +4,11 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.8 — capture settle + no old-transcript flash
+
+- **Startup settle window.** After capture is confirmed, the app keeps recording for 400 ms before switching the status to “Recording…”. This lets the OS audio route stabilize and includes anything spoken during the transition, reducing clipped first words. Normal content, modes and shortcuts are unchanged.
+- **No more old transcript flash.** In streaming mode, stopping a new take no longer restores the previous transcript just before showing the new result. The live preview is replaced directly by the new transcript.
+
 ## What's New in v7.1.7 — built-in cleanup prompt v10
 
 - **Cleanup prompt v10 is now the built-in default.** The prompt migration version is `10`, so any stored Default override is dropped once on startup and the list shows **Built-in**. Restore returns v10; custom prompts are untouched.

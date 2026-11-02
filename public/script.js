@@ -57,6 +57,7 @@ const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz aud
 const MAX_RECORDING_SECONDS = 300; // base limit: auto-stop after 5 minutes
 const EXTEND_SECONDS = 300;        // each Extend click adds 5 more minutes
 const WARNING_LEAD_SECONDS = 60;   // warn + show Extend 1 minute before the deadline
+const CAPTURE_SETTLE_MS = 400;     // let capture + the OS audio route settle before inviting speech
 
 const toggleBtn  = document.getElementById('toggleBtn');
 const cancelBtn  = document.getElementById('cancelBtn');
@@ -2961,7 +2962,23 @@ async function startRecording() {
       await startStandardRecorder(stream);
     }
 
-    // Only now — after real audio was confirmed — flip the UI to recording.
+    // Capture is running, but the first visible milestone is still "Opening
+    // mic…". Keep capturing for a short settle window before inviting speech:
+    // this covers the OS audio-route/startup gap that clipped the first words,
+    // and anything spoken during the window is included in the recording.
+    await new Promise(r => setTimeout(r, CAPTURE_SETTLE_MS));
+    if (cancelled || !stream.getAudioTracks().some(t => t.readyState === 'live')) {
+      throw new Error('microphone disconnected');
+    }
+    if (recordingCaptureMode === 'standard' && (!mediaRecorder || mediaRecorder.state !== 'recording')) {
+      throw new Error('recording stopped unexpectedly');
+    }
+    if (recordingCaptureMode === 'stream' && (!streamSession || streamSession.cancelled)) {
+      throw new Error('recording stopped unexpectedly');
+    }
+
+    // Only now — after real audio was confirmed and the route settled — flip
+    // the UI to recording.
     source.connect(analyser);
     visualize();
     startTimer();
@@ -3484,7 +3501,9 @@ async function stopStreamingRecording() {
       return;
     }
 
-    restoreDocumentBase(session);
+    // Do not restore the previous document here: the transcript area is still
+    // showing the live preview, and applyProviderTranscript() replaces it with
+    // the new text. Restoring would flash the old transcript briefly.
     toggleBtn.classList.add('processing');
     const abortController = new AbortController();
     processingAbortController = abortController;
@@ -4008,7 +4027,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.7'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.8'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
