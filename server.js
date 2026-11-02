@@ -46,7 +46,7 @@ const SECRET_FILE   = path.join(DATA_DIR, 'session.secret');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
 const PROMPTS_VERSION_FILE = path.join(DATA_DIR, 'prompts.version');
-const PROMPTS_VERSION = '9'; // bump when the built-in default replaces stored overrides
+const PROMPTS_VERSION = '10'; // bump when the built-in default replaces stored overrides
 const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
 const BCRYPT_ROUNDS = 12;
 // Deliberate change from the old no-expiry session: tokens now have an absolute

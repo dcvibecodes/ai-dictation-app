@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.7 — built-in cleanup prompt v10
+
+- **Cleanup prompt v10 is now the built-in default.** The prompt migration version is `10`, so any stored Default override is dropped once on startup and the list shows **Built-in**. Restore returns v10; custom prompts are untouched.
+
 ## What's New in v7.1.6 — Live appears only when streaming is active
 
 - The Dictate chip now shows **Auto-clean / Append** for normal models. The **Live** segment appears only when the active voice model supports streaming (Cartesia), where it is shown locked ON as a capability badge. Switching back to a non-streaming model hides it.
