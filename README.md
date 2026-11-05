@@ -4,6 +4,13 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.7.0 — configurable warm-mic duration, softer chip focus, compact chips
+
+- **Warm-mic duration is now a setting.** Settings → **Warm microphone** (fourth item, after Cleanup prompts) offers **15 minutes / 30 minutes / 1 hour**. The hint makes it clear this is **local to this browser only** — it is not synced. The selected duration is used whenever you press `M` or toggle the Mic chip, and after every take ends.
+- **Long recordings still cannot expire mid-take.** The chip shows `Mic in use`; Stop resets to the configured duration (`Mic 15m`, `Mic 30m` or `Mic 1h`).
+- **Chip focus is lighter.** The chip focus ring now uses a soft theme-specific color instead of the same near-black as the record button. The record button stays the only dark focus/record element.
+- **Chips are slightly smaller.** Padding, font and dot size are reduced on desktop and mobile; the prompt selector stays on the same row. No extra row is added.
+
 ## What's New in v7.6.1 — warm mic is an idle timeout
 
 - **The 15 minutes now starts from the last recording.** Enabling warm mic starts the first window; every finished recording resets it to 15 minutes. If you do not record, it releases 15 minutes after you enabled it. Back-to-back takes keep it warm.

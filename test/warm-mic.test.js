@@ -31,3 +31,21 @@ test('warm mic: the idle deadline never fires during a take', () => {
   assert.equal(WarmMic.shouldExpire({ expiresAt, now, streamStopping: true }), false);
   assert.equal(WarmMic.shouldExpire({ expiresAt: now + 60 * 1000, now }), false);
 });
+
+test('warm mic: allowed durations are 15, 30 and 60 minutes', () => {
+  assert.deepEqual(WarmMic.ALLOWED_MINUTES, [15, 30, 60]);
+  assert.equal(WarmMic.normalizeMinutes(15), 15);
+  assert.equal(WarmMic.normalizeMinutes('30'), 30);
+  assert.equal(WarmMic.normalizeMinutes(60), 60);
+  assert.equal(WarmMic.normalizeMinutes(45), 15);
+  assert.equal(WarmMic.normalizeMinutes('nope'), 15);
+  assert.equal(WarmMic.durationMs(15), 15 * 60 * 1000);
+  assert.equal(WarmMic.durationMs(30), 30 * 60 * 1000);
+  assert.equal(WarmMic.durationMs(60), 60 * 60 * 1000);
+});
+
+test('warm mic: 60 minutes formats as 1h', () => {
+  assert.equal(WarmMic.formatRemaining(60 * 60 * 1000), '1h');
+  assert.equal(WarmMic.formatRemaining(59 * 60 * 1000), '59m');
+  assert.equal(WarmMic.formatRemaining(30 * 60 * 1000), '30m');
+});

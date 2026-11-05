@@ -201,6 +201,26 @@
         <div id="promptsList" class="prompts-list"></div>
       </section>
 
+      <!-- Warm microphone (device-local preference) -->
+      <section class="settings-card" id="warmMicSection">
+        <div class="card-head">
+          <div>
+            <h2>Warm microphone</h2>
+            <p class="card-desc">How long the Mic chip stays warm after you turn it on or finish a recording.</p>
+          </div>
+          <span class="test-result" id="warmMicResult" role="status"></span>
+        </div>
+        <label class="field warm-mic-field">
+          <span>Warm mic duration</span>
+          <select id="setWarmMicMinutes" class="input">
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60">1 hour</option>
+          </select>
+          <span class="field-help">Local to this browser only — not synced to other devices.</span>
+        </label>
+      </section>
+
       <!-- Corrections shortcut (opens its own screen) -->
       <section class="settings-card settings-shortcut">
         <div class="card-head">
@@ -390,6 +410,6 @@
   <script src="lib/corrections.js?v=2"></script>
   <script src="lib/profiles-ui.js?v=2"></script>
   <script src="lib/warm-mic.js?v=1"></script>
-  <script src="script.js?v=55"></script>
+  <script src="script.js?v=56"></script>
 </body>
 </html>

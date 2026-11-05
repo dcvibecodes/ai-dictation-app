@@ -127,10 +127,25 @@ const micChip = document.getElementById('micChip');
 const micLabel = document.getElementById('micLabel');
 const WarmMicLib = window.WarmMicLib || {
   WARM_MIC_MS: 15 * 60 * 1000,
+  ALLOWED_MINUTES: [15, 30, 60],
+  DEFAULT_MINUTES: 15,
+  normalizeMinutes: value => ([15, 30, 60].includes(Number(value)) ? Number(value) : 15),
+  durationMs: value => ([15, 30, 60].includes(Number(value)) ? Number(value) : 15) * 60 * 1000,
   remainingMs: (expiresAt, now = Date.now()) => Math.max(0, Number(expiresAt) - now),
-  formatRemaining: ms => (ms < 60000 ? Math.ceil(ms / 1000) + 's' : Math.ceil(ms / 60000) + 'm'),
-  isExpired: (expiresAt, now = Date.now()) => Number(expiresAt) <= now
+  formatRemaining: ms => {
+    if (ms < 60000) return Math.ceil(ms / 1000) + 's';
+    if (ms >= 3600000) return Math.ceil(ms / 3600000) + 'h';
+    return Math.ceil(ms / 60000) + 'm';
+  },
+  isExpired: (expiresAt, now = Date.now()) => Number(expiresAt) <= now,
+  shouldExpire: ({ expiresAt, now = Date.now(), isRecording = false, isStarting = false, streamStopping = false }) =>
+    !(isRecording || isStarting || streamStopping) && Number(expiresAt) <= now
 };
+const WARM_MIC_STORAGE_KEY = 'warmMicMinutes';
+let warmMicMinutes = (() => {
+  try { return WarmMicLib.normalizeMinutes(localStorage.getItem(WARM_MIC_STORAGE_KEY)); }
+  catch { return WarmMicLib.DEFAULT_MINUTES; }
+})();
 function syncLiveChip() {
   if (!liveToggle) return;
   liveToggle.checked = !!streamingSupported;
@@ -235,7 +250,7 @@ function releaseWarmMic({ force = false, message = 'Warm mic off' } = {}) {
 
 function resetWarmMicTimer() {
   if (!warmMic || warmMic.releasePending) return;
-  warmMic.expiresAt = Date.now() + WarmMicLib.WARM_MIC_MS;
+  warmMic.expiresAt = Date.now() + WarmMicLib.durationMs(warmMicMinutes);
   syncWarmMicUI();
 }
 
@@ -286,7 +301,7 @@ async function enableWarmMic() {
     warmMic = {
       stream,
       context,
-      expiresAt: Date.now() + WarmMicLib.WARM_MIC_MS,
+      expiresAt: Date.now() + WarmMicLib.durationMs(warmMicMinutes),
       tickTimer: null,
       releasePending: false
     };
@@ -326,7 +341,7 @@ function promoteTakeToWarm() {
   warmMic = {
     stream,
     context: audioContext,
-    expiresAt: Date.now() + WarmMicLib.WARM_MIC_MS,
+    expiresAt: Date.now() + WarmMicLib.durationMs(warmMicMinutes),
     tickTimer: null,
     releasePending: false
   };
@@ -2643,6 +2658,9 @@ async function loadSettingsUI() {
     if (hint) hint.value = settingsState.transcriptionHint || '';
     updateRecognitionSummary();
 
+    const warmSelect = document.getElementById('setWarmMicMinutes');
+    if (warmSelect) warmSelect.value = String(warmMicMinutes);
+
     const active = (settingsState.transcriptionProfiles || []).find(p => p.active);
     activeProfileProtocol = active ? active.protocol : 'none';
     activeProfileModel = active ? (active.model || '') : '';
@@ -2673,6 +2691,24 @@ async function loadSettingsUI() {
     if (e.message !== 'Unauthorized') console.error('loadSettingsUI error:', e);
     const list = document.getElementById('transcriptionProfiles');
     if (list) list.innerHTML = '<p class="profile-empty">Could not load settings.</p>';
+  }
+}
+
+function saveWarmMicMinutes(value) {
+  const minutes = WarmMicLib.normalizeMinutes(value);
+  warmMicMinutes = minutes;
+  try { localStorage.setItem(WARM_MIC_STORAGE_KEY, String(minutes)); } catch {}
+  const select = document.getElementById('setWarmMicMinutes');
+  if (select) select.value = String(minutes);
+  const result = document.getElementById('warmMicResult');
+  if (result) {
+    result.textContent = 'Saved';
+    result.className = 'test-result test-ok';
+    setTimeout(() => { result.textContent = ''; result.className = 'test-result'; }, 1800);
+  }
+  if (warmMic && !warmMic.releasePending) {
+    if (!isRecording && !isStarting && !streamStopping) resetWarmMicTimer();
+    else syncWarmMicUI();
   }
 }
 
@@ -3041,6 +3077,8 @@ const addCorrectionBtn = document.getElementById('addCorrectionBtn');
 if (addCorrectionBtn) addCorrectionBtn.addEventListener('click', addCorrectionRow);
 const saveCorrectionsBtn = document.getElementById('saveCorrectionsBtn');
 if (saveCorrectionsBtn) saveCorrectionsBtn.addEventListener('click', saveCorrections);
+const warmMicSelect = document.getElementById('setWarmMicMinutes');
+if (warmMicSelect) warmMicSelect.addEventListener('change', () => saveWarmMicMinutes(warmMicSelect.value));
 const correctionsList = document.getElementById('correctionsList');
 if (correctionsList) {
   correctionsList.addEventListener('input', () => { correctionsDirty = true; });
@@ -4752,7 +4790,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.6.1'; // keep in sync with package.json at release time
+const APP_VERSION = '7.7.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
