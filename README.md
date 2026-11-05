@@ -4,6 +4,11 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.5.3 — cross-device active-model click fix
+
+- **Clicking a model marked “Active” now re-checks the server.** The active voice/cleanup model is shared across devices. If another phone or browser switches models while this Settings view stays open, the local Active badge can go stale; clicking that stale-active card used to do nothing. Activation is now idempotent and always sent to the server, so the click takes effect and the badge corrects itself.
+- **Settings refresh on window focus.** Returning to the app refreshes the Settings model list (unless a sheet/modal is open), so cross-device changes show up without a reload.
+
 ## What's New in v7.5.2 — warm mic removed
 
 - **Warm mic was a failed experiment and is gone.** Showing `Recording…` before the audio route was truly ready let the first two or three words slip past. The Mic chip, countdown, warm stream/context state, `M` remap, and related code are removed.

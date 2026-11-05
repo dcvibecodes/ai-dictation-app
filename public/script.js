@@ -1800,12 +1800,10 @@ function renderFallbackSelect() {
 }
 
 async function activateProfile(kind, profile) {
-  // Clicking an already-active row is a no-op. Edit is only reachable from the
-  // Edit pill, so a double click can never open the form by accident.
-  if (profile.active) {
-    liveAnnounce(`${profile.label} is already the active ${kind === 'cleanup' ? 'cleanup model' : 'voice model'}`);
-    return;
-  }
+  // Always confirm with the server, even when this browser thinks the row is
+  // already active. The active profile is shared across devices, so another
+  // phone/browser may have switched it while this settings view stayed open.
+  // Activating an already-active profile is idempotent.
   const previous = profile.active;
   try {
     const data = await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}/activate`, { method: 'POST' });
@@ -3293,6 +3291,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') runBackgroundAuthCheck();
 });
 
+// The active voice/cleanup model is shared across devices. Refresh the
+// Settings view when the window regains focus so a switch made on another
+// device cannot leave a stale Active badge behind.
+window.addEventListener('focus', () => {
+  if (isRecording || isStarting || streamStopping || processingAbortController) return;
+  const sheet = document.getElementById('sheetOverlay');
+  if (sheet && sheet.classList.contains('open')) return;
+  const modal = document.getElementById('modalOverlay');
+  if (modal && modal.classList.contains('open')) return;
+  const settingsPanel = document.getElementById('panel-settings');
+  if (settingsPanel && settingsPanel.classList.contains('active')) loadSettingsUI();
+});
+
 async function startRecording() {
   if (isRecording || isStarting || streamStopping) return;
   if (processingAbortController) {
@@ -4438,7 +4449,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.5.2'; // keep in sync with package.json at release time
+const APP_VERSION = '7.5.3'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
