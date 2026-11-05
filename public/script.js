@@ -281,7 +281,7 @@ function startWarmMicTicker() {
       return;
     }
     if (WarmMicLib.shouldExpire({ expiresAt: warmMic.expiresAt })) {
-      clearWarmMicState('Warm mic off after 15 minutes');
+      clearWarmMicState(`Warm mic off after ${WarmMicLib.durationLabel(warmMicMinutes)}`);
       return;
     }
     syncWarmMicUI();
@@ -4790,7 +4790,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.7.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.8.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

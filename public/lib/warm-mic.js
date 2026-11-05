@@ -19,6 +19,12 @@
     return normalizeMinutes(minutes) * 60 * 1000;
   }
 
+  function durationLabel(minutes) {
+    const value = normalizeMinutes(minutes);
+    if (value === 60) return '1 hour';
+    return `${value} minutes`;
+  }
+
   function remainingMs(expiresAt, now = Date.now()) {
     const value = Number(expiresAt);
     if (!Number.isFinite(value)) return 0;
@@ -50,6 +56,7 @@
     DEFAULT_MINUTES,
     normalizeMinutes,
     durationMs,
+    durationLabel,
     remainingMs,
     formatRemaining,
     isExpired,

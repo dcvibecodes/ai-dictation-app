@@ -49,3 +49,11 @@ test('warm mic: 60 minutes formats as 1h', () => {
   assert.equal(WarmMic.formatRemaining(59 * 60 * 1000), '59m');
   assert.equal(WarmMic.formatRemaining(30 * 60 * 1000), '30m');
 });
+
+test('warm mic: duration labels match the selected window', () => {
+  assert.equal(WarmMic.durationLabel(15), '15 minutes');
+  assert.equal(WarmMic.durationLabel(30), '30 minutes');
+  assert.equal(WarmMic.durationLabel(60), '1 hour');
+  assert.equal(WarmMic.durationLabel(45), '15 minutes');
+  assert.equal(WarmMic.durationLabel('nope'), '15 minutes');
+});

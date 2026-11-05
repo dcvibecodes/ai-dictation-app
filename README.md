@@ -4,6 +4,10 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.8.0 — correct warm-mic expiry message
+
+- **Expiry message matches the selected duration.** A 60-minute warm mic now says “Warm mic off after 1 hour” instead of the hardcoded “15 minutes”. 30 minutes says “30 minutes”; 15 says “15 minutes”. The countdown was already correct; only the final status text was wrong.
+
 ## What's New in v7.7.0 — configurable warm-mic duration, softer chip focus, compact chips
 
 - **Warm-mic duration is now a setting.** Settings → **Warm microphone** (fourth item, after Cleanup prompts) offers **15 minutes / 30 minutes / 1 hour**. The hint makes it clear this is **local to this browser only** — it is not synced. The selected duration is used whenever you press `M` or toggle the Mic chip, and after every take ends.
