@@ -977,18 +977,6 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .seg-chip:has(input:disabled) { cursor: default; }
 .seg-chip.is-locked-on { cursor: default; }
 .seg-chip:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.live-model-label {
-  display: none;
-  max-width: 240px;
-  padding: 0 5px;
-  font-size: 0.62rem;
-  font-weight: 500;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.live-model-label.is-visible { display: inline-block; }
 .prompt-pill {
   display: inline-flex; align-items: center;
   border: 1px solid var(--border); border-radius: 999px; padding: 0 4px 0 10px;
@@ -1173,7 +1161,6 @@ input.input, select.input, .secret-row .input { height: var(--control-height); }
 
 @media (max-width: 600px) {
   .seg-chip { padding: 5px 8px; font-size: 0.66rem; }
-  .live-model-label { max-width: 120px; font-size: 0.58rem; }
   .profile-row { gap: 8px; }
   .profile-row .live-switch { padding: 0; }
   .profile-row .live-switch-text { display: none; }

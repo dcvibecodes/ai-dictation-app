@@ -4,6 +4,13 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.4.0 — Gemini Live, cleanup pricing, cleaner Live chip
+
+- **Gemini Transcribe now has Live.** The Gemini Transcribe provider gets the same Live toggle using `gemini-3.5-transcribe-live` over Google's bidirectional Live WebSocket (16 kHz PCM in, interim + finalized input transcripts out, `audioStreamEnd` on stop). Batch fallback stays `gemini-3.5-transcribe`. Google caps a Live transcription session at 10 minutes; the recorder's normal 5-minute limit (extendable) sits inside that.
+- **Cleanup models are priced too.** The cleanup model picker and cleanup profile rows use the same official-name + exact-ID + price display (input/output per 1M tokens) as voice models. Curated cleanup lists were refreshed where needed (Groq GPT OSS, DeepSeek Flash/V4 Pro).
+- **Live chip is cleaner.** The active model name no longer sits beside the Live chip on the Dictate tab; it remains in the chip tooltip and in Settings.
+- **Cartesia stays visibly Live-only.** Its row/form shows a locked-on Live switch (disabled), so the capability is explicit instead of disappearing.
+
 ## What's New in v7.3.0 — one provider entry with a Live toggle, current model catalog, dedicated edit screens
 
 - **Live is now a switch on the provider.** AssemblyAI, ElevenLabs and Mistral are single entries again; turn **Live** on to stream, off to transcribe recorded files. Each profile keeps both a batch model and a live model, so switching never loses your choice. Profiles created in 7.2.0 with `__stream` providers migrate automatically.

@@ -39,7 +39,6 @@ let audioPrewarmed = false;       // true once the idle pre-warm has run
 // better accuracy). The Live chip is locked to reflect the active model.
 let streamingSupported = false;
 let activeProfileModel = '';
-let activeProfileModelMeta = null;
 let streamSocket = null;
 let streamReady = false;
 let streamPendingAudio = [];
@@ -132,19 +131,10 @@ function syncLiveChip() {
     // apply. It appears only while a streaming model is the active voice model.
     liveChip.style.display = streamingSupported ? '' : 'none';
     const modelId = streamingSupported ? activeProfileModel : '';
-    const modelText = modelId
-      ? ProfilesUI.modelLabel(modelId, activeProfileModelMeta)
-      : '';
     liveChip.title = streamingSupported
       ? 'Live streaming is active' + (modelId ? ' · ' + modelId : '')
       : 'Live streaming is built into the active voice model';
     liveChip.classList.toggle('is-locked-on', !!streamingSupported);
-    const label = document.getElementById('liveModelLabel');
-    if (label) {
-      label.textContent = modelId;
-      label.title = [modelText, ProfilesUI.modelSubLabel(activeProfileModelMeta)].filter(Boolean).join(' — ');
-      label.classList.toggle('is-visible', !!modelId);
-    }
   }
 }
 
@@ -1835,7 +1825,6 @@ async function activateProfile(kind, profile) {
     if (kind === 'transcription') {
       activeProfileProtocol = profile.protocol || 'whisper';
       activeProfileModel = profile.model || '';
-      activeProfileModelMeta = profile.modelMeta || null;
       streamingSupported = !!profile.supportsStreaming;
       syncLiveChip();
     }
@@ -2450,7 +2439,6 @@ async function loadSettingsUI() {
     const active = (settingsState.transcriptionProfiles || []).find(p => p.active);
     activeProfileProtocol = active ? active.protocol : 'none';
     activeProfileModel = active ? (active.model || '') : '';
-    activeProfileModelMeta = active ? (active.modelMeta || null) : null;
     streamingSupported = !!(active && active.supportsStreaming);
     syncLiveChip();
 
@@ -2862,7 +2850,6 @@ async function refreshActiveProfile() {
     const data = await res.json();
     activeProfileProtocol = data.protocol || 'none';
     activeProfileModel = data.model || '';
-    activeProfileModelMeta = data.modelMeta || null;
     streamingSupported = !!data.supportsStreaming;
     syncLiveChip();
   } catch {}
@@ -4451,7 +4438,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.3.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.4.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

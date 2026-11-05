@@ -887,6 +887,39 @@ function mistralStreamUrl(profile) {
   return `wss://api.mistral.ai/v1/audio/transcriptions/realtime?${params.toString()}`;
 }
 
+// Gemini Live uses its own bidirectional protocol. The API key stays server-side
+// in the upstream URL; it is never sent to the browser or logged.
+function geminiLiveStreamUrl(profile) {
+  const params = new URLSearchParams({ key: profile.apiKey });
+  return `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?${params.toString()}`;
+}
+
+function geminiLiveSetup(profile) {
+  const config = { responseModalities: ['TEXT'], inputAudioTranscription: { languageCodes: [] } };
+  const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+  if (language) {
+    const code = adapters.geminiLanguage(language);
+    if (code) config.inputAudioTranscription.languageCodes = [code];
+  }
+  const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+  if (hint) {
+    const terms = String(hint).split(',').map(t => t.trim()).filter(Boolean).slice(0, 1000);
+    if (terms.length) config.inputAudioTranscription.customVocabulary = terms;
+  }
+  return {
+    setup: {
+      model: `models/${profile.model || 'gemini-3.5-transcribe-live'}`,
+      generationConfig: { responseModalities: config.responseModalities },
+      inputAudioTranscription: config.inputAudioTranscription
+    }
+  };
+}
+
+function streamErrorMessage(err, profile) {
+  const message = err && err.message ? String(err.message) : 'Streaming connection failed.';
+  return profile && profile.apiKey ? message.split(profile.apiKey).join('***') : message;
+}
+
 // Per-protocol connection details: URL, auth header and how audio is framed.
 function streamConnection(profile) {
   switch (profile.protocol) {
@@ -898,6 +931,8 @@ function streamConnection(profile) {
       return { url: elevenLabsStreamUrl(profile), headers: { 'xi-api-key': profile.apiKey }, audio: 'elevenlabs' };
     case 'mistral-stream':
       return { url: mistralStreamUrl(profile), headers: { Authorization: `Bearer ${profile.apiKey}` }, audio: 'mistral' };
+    case 'gemini-transcribe-live':
+      return { url: geminiLiveStreamUrl(profile), headers: {}, audio: 'gemini-live' };
     default:
       return null;
   }
@@ -908,6 +943,7 @@ function isStreamReadyEvent(protocol, data) {
   if (protocol === 'assemblyai-stream') return data.type === 'Begin';
   if (protocol === 'elevenlabs-stream') return (data.message_type || data.type) === 'session_started';
   if (protocol === 'mistral-stream') return data.type === 'session.updated';
+  if (protocol === 'gemini-transcribe-live') return data.setupComplete !== undefined;
   return false;
 }
 
@@ -990,6 +1026,14 @@ wss.on('connection', (client, req) => {
       }));
       return;
     }
+    if (connection.audio === 'gemini-live') {
+      upstream.send(JSON.stringify({
+        realtimeInput: {
+          audio: { data: frame.toString('base64'), mimeType: 'audio/pcm;rate=16000' }
+        }
+      }));
+      return;
+    }
     upstream.send(frame);
   };
 
@@ -1018,6 +1062,8 @@ wss.on('connection', (client, req) => {
       }));
     } else if (profile.protocol === 'mistral-stream') {
       upstream.send(JSON.stringify({ type: 'input_audio.end' }));
+    } else if (profile.protocol === 'gemini-transcribe-live') {
+      upstream.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
     }
   };
 
@@ -1033,6 +1079,9 @@ wss.on('connection', (client, req) => {
     // Cartesia starts speaking immediately. The others wait for their session
     // acknowledgement so audio is never sent into an unconfigured session.
     if (profile.protocol === 'cartesia') markReady();
+    if (profile.protocol === 'gemini-transcribe-live') {
+      try { upstream.send(JSON.stringify(geminiLiveSetup(profile))); } catch {}
+    }
   });
 
   upstream.on('message', (raw) => {
@@ -1053,7 +1102,7 @@ wss.on('connection', (client, req) => {
   });
 
   upstream.on('error', (err) => {
-    console.error(`${profile.provider} stream error:`, err.message);
+    console.error(`${profile.provider} stream error:`, streamErrorMessage(err, profile));
     try { client.send(JSON.stringify({ type: 'error', error: 'Streaming provider connection failed.' })); } catch {}
     shutdown(1011);
   });
@@ -1434,6 +1483,11 @@ function probeStreamProfile(profile) {
       if (err) reject(err); else resolve();
     };
     const timer = setTimeout(() => finish(new Error('Streaming probe timed out.')), 10_000);
+    ws.on('open', () => {
+      if (profile.protocol === 'gemini-transcribe-live') {
+        try { ws.send(JSON.stringify(geminiLiveSetup(profile))); } catch {}
+      }
+    });
     ws.on('message', (raw) => {
       let data;
       try { data = JSON.parse(raw.toString()); } catch { return; }
@@ -1447,7 +1501,7 @@ function probeStreamProfile(profile) {
       }
       if (isStreamReadyEvent(profile.protocol, data)) finish();
     });
-    ws.on('error', (err) => finish(new Error('Streaming connection failed: ' + err.message)));
+    ws.on('error', (err) => finish(new Error('Streaming connection failed: ' + streamErrorMessage(err, profile))));
     ws.on('close', (code, reason) => {
       if (code !== 1000 && code !== 1005) {
         finish(new Error(`Streaming connection closed (${code}) ${reason || ''}`.trim()));

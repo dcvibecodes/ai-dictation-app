@@ -297,3 +297,42 @@ test('Cartesia is streaming-only: Live is on and locked', () => {
   assert.equal(pub.model, 'ink-2');
   assert.equal(pub.supportsStreaming, true);
 });
+
+test('every curated cleanup model has a display name and price/basis label', () => {
+  for (const [id, preset] of Object.entries(providers.CLEANUP_PROVIDERS)) {
+    if (id === 'custom' || id === 'openrouter') continue;
+    for (const model of preset.models) {
+      const meta = preset.modelLabels && preset.modelLabels[model];
+      assert.ok(meta && meta.displayName, `${id}/${model} missing display name`);
+      assert.ok(meta.costLabel, `${id}/${model} missing cost label`);
+    }
+  }
+});
+
+test('cleanup profiles expose the model price on the public row', () => {
+  const stored = { id: 'c', provider: 'openai', model: 'gpt-4.1-mini', apiKey: 'k' };
+  const resolved = providers.resolveProfile(stored, 'cleanup');
+  assert.equal(resolved.modelMeta.displayName, 'GPT-4.1 mini');
+  const pub = providers.publicProfile(stored, 'cleanup', 'c');
+  assert.equal(pub.modelMeta.costLabel, '$0.40 in / $1.60 out per 1M tokens');
+  assert.equal(pub.batchModelMeta.displayName, 'GPT-4.1 mini');
+});
+
+test('Gemini Transcribe has a Live mode with batch fallback', () => {
+  const preset = providers.TRANSCRIPTION_PROVIDERS.gemini_transcribe;
+  assert.equal(preset.stream.protocol, 'gemini-transcribe-live');
+  assert.deepEqual(preset.stream.models, ['gemini-3.5-transcribe-live']);
+  assert.equal(preset.stream.modelLabels['gemini-3.5-transcribe-live'].displayName, 'Gemini 3.5 Transcribe Live');
+  const resolved = providers.resolveProfile({
+    id: 'g', provider: 'gemini_transcribe',
+    model: 'gemini-3.5-transcribe',
+    streamModel: 'gemini-3.5-transcribe-live',
+    live: true,
+    apiKey: 'k'
+  });
+  assert.equal(resolved.protocol, 'gemini-transcribe-live');
+  assert.equal(resolved.live, true);
+  const batch = providers.resolveBatchProfile(resolved);
+  assert.equal(batch.protocol, 'gemini-transcribe');
+  assert.equal(batch.model, 'gemini-3.5-transcribe');
+});

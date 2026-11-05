@@ -160,3 +160,28 @@ test('PCM resampler: 16k to 24k is continuous and block-stable', () => {
   const same = createPcmResampler(16000, 16000);
   assert.deepEqual(same.process(raw), raw);
 });
+
+test('Gemini Live: interim + finalized input transcriptions', () => {
+  const n = createNormalizer('gemini-transcribe-live');
+  assert.deepEqual(n.normalize({ setupComplete: {} }), { type: 'other' });
+  assert.deepEqual(
+    n.normalize({ serverContent: { interimInputTranscription: { text: 'Hello' } } }),
+    { type: 'transcript', text: 'Hello', isFinal: false }
+  );
+  assert.deepEqual(
+    n.normalize({ serverContent: { inputTranscription: { text: 'Hello there.' } } }),
+    { type: 'transcript', text: 'Hello there.', isFinal: true }
+  );
+  assert.deepEqual(
+    n.normalize({ serverContent: { interimInputTranscription: { text: 'How' } } }),
+    { type: 'transcript', text: ' How', isFinal: false }
+  );
+  assert.deepEqual(
+    n.normalize({ serverContent: { inputTranscription: { text: 'how are you?' } } }),
+    { type: 'transcript', text: ' how are you?', isFinal: true }
+  );
+  assert.deepEqual(
+    n.normalize({ error: { message: 'bad audio' } }),
+    { type: 'error', error: 'bad audio' }
+  );
+});
