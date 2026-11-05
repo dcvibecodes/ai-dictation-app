@@ -24,6 +24,7 @@ const {
 } = require('./lib/owner');
 const providers = require('./lib/providers');
 const adapters = require('./lib/adapters');
+const historyLib = require('./lib/history');
 const APP_VERSION = require('./package.json').version;
 const OPENCODE_SESSION_ID = crypto.randomUUID();
 const { extensionForMime } = require('./lib/media');
@@ -45,6 +46,7 @@ const GEN_FILE      = path.join(DATA_DIR, 'session.generation');
 const SECRET_FILE   = path.join(DATA_DIR, 'session.secret');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PROMPTS_FILE  = path.join(DATA_DIR, 'prompts.json');
+const HISTORY_FILE  = path.join(DATA_DIR, 'history.json');
 const PROMPTS_VERSION_FILE = path.join(DATA_DIR, 'prompts.version');
 const PROMPTS_VERSION = '10'; // bump when the built-in default replaces stored overrides
 const LEGACY_PROMPTS_FILE = path.join(__dirname, 'prompts.json');
@@ -446,6 +448,109 @@ app.post('/api/glossary', requireOwner, (req, res) => {
   saveSettings(current);
   res.json({ ok: true, glossary });
 });
+
+// --- History API ---
+// Transcripts are stored server-side so every signed-in browser sees the same
+// sessions. Retention runs on every read/write plus an hourly sweep.
+const HISTORY_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+function loadHistory() {
+  return historyLib.readAndPrune(HISTORY_FILE, Date.now());
+}
+
+function saveHistory(state) {
+  historyLib.writeState(HISTORY_FILE, state);
+}
+
+app.get('/api/history', requireOwner, (req, res) => {
+  try {
+    const state = loadHistory();
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      retention: state.retention,
+      retentionOptions: historyLib.publicRetentionOptions(),
+      entries: state.entries
+    });
+  } catch (error) {
+    console.error('History load error:', error.message);
+    res.status(500).json({ error: 'Could not load history.' });
+  }
+});
+
+app.post('/api/history', requireOwner, (req, res) => {
+  let entry;
+  try {
+    entry = historyLib.createEntry(req.body, { maxChars: getMaxTranscriptChars() });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  try {
+    const state = loadHistory();
+    const duplicate = historyLib.findDuplicate(state.entries, entry);
+    if (duplicate) return res.json({ ok: true, duplicate: true, entry: duplicate });
+    state.entries.unshift(entry);
+    saveHistory(state);
+    res.json({ ok: true, entry });
+  } catch (error) {
+    console.error('History save error:', error.message);
+    res.status(500).json({ error: 'Could not save history.' });
+  }
+});
+
+app.post('/api/history/retention', requireOwner, (req, res) => {
+  const retention = req.body && req.body.retention;
+  if (!Object.prototype.hasOwnProperty.call(historyLib.RETENTION_OPTIONS, retention)) {
+    return res.status(400).json({ error: 'Choose 24 hours, 30 days, or 1 year.' });
+  }
+  try {
+    const state = loadHistory();
+    state.retention = retention;
+    state.entries = historyLib.pruneEntries(state.entries, retention, Date.now()).entries;
+    saveHistory(state);
+    res.json({ ok: true, retention: state.retention, entries: state.entries });
+  } catch (error) {
+    console.error('History retention error:', error.message);
+    res.status(500).json({ error: 'Could not update retention.' });
+  }
+});
+
+app.delete('/api/history/:id', requireOwner, (req, res) => {
+  try {
+    const state = loadHistory();
+    const before = state.entries.length;
+    state.entries = state.entries.filter(entry => entry.id !== req.params.id);
+    if (state.entries.length === before) {
+      return res.status(404).json({ error: 'History entry not found.' });
+    }
+    saveHistory(state);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('History delete error:', error.message);
+    res.status(500).json({ error: 'Could not delete the history entry.' });
+  }
+});
+
+app.delete('/api/history', requireOwner, (req, res) => {
+  try {
+    const state = loadHistory();
+    state.entries = [];
+    saveHistory(state);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('History clear error:', error.message);
+    res.status(500).json({ error: 'Could not clear history.' });
+  }
+});
+
+function sweepHistory() {
+  try {
+    loadHistory();
+  } catch (error) {
+    console.warn('History retention sweep failed:', error.message);
+  }
+}
+sweepHistory();
+setInterval(sweepHistory, HISTORY_SWEEP_INTERVAL_MS).unref();
 
 app.get('/api/settings', requireOwner, (req, res) => {
   const s = loadSettings();

@@ -5,14 +5,14 @@ let recordingCaptureMode = 'standard'; // frozen at record start; Stop uses this
 let streamStopping = false;          // true while a live take is draining/finishing
 let isPaused = false;
 let cancelled = false;
-// Load history defensively: a corrupted/partial value must never throw at startup
-// (that would kill the whole app before anything initializes).
-let history = (() => {
-  try {
-    const v = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
-    return Array.isArray(v) ? v : [];
-  } catch { return []; }
-})();
+// History lives on the server (data/history.json) so every browser sees the
+// same sessions. It is loaded asynchronously after startup.
+let history = [];
+let historyRetention = '30d';
+let historyMigrationDone = false;
+let clearHistoryArmed = false;
+let clearHistoryTimer = null;
+let historyNoticeTimer = null;
 let inMemoryAudioBlob = null; // fallback if IndexedDB backup fails
 let processingAbortController = null; // for cancelling in-flight transcribe/cleanup requests
 let recordingStartedAt = 0;       // Date.now() when the recording began
@@ -619,6 +619,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       requestAnimationFrame(reflowRecorderRow);
     }
     if (btn.dataset.tab === 'settings') loadSettingsUI();
+    if (btn.dataset.tab === 'history') loadHistory();
   });
 });
 
@@ -1366,37 +1367,219 @@ async function deletePrompt(id) {
 }
 
 // ── History ──
-function saveHistory() { try { localStorage.setItem('dictationHistory', JSON.stringify(history.slice(0, 20))); } catch (e) { console.warn('history save failed (storage full or unavailable):', e); } }
-function addToHistory(raw, cleaned, originalRaw = '') { history.unshift({ raw, cleaned, originalRaw, timestamp: new Date().toLocaleString() }); saveHistory(); renderHistory(); }
+// Server-backed: GET /api/history loads the shared list, POST adds a session,
+// DELETE removes one or all. Retention is a server setting.
+function historyTimestamp(item) {
+  const value = Number(item && item.createdAt);
+  return Number.isFinite(value) && value > 0 ? new Date(value).toLocaleString() : '';
+}
 
-function renderHistory() {
-  document.getElementById('historyList').innerHTML = history.length === 0
-    ? '<p class="history-empty">No transcriptions yet.</p>'
-    : history.map((item, i) => `<div class="history-item"><div class="history-meta"><span class="history-time">${escapeHtml(item.timestamp)}</span><span class="history-words">${countWords(item.cleaned)}w</span><button class="btn btn-ghost btn-sm" onclick="restoreHistory(${i})">Restore</button><button class="btn btn-ghost btn-sm" onclick="copyHistoryItem(${i})">Copy</button><button class="btn btn-ghost btn-sm btn-danger" onclick="deleteHistoryItem(${i})">Delete</button></div><p class="history-preview">${escapeHtml(item.cleaned.slice(0, 100))}${item.cleaned.length > 100 ? '…' : ''}</p></div>`).join('');
+function setHistoryNotice(message, isError = false) {
+  const el = document.getElementById('historyNotice');
+  if (!el) return;
+  el.textContent = message || '';
+  el.classList.toggle('error', !!isError);
+  if (historyNoticeTimer) clearTimeout(historyNoticeTimer);
+  if (message) historyNoticeTimer = setTimeout(() => setHistoryNotice(''), 4000);
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error('History unavailable');
+    const data = await res.json();
+    history = Array.isArray(data.entries) ? data.entries : [];
+    historyRetention = data.retention || '30d';
+    const select = document.getElementById('historyRetention');
+    if (select) select.value = historyRetention;
+    renderHistory();
+  } catch (e) {
+    console.warn('History load failed:', e.message);
+    renderHistory('Could not load history — check your connection and reopen this tab.');
+  }
+}
+
+// One-time upload of the old browser-only history, then drop the local copy.
+// The server de-duplicates retries by timestamp + text.
+async function migrateLocalHistory() {
+  if (historyMigrationDone) return;
+  historyMigrationDone = true;
+  let local = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem('dictationHistory') || '[]');
+    if (Array.isArray(parsed)) local = parsed;
+  } catch { return; }
+  if (local.length === 0) return;
+
+  let allSaved = true;
+  for (const item of local) {
+    if (!item || typeof item.raw !== 'string' || !item.raw.trim()) continue;
+    const createdAt = Date.parse(item.timestamp) || Date.now();
+    try {
+      const res = await fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          raw: item.raw,
+          cleaned: typeof item.cleaned === 'string' ? item.cleaned : '',
+          originalRaw: typeof item.originalRaw === 'string' ? item.originalRaw : '',
+          createdAt
+        })
+      });
+      if (res.status === 401) { handleUnauthorized(); return; }
+      if (!res.ok) allSaved = false;
+    } catch {
+      allSaved = false;
+    }
+  }
+  if (allSaved) {
+    try { localStorage.removeItem('dictationHistory'); } catch {}
+  }
+}
+
+async function initHistory() {
+  await migrateLocalHistory();
+  await loadHistory();
+}
+
+async function addToHistory(raw, cleaned, originalRaw = '') {
+  try {
+    const res = await fetch('/api/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw, cleaned, originalRaw })
+    });
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error('Save failed');
+    const data = await res.json();
+    if (data.entry) {
+      history = history.filter(item => item.id !== data.entry.id);
+      history.unshift(data.entry);
+      renderHistory();
+    }
+  } catch (e) {
+    console.warn('History save failed:', e.message);
+  }
+}
+
+function renderHistory(emptyMessage) {
+  const list = document.getElementById('historyList');
+  if (!list) return;
+  if (history.length === 0) {
+    list.innerHTML = `<p class="history-empty">${escapeHtml(emptyMessage || 'No transcriptions yet.')}</p>`;
+    return;
+  }
+  list.innerHTML = history.map((item, i) => {
+    const original = item.originalRaw || item.raw || '';
+    const cleaned = item.cleaned || '';
+    const words = countWords(cleaned || original);
+    const cleanedHtml = cleaned
+      ? escapeHtml(cleaned)
+      : '<span class="history-none">No cleanup applied</span>';
+    return `<div class="history-item"><div class="history-meta"><span class="history-time">${escapeHtml(historyTimestamp(item))}</span><span class="history-words">${words}w</span><button class="btn btn-ghost btn-sm" onclick="restoreHistory(${i})">Restore</button><button class="btn btn-ghost btn-sm" onclick="copyHistoryItem(${i})">Copy</button><button class="btn btn-ghost btn-sm btn-danger" onclick="deleteHistoryItem(${i})">Delete</button></div><div class="history-pair"><div class="history-block"><span class="history-label">Original transcript</span><p class="history-text">${escapeHtml(original)}</p></div><div class="history-block"><span class="history-label">Cleaned up</span><p class="history-text history-text-cleaned">${cleanedHtml}</p></div></div></div>`;
+  }).join('');
 }
 
 function restoreHistory(i) {
+  const item = history[i];
+  if (!item) return;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelector('[data-tab="record"]').classList.add('active');
   document.getElementById('panel-record').classList.add('active');
   document.body.classList.add('record-active');
-  currentRaw = history[i].raw;
-  currentCleaned = history[i].cleaned;
-  setOriginalRaw(history[i].originalRaw || '');
+  currentRaw = item.raw;
+  currentCleaned = item.cleaned;
+  setOriginalRaw(item.originalRaw || '');
   showingRaw = false;
   updateTranscriptDisplay(true);
 }
+
 async function copyHistoryItem(i) {
   const item = history[i];
+  if (!item) return;
   const text = item.cleaned || item.raw || '';
   if (!text) return;
   const copied = await copyToClipboard(text);
   setStatus(copied ? 'Copied ✓' : 'Copy blocked — select the text and copy manually', copied ? 'done' : 'error');
   setTimeout(() => setStatus('Ready'), 1800);
 }
-function deleteHistoryItem(i) { history.splice(i, 1); saveHistory(); renderHistory(); }
-function clearHistory() { if (history.length === 0) return; if (!confirm('Clear all history? This cannot be undone.')) return; history = []; saveHistory(); renderHistory(); }
+
+async function deleteHistoryItem(i) {
+  const item = history[i];
+  if (!item) return;
+  try {
+    const res = await fetch(`/api/history/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error('Delete failed');
+    history.splice(i, 1);
+    renderHistory();
+  } catch (e) {
+    console.warn('History delete failed:', e.message);
+    setHistoryNotice('Could not delete that entry.', true);
+  }
+}
+
+function resetClearHistoryButton() {
+  clearHistoryArmed = false;
+  if (clearHistoryTimer) { clearTimeout(clearHistoryTimer); clearHistoryTimer = null; }
+  const btn = document.getElementById('clearHistoryBtn');
+  if (btn) {
+    btn.textContent = 'Clear All';
+    btn.classList.remove('btn-danger');
+  }
+}
+
+async function clearHistory() {
+  if (history.length === 0) return;
+  if (!clearHistoryArmed) {
+    clearHistoryArmed = true;
+    const btn = document.getElementById('clearHistoryBtn');
+    if (btn) {
+      btn.textContent = 'Confirm clear?';
+      btn.classList.add('btn-danger');
+    }
+    clearHistoryTimer = setTimeout(resetClearHistoryButton, 4000);
+    return;
+  }
+  resetClearHistoryButton();
+  try {
+    const res = await fetch('/api/history', { method: 'DELETE' });
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error('Clear failed');
+    history = [];
+    renderHistory();
+    setHistoryNotice('History cleared.');
+  } catch (e) {
+    console.warn('History clear failed:', e.message);
+    setHistoryNotice('Could not clear history.', true);
+  }
+}
+
+async function setHistoryRetention(retention) {
+  const select = document.getElementById('historyRetention');
+  const previous = historyRetention;
+  try {
+    const res = await fetch('/api/history/retention', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ retention })
+    });
+    if (res.status === 401) { handleUnauthorized(); return; }
+    if (!res.ok) throw new Error('Retention update failed');
+    const data = await res.json();
+    historyRetention = data.retention;
+    history = Array.isArray(data.entries) ? data.entries : [];
+    if (select) select.value = historyRetention;
+    renderHistory();
+    setHistoryNotice('Retention updated. Older sessions were removed.');
+  } catch (e) {
+    console.warn('History retention failed:', e.message);
+    if (select) select.value = previous;
+    setHistoryNotice('Could not update retention.', true);
+  }
+}
 
 // ── Settings ──
 let settingsState = null;
@@ -4007,7 +4190,7 @@ initOnboarding();
 loadPrompts();
 refreshActiveProfile();
 loadGlossaryFromServer();
-renderHistory();
+initHistory();
 checkRecoveryOnLoad();
 updateOnlineStatus();
 drawIdleLine();
@@ -4027,7 +4210,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.8'; // keep in sync with package.json at release time
+const APP_VERSION = '7.1.9'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

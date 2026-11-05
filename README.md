@@ -4,6 +4,12 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.1.9 — server-side history with original + cleaned transcripts
+
+- **History is shared across browsers.** Sessions are saved in `data/history.json` on the server instead of browser localStorage, so the same list appears everywhere you sign in. Existing browser-only history is uploaded once on first load.
+- **Both versions in one place.** Each History row shows the **Original transcript** and the **Cleaned up** text, with the usual Restore/Copy/Delete actions.
+- **Retention control.** History → **Keep history for** offers 24 hours, 30 days or 1 year (default 30 days). Expired sessions are removed automatically, and 1 year is the hard maximum. Clear All now uses an in-app two-step confirm instead of a browser dialog.
+
 ## What's New in v7.1.8 — capture settle + no old-transcript flash
 
 - **Startup settle window.** After capture is confirmed, the app keeps recording for 400 ms before switching the status to “Recording…”. This lets the OS audio route stabilize and includes anything spoken during the transition, reducing clipped first words. Normal content, modes and shortcuts are unchanged.
@@ -550,7 +556,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 
 - No `.env` file required — all config via Settings tab
 - Audio temp files deleted immediately after transcription; orphaned uploads older than 30 min are auto-swept every 15 min
-- Session history is browser-side (localStorage)
+- Session history is stored server-side in `data/history.json` and shared across browsers; retention is 24 hours, 30 days or 1 year (max)
 - API keys are **encrypted at rest** (AES-256-GCM) in `data/settings.json` (gitignored). If the server's `data/session.secret` is ever recreated, stored keys can no longer be decrypted — re-enter them in Settings.
 - `data/` directory auto-created on first run, fully gitignored
 - PWA works offline for the UI shell; recording requires network for AI APIs
