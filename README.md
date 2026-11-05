@@ -4,21 +4,11 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
-## What's New in v7.5.1 — warm-mic start is actually faster
+## What's New in v7.5.2 — warm mic removed
 
-- **No false "Opening mic…" wait.** When the warm stream is reused, the status now says `Starting recording…` instead of `Opening mic…`.
-- **Warm takes skip the cold-start padding.** The fixed 400 ms settle is only for a cold mic; a warm take skips it. Standard-mode warm takes also stop waiting for the first 250 ms MediaRecorder chunk, because the track is already live. The recorder still runs and its first chunk still flushes to the rolling backup normally.
-- **Worklet preloaded on the warm context.** Enabling the warm mic now registers `live-capture-worklet.js` on that same AudioContext, so the first warm streaming take does not pay module loading.
-- Cold recording behaviour is unchanged.
-
-## What's New in v7.5.0 — 15-minute warm mic
-
-- **New Mic toggle.** A `Mic` chip sits beside Auto-clean / Live / Append. It is off by default. Turning it on opens the microphone and keeps it warm for **15 minutes**, with a visible countdown (`Mic 15m` → `Mic 59s`). The duration is fixed; there is no minutes setting.
-- **Only recording-session audio is used.** While merely warm, the app holds only the MediaStream and AudioContext. It does not create a recorder, worklet, analyser graph, ledger, backup, upload, cleanup request, stream token or provider socket. Those exist only between Record and Stop. Warm-idle audio cannot be sent.
-- **Normal recording is unchanged.** With Mic off, every take opens/closes the mic as before and no timer starts. With Mic on, Stop leaves the mic warm and the countdown continues.
-- **Mid-take promotion.** Pressing `M` during a normal take keeps the current stream, starts the 15-minute countdown from that moment, and keeps the mic on after Stop. Expiry or manual off during a take releases only after the take ends.
-- **Shortcut change.** `M` now toggles the warm mic. The old `M` theme shortcut is removed; theme remains on the header button. The shortcuts popover is updated.
-- **Desktop-first behaviour.** Warm mic stays across hidden tabs for the full 15 minutes, then releases. It also releases on manual off, page close, auth redirect, or a dead device track (temporary mutes are reported but keep the warm state). macOS shows the orange mic indicator for as long as the warm stream is open.
+- **Warm mic was a failed experiment and is gone.** Showing `Recording…` before the audio route was truly ready let the first two or three words slip past. The Mic chip, countdown, warm stream/context state, `M` remap, and related code are removed.
+- **Restored the v7.4.0 recording path.** Every take opens the mic fresh, waits for the first real audio chunk, and keeps the 400 ms settle before inviting speech. `M` is back to the theme toggle.
+- No other v7.4.0 behaviour changed.
 
 ## What's New in v7.4.0 — Gemini Live, cleanup pricing, cleaner Live chip
 
@@ -471,7 +461,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
 | `1–5` | Switch cleanup prompt by position |
-| `M` | Warm mic on/off |
+| `M` | Toggle light/dark theme |
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |

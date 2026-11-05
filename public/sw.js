@@ -1,6 +1,6 @@
 // Cache version is bumped on every release. It only exists to purge old shells;
 // app code is always fetched network-first so a deploy is live on the next load.
-const CACHE_NAME = 'dictation-v60';
+const CACHE_NAME = 'dictation-v61';
 const APP_SHELL = [
   '/',
   '/styles.css',
@@ -9,7 +9,6 @@ const APP_SHELL = [
   '/lib/profiles-ui.js',
   '/lib/audio-ledger.js',
   '/lib/corrections.js',
-  '/lib/warm-mic.js',
   '/live-capture-worklet.js',
   '/manifest.json',
   '/fonts/fraunces-latin-var.woff2',

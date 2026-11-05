@@ -50,7 +50,6 @@ let streamSession = null;          // frozen state for the active streaming take
 let streamLedger = null;           // AudioLedger (independent persistence cursor)
 let recoveryLedger = null;         // ledger kept in memory when IndexedDB failed
 let streamResampler = null;        // StreamingResampler mic rate -> 16 kHz, block-stable
-let warmMic = null;                // { stream, context, expiresAt, tickTimer, releasePending }
 const TARGET_SAMPLE_RATE = 16000; // transcription APIs are trained on 16kHz audio
 
 // --- Auto-stop limit ---
@@ -122,15 +121,6 @@ if (appendToggle) {
 // recording path is chosen from the same capability at Start.
 const liveToggle = document.getElementById('liveToggle');
 const liveChip = document.getElementById('liveChip');
-const micToggle = document.getElementById('micToggle');
-const micChip = document.getElementById('micChip');
-const micLabel = document.getElementById('micLabel');
-const WarmMicLib = window.WarmMicLib || {
-  WARM_MIC_MS: 15 * 60 * 1000,
-  remainingMs: (expiresAt, now = Date.now()) => Math.max(0, Number(expiresAt) - now),
-  formatRemaining: ms => (ms < 60000 ? Math.ceil(ms / 1000) + 's' : Math.ceil(ms / 60000) + 'm'),
-  isExpired: (expiresAt, now = Date.now()) => Number(expiresAt) <= now
-};
 function syncLiveChip() {
   if (!liveToggle) return;
   liveToggle.checked = !!streamingSupported;
@@ -145,199 +135,6 @@ function syncLiveChip() {
       ? 'Live streaming is active' + (modelId ? ' · ' + modelId : '')
       : 'Live streaming is built into the active voice model';
     liveChip.classList.toggle('is-locked-on', !!streamingSupported);
-  }
-}
-
-if (micToggle) {
-  micToggle.addEventListener('change', () => {
-    if (micToggle.checked) {
-      if (!warmMic) {
-        if (isRecording) promoteTakeToWarm();
-        else enableWarmMic();
-      }
-    } else {
-      releaseWarmMic();
-    }
-    // Keep single-key shortcuts working after clicking the chip.
-    try { micToggle.blur(); } catch {}
-  });
-}
-
-// ── Timed warm mic ──
-// Off by default. When enabled, we hold only the MediaStream and AudioContext;
-// no recorder, worklet, analyser, ledger, socket or upload exists until the
-// user actually starts a recording. The 15-minute timer belongs to this state,
-// never to a normal take.
-function syncWarmMicUI() {
-  if (!micToggle) return;
-  micToggle.checked = !!warmMic;
-  if (!micLabel) return;
-  if (!warmMic) {
-    micLabel.textContent = 'Mic';
-    if (micChip) micChip.title = 'Warm mic off (M)';
-    return;
-  }
-  const remaining = WarmMicLib.remainingMs(warmMic.expiresAt);
-  if (warmMic.releasePending) {
-    micLabel.textContent = 'Mic off…';
-    if (micChip) micChip.title = 'Warm mic releases after this take';
-  } else {
-    micLabel.textContent = `Mic ${WarmMicLib.formatRemaining(remaining)}`;
-    if (micChip) {
-      micChip.title = `Warm mic on — ${WarmMicLib.formatRemaining(remaining)} remaining. Press M to release.`;
-    }
-  }
-}
-
-function attachWarmMicTrackEvents(stream) {
-  stream.getAudioTracks().forEach(track => {
-    track.addEventListener('ended', () => {
-      if (!warmMic || warmMic.stream !== stream) return;
-      clearWarmMicState('Microphone disconnected — warm mic off');
-    });
-    track.addEventListener('mute', () => {
-      if (!warmMic || warmMic.stream !== stream) return;
-      setStatus('Microphone muted — warm mic still on', 'processing');
-    });
-    track.addEventListener('unmute', () => {
-      if (!warmMic || warmMic.stream !== stream) return;
-      setStatus('Mic warm — not recording', 'active');
-    });
-  });
-}
-
-function clearWarmMicState(message) {
-  if (!warmMic) return;
-  if (warmMic.tickTimer) clearInterval(warmMic.tickTimer);
-  const { stream, context } = warmMic;
-  warmMic = null;
-  try { stream.getTracks().forEach(t => t.stop()); } catch {}
-  try { if (context && context.state !== 'closed') context.close(); } catch {}
-  if (audioContext === context) audioContext = null;
-  syncWarmMicUI();
-  if (message) setStatus(message);
-}
-
-function releaseWarmMic({ force = false, message = 'Warm mic off' } = {}) {
-  if (!warmMic) return;
-  // Never cut an active take. Mark for release and let the stop path finish.
-  if (!force && (isRecording || isStarting || streamStopping)) {
-    warmMic.releasePending = true;
-    syncWarmMicUI();
-    setStatus('Warm mic will turn off after this take', 'active');
-    return;
-  }
-  clearWarmMicState(message);
-}
-
-function maybeReleaseWarmMicAfterTake() {
-  if (!warmMic) return;
-  const live = warmMic.stream.getAudioTracks().some(t => t.readyState === 'live');
-  if (warmMic.releasePending || !live) {
-    clearWarmMicState('Warm mic off');
-  } else {
-    syncWarmMicUI();
-  }
-}
-
-function startWarmMicTicker() {
-  if (!warmMic || warmMic.tickTimer) return;
-  warmMic.tickTimer = setInterval(() => {
-    if (!warmMic) return;
-    if (warmMic.releasePending && !isRecording && !isStarting && !streamStopping) {
-      clearWarmMicState('Warm mic off');
-      return;
-    }
-    if (WarmMicLib.isExpired(warmMic.expiresAt)) {
-      if (warmMic.releasePending) return;
-      if (isRecording || isStarting || streamStopping) {
-        warmMic.releasePending = true;
-        syncWarmMicUI();
-        setStatus('Warm mic will turn off after this take', 'active');
-      } else {
-        clearWarmMicState('Warm mic off after 15 minutes');
-      }
-      return;
-    }
-    syncWarmMicUI();
-  }, 1000);
-}
-
-async function enableWarmMic() {
-  if (warmMic || isStarting) { syncWarmMicUI(); return; }
-  setStatus('Opening mic…');
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    let context = audioContext && audioContext.state !== 'closed' ? audioContext : new Ctor();
-    if (context.state === 'suspended' || context.state === 'interrupted') {
-      try { await context.resume(); } catch {}
-    }
-    // Register the capture worklet on the context we will reuse, so the first
-    // warm streaming take does not pay module loading/compilation.
-    if (context.audioWorklet) {
-      try { await context.audioWorklet.addModule('/live-capture-worklet.js'); } catch {}
-    }
-    warmMic = {
-      stream,
-      context,
-      expiresAt: Date.now() + WarmMicLib.WARM_MIC_MS,
-      tickTimer: null,
-      releasePending: false
-    };
-    audioContext = context;
-    attachWarmMicTrackEvents(stream);
-    startWarmMicTicker();
-    syncWarmMicUI();
-    setStatus('Mic warm — not recording', 'active');
-  } catch (err) {
-    console.error('Warm mic getUserMedia error:', err);
-    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
-    syncWarmMicUI();
-    setStatus(denied ? 'Microphone access denied — allow it and try again' : 'Could not access the microphone', 'error');
-    setTimeout(() => setStatus('Ready'), 4000);
-  }
-}
-
-function adoptWarmStream(stream) {
-  if (!warmMic) return;
-  const previous = warmMic.stream;
-  warmMic.stream = stream;
-  attachWarmMicTrackEvents(stream);
-  try { previous.getTracks().forEach(t => t.stop()); } catch {}
-}
-
-function promoteTakeToWarm() {
-  if (warmMic) return;
-  const stream = recordingCaptureMode === 'stream'
-    ? streamMediaStream
-    : (mediaRecorder && mediaRecorder.stream);
-  if (!stream || !audioContext) {
-    setStatus('Could not warm the mic during this take', 'error');
-    setTimeout(() => setStatus('Ready'), 3000);
-    syncWarmMicUI();
-    return;
-  }
-  warmMic = {
-    stream,
-    context: audioContext,
-    expiresAt: Date.now() + WarmMicLib.WARM_MIC_MS,
-    tickTimer: null,
-    releasePending: false
-  };
-  attachWarmMicTrackEvents(stream);
-  startWarmMicTicker();
-  syncWarmMicUI();
-  setStatus('Mic stays warm after this take', 'active');
-}
-
-function toggleWarmMic() {
-  if (warmMic) {
-    releaseWarmMic();
-  } else if (isRecording) {
-    promoteTakeToWarm();
-  } else {
-    enableWarmMic();
   }
 }
 
@@ -956,7 +753,6 @@ function handleUnauthorized() {
     return false;
   }
   // Nothing at stake (not recording/processing) — safe to send the user to login.
-  releaseWarmMic({ force: true, message: '' });
   location.href = '/login';
   return true;
 }
@@ -3316,7 +3112,7 @@ async function transcribeAudioBlob(audioBlob) {
 // Standard (non-live) recorder. Starts a 1s-timeslice recording and resolves
 // only once real audio has arrived — this is what lets the UI truthfully say
 // "recording".
-function startStandardRecorder(stream, { warm = false } = {}) {
+function startStandardRecorder(stream) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
@@ -3353,10 +3149,6 @@ function startStandardRecorder(stream, { warm = false } = {}) {
       // arrives in ~250ms instead of ~1s. Later chunks cost nothing extra —
       // backup already flushes per chunk with tiny blobs.
       recorder.start(250);
-      // With a warm stream the track is already live, so don't make the user
-      // wait for the first 250 ms timeslice just to confirm what we already
-      // know. The recorder is running; data still arrives on the same timeslice.
-      if (warm) setTimeout(ok, 0);
     } catch (err) {
       fail(err);
     }
@@ -3365,7 +3157,7 @@ function startStandardRecorder(stream, { warm = false } = {}) {
 
 // Runs when the standard recorder stops (user stop, auto-stop, cancel, or a mic
 // failure). Builds the final blob, saves it, then releases the microphone.
-async function handleStandardRecorderStop() {
+async function onStandardRecorderStop() {
   clearLimitCheck();
   stopSilenceWatch();
   cancelAnimationFrame(animationId);
@@ -3374,21 +3166,10 @@ async function handleStandardRecorderStop() {
   isPaused = false;
   pauseBtn.style.display = 'none';
 
-  // Keep the warm stream/context after this take when warm owns them. Drop the
-  // per-take audio graph either way so nothing is processed while idle.
-  const takeStream = mediaRecorder && mediaRecorder.stream;
-  const keepWarm = !!warmMic && !warmMic.releasePending && warmMic.stream === takeStream;
-  if (source) { try { source.disconnect(); } catch {} source = null; }
-  analyser = null;
-  if (keepWarm && takeStream) {
-    // Pause on Safari mutes the track instead of pausing MediaRecorder.
-    try { takeStream.getAudioTracks().forEach(t => { t.enabled = true; }); } catch {}
-  }
-  if (!keepWarm) {
-    if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
-    // Release the microphone only now, after the final data has been flushed.
-    try { if (takeStream) takeStream.getTracks().forEach(t => t.stop()); } catch {}
-  }
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
+
+  // Release the microphone only now, after the final data has been flushed.
+  try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch {}
 
   const interrupted = recordingInterrupted;
   recordingInterrupted = '';
@@ -3433,14 +3214,6 @@ async function handleStandardRecorderStop() {
       setStatus(interrupted + ' — audio saved', 'error');
       setTimeout(() => setStatus('Ready'), 4000);
     }
-  }
-}
-
-async function onStandardRecorderStop() {
-  try {
-    await handleStandardRecorderStop();
-  } finally {
-    maybeReleaseWarmMicAfterTake();
   }
 }
 
@@ -3517,13 +3290,7 @@ function startAuthRefresh() {
   runBackgroundAuthCheck(); // warm the very first Record click
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  runBackgroundAuthCheck();
-  if (warmMic && WarmMicLib.isExpired(warmMic.expiresAt)) {
-    releaseWarmMic();
-  } else if (warmMic) {
-    syncWarmMicUI();
-  }
+  if (document.visibilityState === 'visible') runBackgroundAuthCheck();
 });
 
 async function startRecording() {
@@ -3554,59 +3321,23 @@ async function startRecording() {
     console.warn('Audio ledger library missing — falling back to Standard mode.');
   }
 
-  let stream = null;
-  let fromWarm = false;
-
-  // Reuse the warm stream when it is genuinely usable. If it went mute/ended
-  // (another app grabbed the mic, device slept), try one fresh stream and adopt
-  // it into the warm state so the countdown keeps running.
-  if (warmMic && !warmMic.releasePending) {
-    const track = warmMic.stream.getAudioTracks()[0];
-    if (track && track.readyState === 'live' && !track.muted) {
-      stream = warmMic.stream;
-      fromWarm = true;
-    } else {
-      try {
-        const fresh = await navigator.mediaDevices.getUserMedia({ audio: true });
-        adoptWarmStream(fresh);
-        stream = fresh;
-        fromWarm = true;
-      } catch {}
-    }
-  }
-
-  if (stream) {
-    try { stream.getAudioTracks().forEach(t => { t.enabled = true; }); } catch {}
-  }
-
-  // Don't say "Opening mic…" when the warm stream is already open.
-  setStatus(fromWarm ? 'Starting recording…' : 'Opening mic…');
-
-  if (!stream) {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.error('getUserMedia error:', err);
-      isStarting = false;
-      resetButton();
-      const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
-      setStatus(denied ? 'Microphone access denied — allow it and try again' : 'Could not access the microphone', 'error');
-      setTimeout(() => setStatus('Ready'), 4000);
-      return;
-    }
-    if (warmMic && !warmMic.releasePending) adoptWarmStream(stream);
+  let stream;
+  setStatus('Opening mic…');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    console.error('getUserMedia error:', err);
+    isStarting = false;
+    resetButton();
+    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+    setStatus(denied ? 'Microphone access denied — allow it and try again' : 'Could not access the microphone', 'error');
+    setTimeout(() => setStatus('Ready'), 4000);
+    return;
   }
 
   try {
-    if (fromWarm && warmMic && warmMic.context && warmMic.context.state !== 'closed') {
-      audioContext = warmMic.context;
-    } else {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioContext.state === 'suspended' || audioContext.state === 'interrupted') {
-      try { await audioContext.resume(); } catch {}
-    }
-    if (fromWarm && warmMic) warmMic.context = audioContext;
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch {} }
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048; // wide window (~43ms) so the silence check sees real audio
     source = audioContext.createMediaStreamSource(stream);
@@ -3625,19 +3356,17 @@ async function startRecording() {
         console.warn('Live streaming unavailable — using Standard mode:', streamErr.message);
         resetStreamCaptureState();
         recordingCaptureMode = 'standard';
-        await startStandardRecorder(stream, { warm: fromWarm });
+        await startStandardRecorder(stream);
       }
     } else {
-      await startStandardRecorder(stream, { warm: fromWarm });
+      await startStandardRecorder(stream);
     }
 
-    // Capture is running. With a cold mic, keep the short settle window that
-    // covers the OS audio-route/startup gap that clipped the first words. With
-    // a warm mic the route is already open, so the settle is unnecessary and
-    // only delays "Recording…".
-    if (!fromWarm) {
-      await new Promise(r => setTimeout(r, CAPTURE_SETTLE_MS));
-    }
+    // Capture is running, but the first visible milestone is still "Opening
+    // mic…". Keep capturing for a short settle window before inviting speech:
+    // this covers the OS audio-route/startup gap that clipped the first words,
+    // and anything spoken during the window is included in the recording.
+    await new Promise(r => setTimeout(r, CAPTURE_SETTLE_MS));
     if (cancelled || !stream.getAudioTracks().some(t => t.readyState === 'live')) {
       throw new Error('microphone disconnected');
     }
@@ -3674,17 +3403,10 @@ async function startRecording() {
     if (recorderRunning) { cancelled = true; silentCancel = true; }
     try { if (recorderRunning) mediaRecorder.stop(); } catch {}
     resetStreamCaptureState();
-    teardownStreamAudio({
-      keepStream: !!(warmMic && !warmMic.releasePending && warmMic.stream === stream)
-    });
+    teardownStreamAudio();
     clearLimitCheck();
-    if (source) { try { source.disconnect(); } catch {} source = null; }
-    analyser = null;
-    if (!warmMic || warmMic.stream !== stream) {
-      try { stream.getTracks().forEach(t => t.stop()); } catch {}
-      if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
-    }
-    maybeReleaseWarmMicAfterTake();
+    stream.getTracks().forEach(t => t.stop());
+    if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
     resetButton();
     setStatus('Could not start recording — ' + e.message, 'error');
     setTimeout(() => setStatus('Ready'), 4000);
@@ -3810,7 +3532,7 @@ function floatToPcm16(samples) {
 }
 
 function streamSendPcm(samples) {
-  if (!samples || !samples.length || !streamSession) return;
+  if (!samples || !samples.length) return;
   const frame = floatToPcm16(samples);
   if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
   if (streamReady) streamSocket.send(frame);
@@ -3899,7 +3621,7 @@ async function openStreamSocket(session) {
   streamSocket = ws;
 }
 
-function teardownStreamAudio({ keepStream = false } = {}) {
+function teardownStreamAudio() {
   if (streamScriptNode) { try { streamScriptNode.disconnect(); } catch {} streamScriptNode = null; }
   if (streamWorkletNode) {
     try { streamWorkletNode.port.close(); } catch {}
@@ -3907,7 +3629,7 @@ function teardownStreamAudio({ keepStream = false } = {}) {
     streamWorkletNode = null;
   }
   if (streamMediaStream) {
-    if (!keepStream) streamMediaStream.getTracks().forEach(t => t.stop());
+    streamMediaStream.getTracks().forEach(t => t.stop());
     streamMediaStream = null;
   }
 }
@@ -4135,15 +3857,8 @@ async function stopStreamingRecording() {
     toggleBtn.classList.remove('recording');
     isPaused = false;
     pauseBtn.style.display = 'none';
-    const takeStream = streamMediaStream;
-    const keepWarm = !!warmMic && !warmMic.releasePending && warmMic.stream === takeStream;
-    teardownStreamAudio({ keepStream: keepWarm });
-    if (source) { try { source.disconnect(); } catch {} source = null; }
-    analyser = null;
-    if (!keepWarm && audioContext) {
-      try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); }
-      audioContext = null;
-    }
+    teardownStreamAudio();
+    if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
     await finalizeStreamLedger();
 
     setStatusProcessing('Finishing transcription…');
@@ -4271,14 +3986,6 @@ async function stopStreamingRecording() {
     streamPendingAudio = [];
     streamReady = false;
     streamSocket = null;
-    // Safety net: a failed stop must never leave a non-warm take's mic open.
-    if (!warmMic) {
-      try { teardownStreamAudio(); } catch {}
-      if (source) { try { source.disconnect(); } catch {} source = null; }
-      analyser = null;
-      if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
-    }
-    maybeReleaseWarmMicAfterTake();
   }
 }
 
@@ -4299,15 +4006,8 @@ async function cancelStreamingRecording() {
   toggleBtn.classList.remove('recording');
   isPaused = false;
   pauseBtn.style.display = 'none';
-  const takeStream = streamMediaStream;
-  const keepWarm = !!warmMic && !warmMic.releasePending && warmMic.stream === takeStream;
-  teardownStreamAudio({ keepStream: keepWarm });
-  if (source) { try { source.disconnect(); } catch {} source = null; }
-  analyser = null;
-  if (!keepWarm && audioContext) {
-    try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); }
-    audioContext = null;
-  }
+  teardownStreamAudio();
+  if (audioContext) { try { await audioContext.close(); } catch (e) { console.error('AudioContext close error:', e); } audioContext = null; }
   cancelBtn.style.display = 'none';
   document.querySelector('.action-btns').style.display = '';
   if (streamLedger) { await streamLedger.discard(); streamLedger = null; }
@@ -4316,7 +4016,6 @@ async function cancelStreamingRecording() {
   await clearInMemoryAudioBackup();
   hideRecoveryRow();
   resetButton();
-  maybeReleaseWarmMicAfterTake();
   if (!silentCancel) { setStatus('Cancelled', 'error'); setTimeout(() => setStatus('Ready'), 1200); }
   silentCancel = false;
 }
@@ -4566,10 +4265,10 @@ document.addEventListener('keydown', e => {
       toggleOriginalView();
     }
   }
-  // Warm mic toggle — 'M' for Mic
+  // Theme toggle (light/dark) — 'M' for Mode/Moon
   if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    toggleWarmMic();
+    toggleTheme();
   }
   // Tab navigation
   if (e.key === 'd' && !e.ctrlKey && !e.metaKey) {
@@ -4625,7 +4324,6 @@ document.addEventListener('visibilitychange', () => {
 // Last-chance flush on page teardown. Up to one 250 ms block can still be lost
 // if the OS kills the page without running this; that is bounded and reported.
 window.addEventListener('pagehide', () => {
-  releaseWarmMic({ force: true, message: '' });
   if (!isRecording) return;
   try {
     if (recordingCaptureMode === 'stream') {
@@ -4721,7 +4419,6 @@ loadPrompts();
 refreshActiveProfile();
 loadGlossaryFromServer();
 initHistory();
-syncWarmMicUI();
 checkRecoveryOnLoad();
 updateOnlineStatus();
 drawIdleLine();
@@ -4741,7 +4438,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.5.1'; // keep in sync with package.json at release time
+const APP_VERSION = '7.5.2'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).
