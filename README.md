@@ -4,6 +4,15 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.5.0 — 15-minute warm mic
+
+- **New Mic toggle.** A `Mic` chip sits beside Auto-clean / Live / Append. It is off by default. Turning it on opens the microphone and keeps it warm for **15 minutes**, with a visible countdown (`Mic 15m` → `Mic 59s`). The duration is fixed; there is no minutes setting.
+- **Only recording-session audio is used.** While merely warm, the app holds only the MediaStream and AudioContext. It does not create a recorder, worklet, analyser graph, ledger, backup, upload, cleanup request, stream token or provider socket. Those exist only between Record and Stop. Warm-idle audio cannot be sent.
+- **Normal recording is unchanged.** With Mic off, every take opens/closes the mic as before and no timer starts. With Mic on, Stop leaves the mic warm and the countdown continues.
+- **Mid-take promotion.** Pressing `M` during a normal take keeps the current stream, starts the 15-minute countdown from that moment, and keeps the mic on after Stop. Expiry or manual off during a take releases only after the take ends.
+- **Shortcut change.** `M` now toggles the warm mic. The old `M` theme shortcut is removed; theme remains on the header button. The shortcuts popover is updated.
+- **Desktop-first behaviour.** Warm mic stays across hidden tabs for the full 15 minutes, then releases. It also releases on manual off, page close, auth redirect, or a dead device track (temporary mutes are reported but keep the warm state). macOS shows the orange mic indicator for as long as the warm stream is open.
+
 ## What's New in v7.4.0 — Gemini Live, cleanup pricing, cleaner Live chip
 
 - **Gemini Transcribe now has Live.** The Gemini Transcribe provider gets the same Live toggle using `gemini-3.5-transcribe-live` over Google's bidirectional Live WebSocket (16 kHz PCM in, interim + finalized input transcripts out, `audioStreamEnd` on stop). Batch fallback stays `gemini-3.5-transcribe`. Google caps a Live transcription session at 10 minutes; the recorder's normal 5-minute limit (extendable) sits inside that.
@@ -455,7 +464,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
 | `1–5` | Switch cleanup prompt by position |
-| `M` | Toggle light/dark theme |
+| `M` | Warm mic on/off |
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |
