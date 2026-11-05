@@ -273,6 +273,11 @@ async function enableWarmMic() {
     if (context.state === 'suspended' || context.state === 'interrupted') {
       try { await context.resume(); } catch {}
     }
+    // Register the capture worklet on the context we will reuse, so the first
+    // warm streaming take does not pay module loading/compilation.
+    if (context.audioWorklet) {
+      try { await context.audioWorklet.addModule('/live-capture-worklet.js'); } catch {}
+    }
     warmMic = {
       stream,
       context,
@@ -3311,7 +3316,7 @@ async function transcribeAudioBlob(audioBlob) {
 // Standard (non-live) recorder. Starts a 1s-timeslice recording and resolves
 // only once real audio has arrived — this is what lets the UI truthfully say
 // "recording".
-function startStandardRecorder(stream) {
+function startStandardRecorder(stream, { warm = false } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
@@ -3348,6 +3353,10 @@ function startStandardRecorder(stream) {
       // arrives in ~250ms instead of ~1s. Later chunks cost nothing extra —
       // backup already flushes per chunk with tiny blobs.
       recorder.start(250);
+      // With a warm stream the track is already live, so don't make the user
+      // wait for the first 250 ms timeslice just to confirm what we already
+      // know. The recorder is running; data still arrives on the same timeslice.
+      if (warm) setTimeout(ok, 0);
     } catch (err) {
       fail(err);
     }
@@ -3547,7 +3556,6 @@ async function startRecording() {
 
   let stream = null;
   let fromWarm = false;
-  setStatus('Opening mic…');
 
   // Reuse the warm stream when it is genuinely usable. If it went mute/ended
   // (another app grabbed the mic, device slept), try one fresh stream and adopt
@@ -3570,6 +3578,9 @@ async function startRecording() {
   if (stream) {
     try { stream.getAudioTracks().forEach(t => { t.enabled = true; }); } catch {}
   }
+
+  // Don't say "Opening mic…" when the warm stream is already open.
+  setStatus(fromWarm ? 'Starting recording…' : 'Opening mic…');
 
   if (!stream) {
     try {
@@ -3614,17 +3625,19 @@ async function startRecording() {
         console.warn('Live streaming unavailable — using Standard mode:', streamErr.message);
         resetStreamCaptureState();
         recordingCaptureMode = 'standard';
-        await startStandardRecorder(stream);
+        await startStandardRecorder(stream, { warm: fromWarm });
       }
     } else {
-      await startStandardRecorder(stream);
+      await startStandardRecorder(stream, { warm: fromWarm });
     }
 
-    // Capture is running, but the first visible milestone is still "Opening
-    // mic…". Keep capturing for a short settle window before inviting speech:
-    // this covers the OS audio-route/startup gap that clipped the first words,
-    // and anything spoken during the window is included in the recording.
-    await new Promise(r => setTimeout(r, CAPTURE_SETTLE_MS));
+    // Capture is running. With a cold mic, keep the short settle window that
+    // covers the OS audio-route/startup gap that clipped the first words. With
+    // a warm mic the route is already open, so the settle is unnecessary and
+    // only delays "Recording…".
+    if (!fromWarm) {
+      await new Promise(r => setTimeout(r, CAPTURE_SETTLE_MS));
+    }
     if (cancelled || !stream.getAudioTracks().some(t => t.readyState === 'live')) {
       throw new Error('microphone disconnected');
     }
@@ -4728,7 +4741,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.5.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.5.1'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

@@ -4,6 +4,13 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.5.1 — warm-mic start is actually faster
+
+- **No false "Opening mic…" wait.** When the warm stream is reused, the status now says `Starting recording…` instead of `Opening mic…`.
+- **Warm takes skip the cold-start padding.** The fixed 400 ms settle is only for a cold mic; a warm take skips it. Standard-mode warm takes also stop waiting for the first 250 ms MediaRecorder chunk, because the track is already live. The recorder still runs and its first chunk still flushes to the rolling backup normally.
+- **Worklet preloaded on the warm context.** Enabling the warm mic now registers `live-capture-worklet.js` on that same AudioContext, so the first warm streaming take does not pay module loading.
+- Cold recording behaviour is unchanged.
+
 ## What's New in v7.5.0 — 15-minute warm mic
 
 - **New Mic toggle.** A `Mic` chip sits beside Auto-clean / Live / Append. It is off by default. Turning it on opens the microphone and keeps it warm for **15 minutes**, with a visible countdown (`Mic 15m` → `Mic 59s`). The duration is fixed; there is no minutes setting.
