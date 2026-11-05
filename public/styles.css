@@ -976,6 +976,8 @@ textarea { min-height: 200px; max-height: 400px; resize: none; overflow-y: auto;
 .seg-chip:has(input:checked) .seg-dot { background: var(--accent-contrast); }
 .seg-chip:has(input:disabled) { cursor: default; }
 .seg-chip.is-locked-on { cursor: default; }
+#micChip { min-width: 74px; justify-content: center; }
+#micLabel { font-variant-numeric: tabular-nums; }
 .seg-chip:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .prompt-pill {
   display: inline-flex; align-items: center;
@@ -1161,6 +1163,7 @@ input.input, select.input, .secret-row .input { height: var(--control-height); }
 
 @media (max-width: 600px) {
   .seg-chip { padding: 5px 8px; font-size: 0.66rem; }
+  #micChip { min-width: 64px; }
   .profile-row { gap: 8px; }
   .profile-row .live-switch { padding: 0; }
   .profile-row .live-switch-text { display: none; }

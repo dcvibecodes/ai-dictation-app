@@ -4,6 +4,12 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.6.0 — warm mic restored (without the 7.5.1 fast-start changes)
+
+- **Warm mic is back.** The `Mic` chip returns beside Auto-clean / Live / Append. It is off by default, opens the microphone, and keeps it warm for **15 minutes** with a visible countdown. `M` toggles it; the theme shortcut is removed again (theme stays on the header button). Warm idle still holds only the MediaStream + AudioContext; no recorder, worklet, ledger, upload or provider socket until Record.
+- **The v7.5.1 fast-start experiment is deliberately not included.** Warm takes still wait for the first real audio chunk and keep the 400 ms settle before showing `Recording…`. That padding is what protects the first words; the 7.5.1 attempt to skip it clipped the first 2–3 words. Worklet preloading is also not added.
+- **Cross-device activation fix retained.** Clicking a model marked Active still re-checks the server, and Settings still refreshes on window focus, so the Windows/Gemini stale-badge issue stays fixed.
+
 ## What's New in v7.5.3 — cross-device active-model click fix
 
 - **Clicking a model marked “Active” now re-checks the server.** The active voice/cleanup model is shared across devices. If another phone or browser switches models while this Settings view stays open, the local Active badge can go stale; clicking that stale-active card used to do nothing. Activation is now idempotent and always sent to the server, so the click takes effect and the badge corrects itself.
@@ -466,7 +472,7 @@ Works on desktop and mobile. Ideal for work computers where you can't install so
 | `A` | Toggle append mode |
 | `T` | Toggle auto-clean |
 | `1–5` | Switch cleanup prompt by position |
-| `M` | Toggle light/dark theme |
+| `M` | Warm mic on/off |
 | `D` | Dictate tab |
 | `H` | History tab |
 | `S` | Settings tab |

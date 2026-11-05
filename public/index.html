@@ -94,6 +94,11 @@
             <span class="seg-dot" aria-hidden="true"></span>
             <span>Live</span>
           </label>
+          <label class="seg-chip" id="micChip" title="Warm mic off (M)">
+            <input type="checkbox" id="micToggle">
+            <span class="seg-dot" aria-hidden="true"></span>
+            <span id="micLabel">Mic</span>
+          </label>
           <label class="seg-chip" title="Add to the current transcript">
             <input type="checkbox" id="appendToggle">
             <span class="seg-dot" aria-hidden="true"></span>
@@ -372,8 +377,8 @@
       <div class="shortcut-item"><kbd>U</kbd><span>Upload audio file</span></div>
       <div class="shortcut-item"><kbd>A</kbd><span>Toggle append</span></div>
       <div class="shortcut-item"><kbd>T</kbd><span>Toggle auto-clean</span></div>
+      <div class="shortcut-item"><kbd>M</kbd><span>Warm mic on/off</span></div>
       <div class="shortcut-item"><kbd>1–5</kbd><span>Switch prompt</span></div>
-      <div class="shortcut-item"><kbd>M</kbd><span>Toggle light/dark theme</span></div>
       <div class="shortcut-item"><kbd>D</kbd><span>Dictate tab</span></div>
       <div class="shortcut-item"><kbd>H</kbd><span>History tab</span></div>
       <div class="shortcut-item"><kbd>S</kbd><span>Settings tab</span></div>
@@ -384,6 +389,7 @@
   <script src="lib/audio-ledger.js?v=1"></script>
   <script src="lib/corrections.js?v=2"></script>
   <script src="lib/profiles-ui.js?v=2"></script>
-  <script src="script.js?v=52"></script>
+  <script src="lib/warm-mic.js?v=1"></script>
+  <script src="script.js?v=54"></script>
 </body>
 </html>
