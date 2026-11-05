@@ -151,3 +151,47 @@ test('fallback only resolves when explicitly configured', () => {
   settings.FALLBACK_TRANSCRIPTION_PROFILE = 'b';
   assert.equal(providers.getFallbackProfile(settings).provider, 'groq');
 });
+
+test('live presets: streaming capability and declared batch fallbacks', () => {
+  const cases = [
+    ['assemblyai_stream', 'assemblyai-stream', 'assemblyai', 'default'],
+    ['elevenlabs_stream', 'elevenlabs-stream', 'elevenlabs', 'scribe_v2'],
+    ['mistral_stream', 'mistral-stream', 'whisper', 'voxtral-mini-latest']
+  ];
+  for (const [provider, protocol, batchProtocol, batchModel] of cases) {
+    const preset = providers.TRANSCRIPTION_PROVIDERS[provider];
+    assert.ok(preset, `missing ${provider}`);
+    assert.equal(preset.protocol, protocol);
+    assert.equal(providers.isStreamingProtocol(preset.protocol), true);
+    assert.equal(preset.batchFallback.protocol, batchProtocol);
+
+    const resolved = providers.resolveProfile({
+      id: 'p', provider, model: preset.models[0], apiKey: 'key'
+    });
+    assert.equal(resolved.protocol, protocol);
+    assert.equal(resolved.supportsStreaming, true);
+
+    const batch = providers.resolveBatchProfile(resolved);
+    assert.equal(batch.protocol, batchProtocol);
+    assert.equal(batch.model, batchModel);
+    assert.notEqual(batch.model, preset.models[0], 'stream model must not reach batch');
+  }
+  assert.equal(
+    providers.resolveBatchProfile(providers.resolveProfile({
+      id: 'm', provider: 'mistral_stream', model: 'voxtral-mini-transcribe-realtime-3', apiKey: 'key'
+    })).baseUrl,
+    'https://api.mistral.ai/v1'
+  );
+});
+
+test('live presets: public profile exposes capability + fallback, never the key', () => {
+  const profile = providers.resolveProfile({
+    id: 'p', provider: 'assemblyai_stream', model: 'universal-streaming-english', apiKey: 'secret-key'
+  });
+  const pub = providers.publicProfile(profile, 'transcription', 'p');
+  assert.equal(pub.supportsStreaming, true);
+  assert.deepEqual(pub.batchFallback, {
+    protocol: 'assemblyai', model: 'default', providerName: 'AssemblyAI'
+  });
+  assert.equal(JSON.stringify(pub).includes('secret-key'), false);
+});

@@ -802,14 +802,15 @@ app.get('/api/active-profile', requireOwner, (req, res) => {
     provider: profile.provider,
     protocol: profile.protocol,
     model: profile.model,
-    supportsStreaming: profile.protocol === 'cartesia'
+    supportsStreaming: !!profile.supportsStreaming
   } : { protocol: 'none', supportsStreaming: false });
 });
 
-// --- Live streaming (Cartesia) ---
+// --- Live streaming ---
 // Short-lived, single-use token so the WebSocket upgrade can be authenticated
 // without parsing signed cookies by hand.
 const STREAM_TOKEN_TTL_MS = 60_000;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
 const streamTokens = new Map();
 
 function issueStreamToken() {
@@ -831,10 +832,10 @@ function consumeStreamToken(token) {
 
 app.post('/api/stream-token', requireOwner, (req, res) => {
   const profile = getActiveTranscriptionProfile();
-  if (!profile || profile.protocol !== 'cartesia') {
+  if (!profile || !providers.isStreamingProtocol(profile.protocol)) {
     return res.status(400).json({ error: 'The active voice model does not support live streaming.' });
   }
-  res.json({ token: issueStreamToken(), expiresInMs: STREAM_TOKEN_TTL_MS });
+  res.json({ token: issueStreamToken(), expiresInMs: STREAM_TOKEN_TTL_MS, protocol: profile.protocol });
 });
 
 function cartesiaStreamUrl(profile) {
@@ -847,6 +848,68 @@ function cartesiaStreamUrl(profile) {
   return `wss://api.cartesia.ai/stt/turns/websocket?${params.toString()}`;
 }
 
+function assemblyAIStreamUrl(profile) {
+  const params = new URLSearchParams({
+    sample_rate: '16000',
+    speech_model: profile.model || 'universal-streaming-english'
+  });
+  return `wss://streaming.assemblyai.com/v3/ws?${params.toString()}`;
+}
+
+function elevenLabsStreamUrl(profile) {
+  const params = new URLSearchParams({
+    model_id: profile.model || 'scribe_v2_realtime',
+    audio_format: 'pcm_16000'
+  });
+  return `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
+}
+
+function mistralStreamUrl(profile) {
+  const params = new URLSearchParams({
+    model: profile.model || 'voxtral-mini-transcribe-realtime-3'
+  });
+  return `wss://api.mistral.ai/v1/audio/transcriptions/realtime?${params.toString()}`;
+}
+
+// Per-protocol connection details: URL, auth header and how audio is framed.
+function streamConnection(profile) {
+  switch (profile.protocol) {
+    case 'cartesia':
+      return { url: cartesiaStreamUrl(profile), headers: { 'X-API-Key': profile.apiKey }, audio: 'binary' };
+    case 'assemblyai-stream':
+      return { url: assemblyAIStreamUrl(profile), headers: { Authorization: profile.apiKey }, audio: 'binary' };
+    case 'elevenlabs-stream':
+      return { url: elevenLabsStreamUrl(profile), headers: { 'xi-api-key': profile.apiKey }, audio: 'elevenlabs' };
+    case 'mistral-stream':
+      return { url: mistralStreamUrl(profile), headers: { Authorization: `Bearer ${profile.apiKey}` }, audio: 'mistral' };
+    default:
+      return null;
+  }
+}
+
+function isStreamReadyEvent(protocol, data) {
+  if (!data) return false;
+  if (protocol === 'assemblyai-stream') return data.type === 'Begin';
+  if (protocol === 'elevenlabs-stream') return (data.message_type || data.type) === 'session_started';
+  if (protocol === 'mistral-stream') return data.type === 'session.updated';
+  return false;
+}
+
+function mistralSessionUpdate() {
+  const session = {
+    audio_format: { encoding: 'pcm_s16le', sample_rate: 24000 },
+    target_streaming_delay_ms: 480
+  };
+  const language = getEffectiveSetting('TRANSCRIPTION_LANGUAGE');
+  if (/^[a-z]{2}$/i.test(language)) session.language = language.toLowerCase();
+  const hint = getEffectiveSetting('TRANSCRIPTION_PROMPT');
+  if (hint) {
+    const bias = String(hint).split(',').map(s => s.trim()).filter(Boolean).slice(0, 100);
+    if (bias.length) session.context_bias = bias;
+  }
+  return { type: 'session.update', session };
+}
+
 const wss = new WebSocketServer({ noServer: true });
 
 wss.on('connection', (client, req) => {
@@ -856,49 +919,125 @@ wss.on('connection', (client, req) => {
     return;
   }
   const profile = getActiveTranscriptionProfile();
-  if (!profile || profile.protocol !== 'cartesia' || !profile.apiKey) {
+  if (!profile || !providers.isStreamingProtocol(profile.protocol) || !profile.apiKey) {
     client.close(1011, 'No streaming model configured');
     return;
   }
+  const connection = streamConnection(profile);
+  if (!connection) {
+    client.close(1011, 'Unsupported streaming protocol');
+    return;
+  }
+
+  const normalizer = streamLib.createNormalizer(profile.protocol);
+  const resampler = profile.protocol === 'mistral-stream'
+    ? streamLib.createPcmResampler(16000, 24000)
+    : null;
 
   let upstream;
   let upstreamReady = false;
   const pendingAudio = [];
   let closed = false;
   let clientGone = false;
+  let lastActivity = Date.now();
+  let stopRequested = false;
+  let idleTimer = null;
 
   const shutdown = (code, reason) => {
     if (closed) return;
     closed = true;
+    if (idleTimer) clearInterval(idleTimer);
     try { if (upstream) upstream.close(); } catch {}
     try { if (client.readyState === WebSocket.OPEN) client.close(code || 1000, reason); } catch {}
   };
 
+  const sendEvent = (event) => {
+    if (!event || event.type === 'other') return;
+    try { client.send(JSON.stringify(event)); } catch {}
+    if (event.type === 'done') shutdown(1000);
+  };
+
+  const sendAudioUpstream = (frame) => {
+    if (!upstream || upstream.readyState !== WebSocket.OPEN) return;
+    if (connection.audio === 'mistral') {
+      const pcm = resampler.process(frame);
+      if (!pcm.length) return;
+      upstream.send(JSON.stringify({ type: 'input_audio.append', audio: pcm.toString('base64') }));
+      return;
+    }
+    if (connection.audio === 'elevenlabs') {
+      upstream.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: frame.toString('base64'),
+        commit: false,
+        sample_rate: 16000
+      }));
+      return;
+    }
+    upstream.send(frame);
+  };
+
+  const markReady = () => {
+    if (upstreamReady || closed) return;
+    upstreamReady = true;
+    for (const frame of pendingAudio.splice(0)) sendAudioUpstream(frame);
+    try { client.send(JSON.stringify({ type: 'ready' })); } catch {}
+    if (stopRequested) sendStop();
+  };
+
+  const sendStop = () => {
+    if (!upstream || upstream.readyState !== WebSocket.OPEN) return;
+    if (!upstreamReady) { stopRequested = true; return; }
+    stopRequested = false;
+    if (profile.protocol === 'assemblyai-stream') {
+      // Terminate makes the server flush in-flight turns, then send Termination.
+      upstream.send(JSON.stringify({ type: 'Terminate' }));
+    } else if (profile.protocol === 'elevenlabs-stream') {
+      const silence = Buffer.alloc(1600 * 2); // 100 ms of 16 kHz silence
+      upstream.send(JSON.stringify({
+        message_type: 'input_audio_chunk',
+        audio_base_64: silence.toString('base64'),
+        commit: true,
+        sample_rate: 16000
+      }));
+    } else if (profile.protocol === 'mistral-stream') {
+      upstream.send(JSON.stringify({ type: 'input_audio.end' }));
+    }
+  };
+
   console.log(`Stream open: ${profile.provider}/${profile.model}`);
   try {
-    upstream = new WebSocket(cartesiaStreamUrl(profile), {
-      headers: { 'X-API-Key': profile.apiKey }
-    });
+    upstream = new WebSocket(connection.url, { headers: connection.headers });
   } catch (err) {
     client.send(JSON.stringify({ type: 'error', error: err.message }));
     return shutdown(1011);
   }
 
   upstream.on('open', () => {
-    upstreamReady = true;
-    for (const frame of pendingAudio.splice(0)) upstream.send(frame);
-    try { client.send(JSON.stringify({ type: 'ready' })); } catch {}
+    // Cartesia starts speaking immediately. The others wait for their session
+    // acknowledgement so audio is never sent into an unconfigured session.
+    if (profile.protocol === 'cartesia') markReady();
   });
 
   upstream.on('message', (raw) => {
-    const event = streamLib.normalizeEvent(raw.toString());
-    if (event.type === 'other') return;
-    try { client.send(JSON.stringify(event)); } catch {}
-    if (event.type === 'done') shutdown(1000);
+    const text = raw.toString();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+
+    if (profile.protocol === 'mistral-stream' && data && data.type === 'session.created') {
+      // Settings must be sent before the first audio chunk.
+      try { upstream.send(JSON.stringify(mistralSessionUpdate())); } catch {}
+      return;
+    }
+
+    const event = normalizer.normalize(text);
+    if (!upstreamReady && isStreamReadyEvent(profile.protocol, data)) markReady();
+    sendEvent(event);
+    if (profile.protocol === 'mistral-stream' && data && data.type === 'session.updated') markReady();
   });
 
   upstream.on('error', (err) => {
-    console.error('Cartesia stream error:', err.message);
+    console.error(`${profile.provider} stream error:`, err.message);
     try { client.send(JSON.stringify({ type: 'error', error: 'Streaming provider connection failed.' })); } catch {}
     shutdown(1011);
   });
@@ -906,6 +1045,8 @@ wss.on('connection', (client, req) => {
   upstream.on('close', (code, reason) => {
     console.log(`Stream upstream closed: ${code} ${reason || ''}`.trim());
     if (!closed) {
+      const pending = normalizer.flush ? normalizer.flush() : null;
+      if (pending && pending.type !== 'other') sendEvent(pending);
       if (!clientGone && code !== 1000) {
         try {
           client.send(JSON.stringify({
@@ -921,15 +1062,28 @@ wss.on('connection', (client, req) => {
 
   client.on('message', (data, isBinary) => {
     if (closed) return;
+    lastActivity = Date.now();
     if (isBinary) {
-      if (upstreamReady && upstream.readyState === WebSocket.OPEN) upstream.send(data);
+      if (upstreamReady) sendAudioUpstream(data);
       else if (pendingAudio.length < 200) pendingAudio.push(data);
       return;
     }
     let message;
     try { message = JSON.parse(data.toString()); } catch { return; }
+    if (message.type === 'stop') { sendStop(); return; }
     if (message.type === 'close') shutdown(1000);
   });
+
+  // Streaming is billed while the socket is open. If the page pauses for a
+  // long time (or disappears without closing), end the session instead of
+  // paying for silence.
+  idleTimer = setInterval(() => {
+    if (closed) return;
+    if (Date.now() - lastActivity < STREAM_IDLE_TIMEOUT_MS) return;
+    try { client.send(JSON.stringify({ type: 'error', error: 'Live session closed after inactivity.' })); } catch {}
+    shutdown(1000, 'Idle');
+  }, 15_000);
+  if (idleTimer.unref) idleTimer.unref();
 
   client.on('close', () => { clientGone = true; shutdown(1000); });
   client.on('error', () => shutdown(1011));
@@ -1154,21 +1308,24 @@ async function transcribeWithGemini(audioPath, mimeType, opts = {}) {
 }
 
 async function transcribeWithProfile(profile, audioPath, mimeType, originalName, opts = {}) {
+  // A streaming profile has no batch model of its own: recorded files always go
+  // through the declared, valid batch fallback.
+  const batchProfile = providers.resolveBatchProfile(profile);
   const common = {
     audioPath,
     mimeType,
-    profile,
+    profile: batchProfile,
     language: getEffectiveSetting('TRANSCRIPTION_LANGUAGE'),
     hint: getEffectiveSetting('TRANSCRIPTION_PROMPT'),
-    timeoutMs: profile.protocol === 'assemblyai' || profile.protocol === 'corti'
+    timeoutMs: batchProfile.protocol === 'assemblyai' || batchProfile.protocol === 'corti'
       ? POLLING_TIMEOUT_MS
       : AI_TIMEOUT_MS
   };
-  switch (profile.protocol) {
+  switch (batchProfile.protocol) {
     case 'whisper':
-      return transcribeWithWhisper(audioPath, mimeType, originalName, { ...opts, profile });
+      return transcribeWithWhisper(audioPath, mimeType, originalName, { ...opts, profile: batchProfile });
     case 'gemini':
-      return transcribeWithGemini(audioPath, mimeType, { ...opts, profile });
+      return transcribeWithGemini(audioPath, mimeType, { ...opts, profile: batchProfile });
     case 'gemini-transcribe':
       return adapters.transcribeWithGeminiTranscribe(common);
     case 'elevenlabs': return adapters.transcribeWithElevenLabs(common);
@@ -1178,7 +1335,7 @@ async function transcribeWithProfile(profile, audioPath, mimeType, originalName,
     case 'corti':      return adapters.transcribeWithCorti(common);
     case 'cartesia':   return adapters.transcribeWithCartesia(common);
     default:
-      throw new Error(`Unsupported transcription protocol: ${profile.protocol}`);
+      throw new Error(`Unsupported transcription protocol: ${batchProfile.protocol}`);
   }
 }
 
@@ -1247,6 +1404,42 @@ function probeCartesiaStream(profile) {
   });
 }
 
+function probeStreamProfile(profile) {
+  return new Promise((resolve, reject) => {
+    const connection = streamConnection(profile);
+    if (!connection) return reject(new Error('Unsupported streaming protocol.'));
+    const ws = new WebSocket(connection.url, { headers: connection.headers });
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      if (err) reject(err); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('Streaming probe timed out.')), 10_000);
+    ws.on('message', (raw) => {
+      let data;
+      try { data = JSON.parse(raw.toString()); } catch { return; }
+      if (profile.protocol === 'mistral-stream' && data.type === 'session.created') {
+        try { ws.send(JSON.stringify(mistralSessionUpdate())); } catch {}
+        return;
+      }
+      if (data.error || data.type === 'Error' || data.message_type === 'error') {
+        finish(new Error(String(data.error || 'Streaming provider rejected the connection.').slice(0, 200)));
+        return;
+      }
+      if (isStreamReadyEvent(profile.protocol, data)) finish();
+    });
+    ws.on('error', (err) => finish(new Error('Streaming connection failed: ' + err.message)));
+    ws.on('close', (code, reason) => {
+      if (code !== 1000 && code !== 1005) {
+        finish(new Error(`Streaming connection closed (${code}) ${reason || ''}`.trim()));
+      }
+    });
+  });
+}
+
 async function probeProfile(profile) {
   const started = Date.now();
   const protocol = profile.protocol;
@@ -1305,6 +1498,8 @@ async function probeProfile(profile) {
     // Validate the streaming path itself (key, model, API version), not just
     // the REST voices endpoint.
     await probeCartesiaStream(profile);
+  } else if (providers.isStreamingProtocol(protocol)) {
+    await probeStreamProfile(profile);
   }
   return Date.now() - started;
 }

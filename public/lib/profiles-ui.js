@@ -21,7 +21,7 @@
   function descriptor(provider) {
     if (!provider) return '';
     if (provider.id === 'custom') return 'OpenAI-compatible URL';
-    if (provider.protocol === 'cartesia') return 'Streaming · ink-2';
+    if (provider.supportsStreaming || provider.protocol === 'cartesia') return 'Live streaming';
     if (provider.tier >= 1) return 'Built-in adapter';
     return 'Key + model only';
   }

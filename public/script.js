@@ -32,7 +32,7 @@ const AUTH_FRESH_MS = 60000;      // a recent OK means Record can skip the netwo
 const AUTH_REFRESH_INTERVAL_MS = AuthRefreshLib ? AuthRefreshLib.DEFAULT_REFRESH_INTERVAL_MS : 45000;
 let audioPrewarmed = false;       // true once the idle pre-warm has run
 
-// --- Live streaming mode (Cartesia) ---
+// --- Live streaming mode ---
 // There is no user toggle: the mode is chosen automatically from the active
 // voice model's capability. A streaming model transcribes while you speak;
 // every other model records first and transcribes once at Stop (more context,
@@ -1691,7 +1691,12 @@ function renderProfiles(kind) {
     }
     const meta = document.createElement('span');
     meta.className = 'profile-meta';
-    meta.textContent = [profile.model || 'default model', profile.maskedKey || 'no key'].join(' · ');
+    const parts = [profile.model || 'default model', profile.maskedKey || 'no key'];
+    if (profile.supportsStreaming && profile.batchFallback) {
+      parts.push(`Live · recorded files: ${profile.batchFallback.providerName} ${profile.batchFallback.model}`);
+    }
+    meta.textContent = parts.join(' · ');
+    meta.title = meta.textContent;
     body.append(label, meta);
 
     const edit = document.createElement('button');
@@ -3242,7 +3247,7 @@ function stopSilenceWatch() {
 }
 
 
-// ── Live streaming helpers (Cartesia) ──
+// ── Live streaming helpers ──
 // Encode a mono Float32Array (values -1..1) into a WAV Blob. WAV is accepted by
 // transcription APIs, unlike short webm chunks.
 function encodeWav(samples, sampleRate) {
@@ -3296,7 +3301,7 @@ function newSessionId() {
   return 's-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-// ── Live streaming helpers (Cartesia) ──
+// ── Live streaming helpers ──
 const STREAM_DRAIN_MS = 500;
 const STREAM_FINALIZE_MS = 2500;
 
@@ -3361,6 +3366,10 @@ function handleStreamEvent(raw) {
     streamReady = true;
     for (const frame of streamPendingAudio.splice(0)) {
       try { streamSocket.send(frame); } catch {}
+    }
+    if (session.stopPending) {
+      session.stopPending = false;
+      try { streamSocket.send(JSON.stringify({ type: 'stop' })); } catch {}
     }
     return;
   }
@@ -3438,6 +3447,7 @@ function startStreamingCapture(mediaStream) {
       cancelled: false,
       streamError: '',
       streamDone: false,
+      stopPending: false,
       resolveDone: null,
       donePromise: null,
       finalizeResolve: null,
@@ -3448,8 +3458,8 @@ function startStreamingCapture(mediaStream) {
     };
     streamSession = session;
     streamMediaStream = mediaStream;
-    // Ink does not space-join turn transcripts, so concatenate exactly what the
-    // provider sends. Partials replace the in-flight text; finals accumulate.
+    // Concatenate exactly what the server sends. Partials replace the in-flight
+    // text; finals accumulate (the server supplies any separator).
     streamAssembler = {
       finalText: '',
       partial: '',
@@ -3643,8 +3653,14 @@ async function stopStreamingRecording() {
     if (!session.streamError && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
       // The auto-finalization endpoint has no "finalize" command. A short burst
       // of silence lets its VAD close the current turn; wait for turn.end, and
-      // fall back to the last partial if it never arrives.
+      // fall back to the last partial if it never arrives. Providers with an
+      // explicit end message (Mistral) or Terminate (AssemblyAI) get it here.
       streamSendPcm(new Float32Array(TARGET_SAMPLE_RATE * 0.5));
+      if (streamReady) {
+        try { streamSocket.send(JSON.stringify({ type: 'stop' })); } catch {}
+      } else {
+        session.stopPending = true;
+      }
       await Promise.race([
         session.finalizePromise || Promise.resolve(),
         new Promise(r => setTimeout(r, STREAM_FINALIZE_MS))
@@ -4210,7 +4226,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.1.9'; // keep in sync with package.json at release time
+const APP_VERSION = '7.2.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

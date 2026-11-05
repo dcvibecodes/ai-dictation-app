@@ -233,3 +233,23 @@ test('Cartesia: handshake params, header, frames, one finalize, final text', asy
   ws.emit('message', { data: JSON.stringify({ type: 'transcript', text: 'hello', is_final: true }) });
   assert.equal(await promise, 'hello');
 });
+
+test('batch fallback: a live ElevenLabs profile sends the batch model', async () => {
+  const providers = require('../lib/providers');
+  const resolved = providers.resolveProfile({
+    id: 'live', provider: 'elevenlabs_stream', model: 'scribe_v2_realtime', apiKey: 'xi-123'
+  });
+  const batch = providers.resolveBatchProfile(resolved);
+  const audioPath = tmpAudio();
+  let seen;
+  const fetchImpl = async (url, init) => {
+    seen = { url, init };
+    return jsonResponse({ text: 'recorded file text' });
+  };
+  const text = await adapters.transcribeWithElevenLabs({
+    audioPath, mimeType: 'audio/webm', profile: batch, fetchImpl
+  });
+  assert.equal(text, 'recorded file text');
+  assert.equal(seen.init.body.get('model_id'), 'scribe_v2');
+  assert.notEqual(seen.init.body.get('model_id'), 'scribe_v2_realtime');
+});

@@ -4,6 +4,15 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.2.0 — live streaming for AssemblyAI, ElevenLabs and Mistral
+
+- **Live transcription for three more providers.** Add and activate one of the new **Live** presets in Settings: **AssemblyAI (Live)** (`universal-streaming-english`, `universal-streaming-multilingual`, `universal-3-6-pro`), **ElevenLabs (Live)** (`scribe_v2_realtime`) or **Mistral (Live)** (`voxtral-mini-transcribe-realtime-3`). Existing batch presets are unchanged; the new presets are separate entries.
+- **Same Live chip, same pipeline.** When a Live preset is active, the Live badge appears, interim text updates while speaking, and the final text still goes through the normal cleanup/copy/history flow. Cartesia behaviour is unchanged.
+- **Recorded files keep working.** Each Live preset declares a valid batch fallback (`AssemblyAI · default`, `ElevenLabs · scribe_v2`, `Mistral · voxtral-mini-latest`), shown in the Settings row. A recorded file is only transcribed when you start one; nothing runs silently.
+- **Mistral audio handling.** The 16 kHz capture is resampled to 24 kHz on the server (matching the documented session format) and wrapped in Mistral's `input_audio` messages. AssemblyAI and ElevenLabs use their documented framing and auth headers.
+- **Finals are never lost or duplicated.** AssemblyAI turns are final on `end_of_turn` and de-duplicated by `turn_order`; ElevenLabs uses partial/committed events; Mistral appends deltas and treats `transcription.done` as the single final. Idle streaming sessions close automatically, and ending a take sends the provider's correct stop signal (`Terminate`, commit, or `input_audio.end`).
+- **History controls tightened.** The retention selector now sits in the History header beside Clear All at the same compact height, with no extra explanatory row.
+
 ## What's New in v7.1.9 — server-side history with original + cleaned transcripts
 
 - **History is shared across browsers.** Sessions are saved in `data/history.json` on the server instead of browser localStorage, so the same list appears everywhere you sign in. Existing browser-only history is uploaded once on first load.
@@ -548,7 +557,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 | Auth | bcryptjs, cookie-parser, HMAC sessions |
 | AI | Any compatible speech-to-text + chat API |
 | Audio | Web Audio API (AudioWorklet live capture), MediaRecorder |
-| Streaming | Server-Sent Events (cleanup) + WebSocket proxy (`ws`) to Cartesia ink-2 |
+| Streaming | Server-Sent Events (cleanup) + WebSocket proxy (`ws`) to Cartesia, AssemblyAI, ElevenLabs or Mistral |
 
 ---
 
@@ -567,7 +576,7 @@ The server exposes `POST /cleanup-stream` which uses Server-Sent Events to forwa
 - Only the latest segment is sent for cleanup — previous segments are never re-processed
 - Transcription auto-retries twice (1s, then 2s backoff) on transient errors (5xx / 429 / network glitch) before showing the recovery bar
 - Recording auto-stops after 5 minutes to avoid accidentally running forever. One minute before the deadline a warning appears with an **Extend +5 min** button — each click adds 5 more minutes, usable as many times as needed. If not extended, the recording stops automatically and transcribes normally.
-- **Live streaming is automatic** — when the active voice model is a streaming model (Cartesia ink-2), the transcript fills in as you speak over a continuous WebSocket; the full session is still backed up locally as a WAV. Every other model records first and transcribes once at Stop. The Live segment of the Auto-clean / Live / Append chip is locked to reflect the active model.
+- **Live streaming is automatic** — when the active voice model is a streaming model (Cartesia, AssemblyAI Live, ElevenLabs Live or Mistral Live), the transcript fills in as you speak over a continuous WebSocket; the full session is still backed up locally as a WAV. Every other model records first and transcribes once at Stop. Live presets also declare which batch model handles recorded files. The Live segment of the Auto-clean / Live / Append chip is locked to reflect the active model.
 - **Interrupted recordings are recoverable** — recordings are backed up locally while in progress. If the app is closed or killed mid-recording, open it again and the recovery strip appears with **Retry / Download / Discard**.
 - **Clear during recording cancels the take** (it does not get transcribed back into the document).
 - **Corrections are exact, not fuzzy** — an alias matches the whole phrase, ignoring case, and is replaced with the canonical spelling. Add each mishearing as a separate alias; the vocabulary hint remains the tool for general recognition bias.

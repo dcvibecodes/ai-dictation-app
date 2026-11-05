@@ -128,18 +128,17 @@
     <div class="tab-panel" id="panel-history">
       <div class="tab-panel-header">
         <h2>Session History</h2>
-        <button class="btn btn-ghost btn-sm" id="clearHistoryBtn" onclick="clearHistory()">Clear All</button>
+        <div class="history-actions">
+          <label class="sr-only" for="historyRetention">Keep history for</label>
+          <select id="historyRetention" class="history-retention-select" title="Keep history for" onchange="setHistoryRetention(this.value)">
+            <option value="24h">24 hours</option>
+            <option value="30d" selected>30 days</option>
+            <option value="1y">1 year</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="clearHistoryBtn" onclick="clearHistory()">Clear All</button>
+        </div>
       </div>
-      <div class="history-retention">
-        <label for="historyRetention">Keep history for</label>
-        <select id="historyRetention" class="input" onchange="setHistoryRetention(this.value)">
-          <option value="24h">24 hours</option>
-          <option value="30d" selected>30 days</option>
-          <option value="1y">1 year</option>
-        </select>
-        <span id="historyNotice" class="history-notice" role="status" aria-live="polite"></span>
-      </div>
-      <p class="history-retention-note">Sessions older than the selected period are removed automatically. The maximum is 1 year.</p>
+      <span id="historyNotice" class="history-notice" role="status" aria-live="polite"></span>
       <div id="historyList" class="history-list"></div>
     </div>
 
