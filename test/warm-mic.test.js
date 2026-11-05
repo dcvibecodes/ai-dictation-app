@@ -21,3 +21,13 @@ test('warm mic: remaining time clamps at zero and detects expiry', () => {
   assert.equal(WarmMic.isExpired(1000, 1000), true);
   assert.equal(WarmMic.isExpired('nope', 1000), true);
 });
+
+test('warm mic: the idle deadline never fires during a take', () => {
+  const expiresAt = 60 * 1000;
+  const now = 2 * 60 * 1000;
+  assert.equal(WarmMic.shouldExpire({ expiresAt, now }), true);
+  assert.equal(WarmMic.shouldExpire({ expiresAt, now, isRecording: true }), false);
+  assert.equal(WarmMic.shouldExpire({ expiresAt, now, isStarting: true }), false);
+  assert.equal(WarmMic.shouldExpire({ expiresAt, now, streamStopping: true }), false);
+  assert.equal(WarmMic.shouldExpire({ expiresAt: now + 60 * 1000, now }), false);
+});

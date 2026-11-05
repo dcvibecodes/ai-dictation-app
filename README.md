@@ -4,6 +4,13 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.6.1 — warm mic is an idle timeout
+
+- **The 15 minutes now starts from the last recording.** Enabling warm mic starts the first window; every finished recording resets it to 15 minutes. If you do not record, it releases 15 minutes after you enabled it. Back-to-back takes keep it warm.
+- **A take can never be cut by the timer.** While recording, the timer is ignored entirely: the chip shows `Mic in use`, and the countdown does not expire or mark the mic for release. When the take ends, it resets to `Mic 15m`.
+- **Manual M during a take still releases after that take.** Only an explicit M press sets the release-after-take state.
+- Cold (non-warm) recording is unchanged.
+
 ## What's New in v7.6.0 — warm mic restored (without the 7.5.1 fast-start changes)
 
 - **Warm mic is back.** The `Mic` chip returns beside Auto-clean / Live / Append. It is off by default, opens the microphone, and keeps it warm for **15 minutes** with a visible countdown. `M` toggles it; the theme shortcut is removed again (theme stays on the header button). Warm idle still holds only the MediaStream + AudioContext; no recorder, worklet, ledger, upload or provider socket until Record.

@@ -181,6 +181,9 @@ function syncWarmMicUI() {
   if (warmMic.releasePending) {
     micLabel.textContent = 'Mic off…';
     if (micChip) micChip.title = 'Warm mic releases after this take';
+  } else if (isRecording) {
+    micLabel.textContent = 'Mic in use';
+    if (micChip) micChip.title = 'Warm mic in use — timer restarts when this take ends';
   } else {
     micLabel.textContent = `Mic ${WarmMicLib.formatRemaining(remaining)}`;
     if (micChip) {
@@ -230,11 +233,19 @@ function releaseWarmMic({ force = false, message = 'Warm mic off' } = {}) {
   clearWarmMicState(message);
 }
 
-function maybeReleaseWarmMicAfterTake() {
+function resetWarmMicTimer() {
+  if (!warmMic || warmMic.releasePending) return;
+  warmMic.expiresAt = Date.now() + WarmMicLib.WARM_MIC_MS;
+  syncWarmMicUI();
+}
+
+function maybeReleaseWarmMicAfterTake({ extendIdle = true } = {}) {
   if (!warmMic) return;
   const live = warmMic.stream.getAudioTracks().some(t => t.readyState === 'live');
   if (warmMic.releasePending || !live) {
     clearWarmMicState('Warm mic off');
+  } else if (extendIdle) {
+    resetWarmMicTimer();
   } else {
     syncWarmMicUI();
   }
@@ -244,19 +255,18 @@ function startWarmMicTicker() {
   if (!warmMic || warmMic.tickTimer) return;
   warmMic.tickTimer = setInterval(() => {
     if (!warmMic) return;
-    if (warmMic.releasePending && !isRecording && !isStarting && !streamStopping) {
+    // The idle timer must never expire during a take. The window is reset when
+    // the take ends, so a long recording cannot cut the mic.
+    if (isRecording || isStarting || streamStopping) {
+      syncWarmMicUI();
+      return;
+    }
+    if (warmMic.releasePending) {
       clearWarmMicState('Warm mic off');
       return;
     }
-    if (WarmMicLib.isExpired(warmMic.expiresAt)) {
-      if (warmMic.releasePending) return;
-      if (isRecording || isStarting || streamStopping) {
-        warmMic.releasePending = true;
-        syncWarmMicUI();
-        setStatus('Warm mic will turn off after this take', 'active');
-      } else {
-        clearWarmMicState('Warm mic off after 15 minutes');
-      }
+    if (WarmMicLib.shouldExpire({ expiresAt: warmMic.expiresAt })) {
+      clearWarmMicState('Warm mic off after 15 minutes');
       return;
     }
     syncWarmMicUI();
@@ -3661,6 +3671,7 @@ async function startRecording() {
     cancelBtn.style.display = '';
     document.querySelector('.action-btns').style.display = 'none';
     isRecording = true;
+    syncWarmMicUI();
     setStatus('Recording…', 'active');
     startSilenceWatch();
   } catch (e) {
@@ -3682,7 +3693,7 @@ async function startRecording() {
       try { stream.getTracks().forEach(t => t.stop()); } catch {}
       if (audioContext) { try { await audioContext.close(); } catch {} audioContext = null; }
     }
-    maybeReleaseWarmMicAfterTake();
+    maybeReleaseWarmMicAfterTake({ extendIdle: false });
     resetButton();
     setStatus('Could not start recording — ' + e.message, 'error');
     setTimeout(() => setStatus('Ready'), 4000);
@@ -4334,6 +4345,7 @@ async function cancelRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (warmMic) resetWarmMicTimer();
   stopSilenceWatch();
   if (recordingCaptureMode === 'stream') { await cancelStreamingRecording(); return; }
   cancelled = true;
@@ -4345,6 +4357,7 @@ function stopRecording() {
   // Haptic feedback on stop
   if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   isRecording = false;
+  if (warmMic) resetWarmMicTimer();
   stopSilenceWatch();
   if (recordingCaptureMode === 'stream') { stopStreamingRecording(); return; }
   try { mediaRecorder.stop(); } catch (e) {}
@@ -4739,7 +4752,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.6.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.6.1'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

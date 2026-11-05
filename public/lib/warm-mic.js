@@ -25,5 +25,12 @@
     return !Number.isFinite(value) || value <= now;
   }
 
-  return { WARM_MIC_MS, remainingMs, formatRemaining, isExpired };
+  // The idle deadline must never fire while a take is starting, running or
+  // finalizing. This is the pure decision used by the ticker.
+  function shouldExpire({ expiresAt, now = Date.now(), isRecording = false, isStarting = false, streamStopping = false }) {
+    if (isRecording || isStarting || streamStopping) return false;
+    return isExpired(expiresAt, now);
+  }
+
+  return { WARM_MIC_MS, remainingMs, formatRemaining, isExpired, shouldExpire };
 });
