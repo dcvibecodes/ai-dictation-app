@@ -4,6 +4,19 @@ AI-powered voice-to-text for people who can't install software on their computer
 
 ---
 
+## What's New in v7.3.0 — one provider entry with a Live toggle, current model catalog, dedicated edit screens
+
+- **Live is now a switch on the provider.** AssemblyAI, ElevenLabs and Mistral are single entries again; turn **Live** on to stream, off to transcribe recorded files. Each profile keeps both a batch model and a live model, so switching never loses your choice. Profiles created in 7.2.0 with `__stream` providers migrate automatically.
+- **Current models and prices everywhere.** Browse/Model fields now show the official name, exact API ID and a price basis for every curated voice model. Providers whose APIs expose a live model list (OpenAI, Gemini, OpenRouter, custom) still fetch that list after a key is saved.
+- **Settings stays short.** Corrections and Recognition now open on their own screens from compact Settings cards; their potentially long lists no longer stretch the Settings page. Corrections remain one compact row per rule.
+- **Cartesia stays visibly Live-only.** Its row/form shows a locked-on Live switch (disabled), so the capability is explicit instead of disappearing. Recorded-file fallback remains visible for the providers that support both modes, and the Live chip shows the exact active model.
+
+## What's New in v7.2.1 — truthful AssemblyAI model labels + compact corrections
+
+- **AssemblyAI (Live) models are named and priced.** Settings → Browse models and the Model suggestions now show the official name next to the exact API ID (`Universal-3.6 Pro Realtime (universal-3-6-pro)`) with the language note and hourly cost basis. Prices live in one constant in `lib/providers.js` (`https://www.assemblyai.com/pricing`, 5 Nov 2026). `universal-3-5-pro` is not offered.
+- **Active model is visible.** The voice-model row shows the exact active model ID and its cost; the Live chip shows the active model ID beside it, with the full name/cost in the tooltip.
+- **Corrections are one row per rule on every screen.** The mobile card layout is gone: Heard as → Replace with → delete stays on a single compact line on phones too, with smaller vertical padding.
+
 ## What's New in v7.2.0 — live streaming for AssemblyAI, ElevenLabs and Mistral
 
 - **Live transcription for three more providers.** Add and activate one of the new **Live** presets in Settings: **AssemblyAI (Live)** (`universal-streaming-english`, `universal-streaming-multilingual`, `universal-3-6-pro`), **ElevenLabs (Live)** (`scribe_v2_realtime`) or **Mistral (Live)** (`voxtral-mini-transcribe-realtime-3`). Existing batch presets are unchanged; the new presets are separate entries.

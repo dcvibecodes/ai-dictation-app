@@ -38,6 +38,8 @@ let audioPrewarmed = false;       // true once the idle pre-warm has run
 // every other model records first and transcribes once at Stop (more context,
 // better accuracy). The Live chip is locked to reflect the active model.
 let streamingSupported = false;
+let activeProfileModel = '';
+let activeProfileModelMeta = null;
 let streamSocket = null;
 let streamReady = false;
 let streamPendingAudio = [];
@@ -129,9 +131,51 @@ function syncLiveChip() {
     // Live is a capability badge, not a mode users should see when it cannot
     // apply. It appears only while a streaming model is the active voice model.
     liveChip.style.display = streamingSupported ? '' : 'none';
-    liveChip.title = 'Live streaming is built into the active voice model';
+    const modelId = streamingSupported ? activeProfileModel : '';
+    const modelText = modelId
+      ? ProfilesUI.modelLabel(modelId, activeProfileModelMeta)
+      : '';
+    liveChip.title = streamingSupported
+      ? 'Live streaming is active' + (modelId ? ' · ' + modelId : '')
+      : 'Live streaming is built into the active voice model';
     liveChip.classList.toggle('is-locked-on', !!streamingSupported);
+    const label = document.getElementById('liveModelLabel');
+    if (label) {
+      label.textContent = modelId;
+      label.title = [modelText, ProfilesUI.modelSubLabel(activeProfileModelMeta)].filter(Boolean).join(' — ');
+      label.classList.toggle('is-visible', !!modelId);
+    }
   }
+}
+
+// Small Live switch used in provider rows and the profile form. The callback
+// receives (next, button) so the caller can persist or swap the model list.
+function makeLiveSwitch(checked, onChange, labelText = 'Live') {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'live-switch' + (checked ? ' is-on' : '');
+  btn.setAttribute('role', 'switch');
+  btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+  btn.title = checked ? 'Live is on' : 'Live is off';
+  const track = document.createElement('span');
+  track.className = 'live-switch-track';
+  const knob = document.createElement('span');
+  knob.className = 'live-switch-knob';
+  track.appendChild(knob);
+  const text = document.createElement('span');
+  text.className = 'live-switch-text';
+  text.textContent = labelText;
+  btn.append(track, text);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = !btn.classList.contains('is-on');
+    btn.classList.toggle('is-on', next);
+    btn.setAttribute('aria-checked', next ? 'true' : 'false');
+    btn.title = next ? 'Live is on' : 'Live is off';
+    onChange(next, btn);
+  });
+  return btn;
 }
 
 function isAppendMode() { return appendToggle ? appendToggle.checked : localStorage.getItem('appendMode') === 'true'; }
@@ -1589,7 +1633,10 @@ const ProfilesUI = window.ProfilesUI || {
   initials: n => String(n || '?').slice(0, 2).toUpperCase(),
   monogram: n => String(n || '?').slice(0, 1).toUpperCase(),
   descriptor: () => 'Key + model only',
-  formatLatency: ms => (Number(ms) >= 1000 ? (Number(ms) / 1000).toFixed(1) + ' s' : Math.round(Number(ms)) + ' ms')
+  formatLatency: ms => (Number(ms) >= 1000 ? (Number(ms) / 1000).toFixed(1) + ' s' : Math.round(Number(ms)) + ' ms'),
+  modelMeta: () => null,
+  modelLabel: id => String(id || ''),
+  modelSubLabel: () => ''
 };
 
 function liveAnnounce(message) {
@@ -1692,6 +1739,7 @@ function renderProfiles(kind) {
     const meta = document.createElement('span');
     meta.className = 'profile-meta';
     const parts = [profile.model || 'default model', profile.maskedKey || 'no key'];
+    if (profile.modelMeta && profile.modelMeta.costLabel) parts.push(profile.modelMeta.costLabel);
     if (profile.supportsStreaming && profile.batchFallback) {
       parts.push(`Live · recorded files: ${profile.batchFallback.providerName} ${profile.batchFallback.model}`);
     }
@@ -1708,12 +1756,26 @@ function renderProfiles(kind) {
       openProfileForm(kind, profile.provider, profile);
     });
 
-    row.append(tile, body, edit);
+    let liveSwitch = null;
+    if (kind === 'transcription' && profile.supportsLive) {
+      liveSwitch = makeLiveSwitch(profile.live, (next) => setProfileLive(kind, profile, next), 'Live');
+      if (profile.liveLocked) {
+        liveSwitch.disabled = true;
+        liveSwitch.classList.add('is-locked');
+        liveSwitch.setAttribute('aria-disabled', 'true');
+        liveSwitch.title = 'Live is always on: Cartesia is streaming-only';
+      }
+    }
+
+    row.append(tile, body);
+    if (liveSwitch) row.appendChild(liveSwitch);
+    row.appendChild(edit);
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.profile-edit')) return;
+      if (e.target.closest('.profile-edit') || e.target.closest('.live-switch')) return;
       activateProfile(kind, profile);
     });
     row.addEventListener('keydown', (e) => {
+      if (e.target.closest('.live-switch')) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateProfile(kind, profile); }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -1772,6 +1834,8 @@ async function activateProfile(kind, profile) {
     renderProfiles(kind);
     if (kind === 'transcription') {
       activeProfileProtocol = profile.protocol || 'whisper';
+      activeProfileModel = profile.model || '';
+      activeProfileModelMeta = profile.modelMeta || null;
       streamingSupported = !!profile.supportsStreaming;
       syncLiveChip();
     }
@@ -1779,6 +1843,21 @@ async function activateProfile(kind, profile) {
   } catch (e) {
     if (e.message !== 'Unauthorized') liveAnnounce('Could not switch model: ' + e.message);
     if (previous) renderProfiles(kind);
+  }
+}
+
+async function setProfileLive(kind, profile, live) {
+  try {
+    await apiJson(`/api/profiles/${kind}/${encodeURIComponent(profile.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ live })
+    });
+    await loadSettingsUI();
+    if (kind === 'transcription') await refreshActiveProfile();
+    liveAnnounce(`Live ${live ? 'enabled' : 'disabled'} for ${profile.label}`);
+  } catch (e) {
+    if (e.message !== 'Unauthorized') liveAnnounce('Could not change Live: ' + e.message);
   }
 }
 
@@ -1809,7 +1888,35 @@ function unlockPageScroll() {
   window.scrollTo(0, scrollLockY);
 }
 
+let movedSettingsSection = null;
+
+function returnSettingsSection() {
+  if (!movedSettingsSection) return;
+  const { node, home } = movedSettingsSection;
+  node.hidden = true;
+  home.appendChild(node);
+  movedSettingsSection = null;
+}
+
+function openSettingsSection(name) {
+  const config = {
+    recognition: { id: 'recognitionSection', title: 'Recognition' },
+    corrections: { id: 'correctionsSection', title: 'Corrections' }
+  }[name];
+  if (!config) return;
+  const node = document.getElementById(config.id);
+  if (!node) return;
+  returnSettingsSection();
+  const home = node.parentNode;
+  openSheet(config.title);
+  node.hidden = false;
+  document.getElementById('sheetBody').appendChild(node);
+  movedSettingsSection = { node, home };
+  if (name === 'corrections') renderCorrectionsUI();
+}
+
 function openSheet(title) {
+  returnSettingsSection();
   const overlay = document.getElementById('sheetOverlay');
   const wasOpen = overlay.classList.contains('open');
   if (!wasOpen) sheetReturnFocus = document.activeElement;
@@ -1826,6 +1933,7 @@ function openSheet(title) {
 
 function closeSheet(e) {
   if (e && e.target && e.target !== document.getElementById('sheetOverlay')) return;
+  returnSettingsSection();
   const overlay = document.getElementById('sheetOverlay');
   overlay.classList.remove('open');
   overlay.setAttribute('aria-hidden', 'true');
@@ -1948,15 +2056,91 @@ function openProfileForm(kind, providerId, profile) {
   }
   keyField.wrap.appendChild(keyHelp);
 
-  const modelField = field('Model', 'text', profile ? profile.model : (provider.models && provider.models[0]) || '');
+  const alwaysLive = provider.protocol === 'cartesia' && !provider.stream;
+  const supportsLive = !!provider.stream || alwaysLive;
+  let live = alwaysLive ? true : (supportsLive && !!(profile && profile.live));
+  let batchModel = profile
+    ? (profile.batchModel || profile.model || '')
+    : ((provider.models && provider.models[0]) || '');
+  let streamModel = profile
+    ? (profile.streamModel || (provider.stream && provider.stream.models[0]) || '')
+    : ((provider.stream && provider.stream.models[0]) || '');
+  if (!batchModel) batchModel = (provider.models && provider.models[0]) || '';
+
+  const modelField = field('Model', 'text', live ? streamModel : batchModel);
   modelField.input.setAttribute('list', 'modelSuggestions');
+  const modelFieldLabel = modelField.wrap.querySelector('span');
+  if (live && provider.stream && modelFieldLabel) modelFieldLabel.textContent = 'Live model';
+  const modelHelp = document.createElement('span');
+  modelHelp.className = 'field-help model-meta-help';
+  modelField.wrap.appendChild(modelHelp);
   const datalist = document.createElement('datalist');
   datalist.id = 'modelSuggestions';
-  (provider.models || []).forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    datalist.appendChild(opt);
-  });
+  const currentModels = () => (live && provider.stream)
+    ? (provider.stream.models || [])
+    : (provider.models || []);
+  const currentLabels = () => (live && provider.stream)
+    ? (provider.stream.modelLabels || {})
+    : (provider.modelLabels || {});
+  const fillDatalist = (models) => {
+    datalist.innerHTML = '';
+    (models || currentModels()).forEach(m => {
+      const meta = ProfilesUI.modelMeta(currentLabels(), m);
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.label = ProfilesUI.modelLabel(m, meta);
+      opt.textContent = ProfilesUI.modelLabel(m, meta);
+      datalist.appendChild(opt);
+    });
+  };
+  const refreshModelHelp = () => {
+    const id = modelField.input.value.trim();
+    const meta = ProfilesUI.modelMeta(currentLabels(), id);
+    modelHelp.textContent = meta
+      ? [ProfilesUI.modelLabel(id, meta), ProfilesUI.modelSubLabel(meta)].filter(Boolean).join(' — ')
+      : '';
+  };
+  const liveRow = document.createElement('div');
+  liveRow.className = 'live-form-row';
+  function updateLiveHint() {
+    const hint = liveRow.querySelector('.live-form-hint');
+    if (!hint) return;
+    if (alwaysLive) {
+      hint.textContent = 'Cartesia is streaming-only, so Live is always on.';
+      return;
+    }
+    hint.textContent = live
+      ? `Streams while you speak. Recorded files use ${batchModel || 'the batch model'}.`
+      : 'Live is off. This model transcribes recorded files only.';
+  }
+  if (supportsLive) {
+    const liveSwitch = makeLiveSwitch(live, (next) => {
+      if (live) streamModel = modelField.input.value.trim();
+      else batchModel = modelField.input.value.trim();
+      live = next;
+      if (!batchModel) batchModel = (provider.models && provider.models[0]) || '';
+      if (live && !streamModel) streamModel = (provider.stream.models && provider.stream.models[0]) || '';
+      modelField.input.value = live ? streamModel : batchModel;
+      if (modelFieldLabel) modelFieldLabel.textContent = live ? 'Live model' : 'Model';
+      fillDatalist();
+      refreshModelHelp();
+      updateLiveHint();
+    }, 'Live streaming');
+    if (alwaysLive) {
+      liveSwitch.disabled = true;
+      liveSwitch.classList.add('is-locked');
+      liveSwitch.setAttribute('aria-disabled', 'true');
+      liveSwitch.title = 'Live is always on: Cartesia is streaming-only';
+    }
+    const hint = document.createElement('span');
+    hint.className = 'field-help live-form-hint';
+    liveRow.append(liveSwitch, hint);
+  }
+  fillDatalist();
+  modelField.input.addEventListener('input', refreshModelHelp);
+  modelField.input.addEventListener('change', refreshModelHelp);
+  refreshModelHelp();
+  updateLiveHint();
   const browse = document.createElement('button');
   browse.type = 'button';
   browse.className = 'btn btn-ghost btn-sm';
@@ -1979,20 +2163,17 @@ function openProfileForm(kind, providerId, profile) {
           provider: provider.id,
           profileId: profile ? profile.id : undefined,
           key: keyField.input.value.trim() || undefined,
-          baseUrl: baseField ? baseField.input.value.trim() : undefined
+          baseUrl: baseField ? baseField.input.value.trim() : undefined,
+          live: !!live
         })
       });
       const models = data.models || [];
-      datalist.innerHTML = '';
-      models.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m;
-        datalist.appendChild(opt);
-      });
+      fillDatalist(models);
       renderModelPicker(modelPicker, models, modelField.input.value, (picked) => {
         modelField.input.value = picked;
+        refreshModelHelp();
         modelPicker.style.display = 'none';
-      }, data.warning);
+      }, data.warning, currentLabels());
     } catch (e) {
       modelPicker.innerHTML = '';
       const p = document.createElement('p');
@@ -2038,7 +2219,9 @@ function openProfileForm(kind, providerId, profile) {
   }
   actions.append(cancel, testSave);
 
-  form.append(head, labelField.wrap, keyField.wrap, modelField.wrap, datalist);
+  form.append(head, labelField.wrap, keyField.wrap);
+  if (supportsLive) form.appendChild(liveRow);
+  form.append(modelField.wrap, datalist);
   const modelRow = document.createElement('div');
   modelRow.className = 'browse-row';
   modelRow.appendChild(browse);
@@ -2048,14 +2231,19 @@ function openProfileForm(kind, providerId, profile) {
   form.append(result, actions);
   body.appendChild(form);
 
-  const payload = () => ({
-    label: labelField.input.value.trim(),
-    provider: provider.id,
-    key: keyField.input.value.trim(),
-    model: modelField.input.value.trim(),
-    baseUrl: baseField ? baseField.input.value.trim() : undefined,
-    engine: provider.protocol === 'gemini' ? 'gemini' : (provider.id === 'custom' ? 'whisper' : undefined)
-  });
+  const payload = () => {
+    const edited = modelField.input.value.trim();
+    return {
+      label: labelField.input.value.trim(),
+      provider: provider.id,
+      key: keyField.input.value.trim(),
+      model: (live && provider.stream) ? batchModel : edited,
+      streamModel: (live && provider.stream) ? edited : streamModel,
+      live: !!live,
+      baseUrl: baseField ? baseField.input.value.trim() : undefined,
+      engine: provider.protocol === 'gemini' ? 'gemini' : (provider.id === 'custom' ? 'whisper' : undefined)
+    };
+  };
 
   async function testConnection() {
     testSave.disabled = true;
@@ -2141,7 +2329,7 @@ function openProfileForm(kind, providerId, profile) {
   });
 }
 
-function renderModelPicker(container, models, current, onPick, warning) {
+function renderModelPicker(container, models, current, onPick, warning, labels) {
   container.innerHTML = '';
   if (warning) {
     const note = document.createElement('p');
@@ -2163,14 +2351,31 @@ function renderModelPicker(container, models, current, onPick, warning) {
   search.setAttribute('aria-label', 'Filter models');
   const list = document.createElement('div');
   list.className = 'model-list';
+  const metaFor = (id) => (ProfilesUI.modelMeta ? ProfilesUI.modelMeta(labels, id) : null);
   const draw = (query) => {
     const q = String(query || '').toLowerCase();
     list.innerHTML = '';
-    models.filter(m => !q || m.toLowerCase().includes(q)).forEach(m => {
+    models.filter(m => {
+      if (!q) return true;
+      const meta = metaFor(m);
+      return [m, meta && meta.displayName, meta && meta.languageNote, meta && meta.costLabel]
+        .filter(Boolean).join(' ').toLowerCase().includes(q);
+    }).forEach(m => {
+      const meta = metaFor(m);
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'model-option' + (m === current ? ' is-current' : '');
-      row.textContent = m;
+      const name = document.createElement('span');
+      name.className = 'model-option-name';
+      name.textContent = ProfilesUI.modelLabel(m, meta);
+      row.appendChild(name);
+      const sub = ProfilesUI.modelSubLabel(meta);
+      if (sub) {
+        const note = document.createElement('span');
+        note.className = 'model-option-sub';
+        note.textContent = sub;
+        row.appendChild(note);
+      }
       row.addEventListener('click', () => onPick(m));
       list.appendChild(row);
     });
@@ -2240,9 +2445,12 @@ async function loadSettingsUI() {
     if (lang) lang.value = settingsState.transcriptionLanguage || '';
     const hint = document.getElementById('setTranscriptionHint');
     if (hint) hint.value = settingsState.transcriptionHint || '';
+    updateRecognitionSummary();
 
     const active = (settingsState.transcriptionProfiles || []).find(p => p.active);
     activeProfileProtocol = active ? active.protocol : 'none';
+    activeProfileModel = active ? (active.model || '') : '';
+    activeProfileModelMeta = active ? (active.modelMeta || null) : null;
     streamingSupported = !!(active && active.supportsStreaming);
     syncLiveChip();
 
@@ -2273,6 +2481,16 @@ async function loadSettingsUI() {
   }
 }
 
+function updateRecognitionSummary() {
+  const el = document.getElementById('recognitionSummary');
+  if (!el) return;
+  const lang = document.getElementById('setTranscriptionLanguage');
+  const hint = document.getElementById('setTranscriptionHint');
+  const language = lang ? lang.value.trim() : '';
+  const hasHint = !!(hint && hint.value.trim());
+  el.textContent = `${language || 'Auto-detect'} · ${hasHint ? 'vocabulary hint set' : 'no vocabulary hint'}`;
+}
+
 async function saveRecognitionSettings() {
   const result = document.getElementById('recognitionResult');
   const btn = document.getElementById('saveRecognitionBtn');
@@ -2290,6 +2508,7 @@ async function saveRecognitionSettings() {
         transcriptionHint: document.getElementById('setTranscriptionHint').value.trim()
       })
     });
+    updateRecognitionSummary();
     result.textContent = 'Saved ✓';
     result.className = 'test-result test-ok';
     setTimeout(() => { result.textContent = ''; result.className = 'test-result'; }, 2500);
@@ -2520,6 +2739,10 @@ function renderCorrectionsUI() {
   if (correctionsDirty) return;
   list.innerHTML = '';
   const rules = (glossary && glossary.profiles && glossary.profiles.work && glossary.profiles.work.replacements) || [];
+  const summary = document.getElementById('correctionsSummary');
+  if (summary) summary.textContent = rules.length
+    ? `${rules.length} rule${rules.length === 1 ? '' : 's'}`
+    : 'No rules yet';
   setCorrectionsHeaderVisible(rules.length > 0);
   if (!rules.length) {
     list.appendChild(makeCorrectionsEmpty());
@@ -2638,6 +2861,8 @@ async function refreshActiveProfile() {
     if (res.status === 401) return;
     const data = await res.json();
     activeProfileProtocol = data.protocol || 'none';
+    activeProfileModel = data.model || '';
+    activeProfileModelMeta = data.modelMeta || null;
     streamingSupported = !!data.supportsStreaming;
     syncLiveChip();
   } catch {}
@@ -4226,7 +4451,7 @@ if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)
 //   1. Poll for updates.
 //   2. When a new worker takes control, reload once (guarded against loops).
 //   3. Support a one-time "?sw=reset" escape hatch that fully unregisters the SW.
-const APP_VERSION = '7.2.0'; // keep in sync with package.json at release time
+const APP_VERSION = '7.3.0'; // keep in sync with package.json at release time
 window.__APP_VERSION = APP_VERSION;
 // Always log the running build so `__APP_VERSION` in the console tells us which
 // code a browser is actually executing (no UI change).

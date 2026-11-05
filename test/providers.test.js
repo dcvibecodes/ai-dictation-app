@@ -152,46 +152,148 @@ test('fallback only resolves when explicitly configured', () => {
   assert.equal(providers.getFallbackProfile(settings).provider, 'groq');
 });
 
-test('live presets: streaming capability and declared batch fallbacks', () => {
+test('live providers: one entry, a live flag switches protocol and keeps a batch fallback', () => {
   const cases = [
-    ['assemblyai_stream', 'assemblyai-stream', 'assemblyai', 'default'],
-    ['elevenlabs_stream', 'elevenlabs-stream', 'elevenlabs', 'scribe_v2'],
-    ['mistral_stream', 'mistral-stream', 'whisper', 'voxtral-mini-latest']
+    ['assemblyai', 'assemblyai-stream', 'assemblyai'],
+    ['elevenlabs', 'elevenlabs-stream', 'elevenlabs'],
+    ['mistral', 'mistral-stream', 'whisper']
   ];
-  for (const [provider, protocol, batchProtocol, batchModel] of cases) {
+  for (const [provider, streamProtocol, batchProtocol] of cases) {
     const preset = providers.TRANSCRIPTION_PROVIDERS[provider];
-    assert.ok(preset, `missing ${provider}`);
-    assert.equal(preset.protocol, protocol);
-    assert.equal(providers.isStreamingProtocol(preset.protocol), true);
-    assert.equal(preset.batchFallback.protocol, batchProtocol);
+    assert.ok(preset.stream, `missing stream config for ${provider}`);
+    assert.equal(preset.stream.protocol, streamProtocol);
+    assert.equal(preset.protocol, batchProtocol);
 
     const resolved = providers.resolveProfile({
-      id: 'p', provider, model: preset.models[0], apiKey: 'key'
+      id: 'p', provider,
+      model: preset.models[0],
+      streamModel: preset.stream.models[0],
+      live: true,
+      apiKey: 'key'
     });
-    assert.equal(resolved.protocol, protocol);
+    assert.equal(resolved.protocol, streamProtocol);
+    assert.equal(resolved.live, true);
     assert.equal(resolved.supportsStreaming, true);
+    assert.notEqual(resolved.model, preset.models[0], 'live uses the stream model');
 
     const batch = providers.resolveBatchProfile(resolved);
     assert.equal(batch.protocol, batchProtocol);
-    assert.equal(batch.model, batchModel);
-    assert.notEqual(batch.model, preset.models[0], 'stream model must not reach batch');
+    assert.equal(batch.model, preset.models[0]);
+    assert.notEqual(batch.model, resolved.model);
   }
-  assert.equal(
-    providers.resolveBatchProfile(providers.resolveProfile({
-      id: 'm', provider: 'mistral_stream', model: 'voxtral-mini-transcribe-realtime-3', apiKey: 'key'
-    })).baseUrl,
-    'https://api.mistral.ai/v1'
-  );
+  const mistral = providers.resolveProfile({
+    id: 'm', provider: 'mistral', model: 'voxtral-mini-latest',
+    streamModel: 'voxtral-mini-transcribe-realtime-3', live: true, apiKey: 'key'
+  }).batchFallback;
+  assert.equal(mistral.baseUrl, 'https://api.mistral.ai/v1');
 });
 
-test('live presets: public profile exposes capability + fallback, never the key', () => {
-  const profile = providers.resolveProfile({
-    id: 'p', provider: 'assemblyai_stream', model: 'universal-streaming-english', apiKey: 'secret-key'
+test('live off keeps the batch model and protocol', () => {
+  const resolved = providers.resolveProfile({
+    id: 'a', provider: 'assemblyai', model: 'universal-3-5-pro', live: false, apiKey: 'key'
   });
+  assert.equal(resolved.protocol, 'assemblyai');
+  assert.equal(resolved.supportsStreaming, false);
+  assert.equal(resolved.batchFallback, null);
+  assert.equal(resolved.modelMeta.displayName, 'Universal-3.5 Pro');
+});
+
+test('legacy __stream providers migrate into the parent entry with live on', () => {
+  const settings = {
+    TRANSCRIPTION_PROFILES: [
+      { id: 'a', provider: 'assemblyai_stream', model: 'universal-streaming-english', apiKey: 'k' },
+      { id: 'e', provider: 'elevenlabs_stream', model: 'scribe_v2_realtime', apiKey: 'k' },
+      { id: 'm', provider: 'mistral_stream', model: 'voxtral-mini-transcribe-realtime-3', apiKey: 'k' }
+    ],
+    CLEANUP_PROFILES: []
+  };
+  const out = providers.migrateSettings(settings);
+  const a = out.TRANSCRIPTION_PROFILES.find(p => p.id === 'a');
+  assert.equal(a.provider, 'assemblyai');
+  assert.equal(a.live, true);
+  assert.equal(a.streamModel, 'universal-streaming-english');
+  assert.ok(providers.TRANSCRIPTION_PROVIDERS.assemblyai.models.includes(a.model));
+
+  const e = out.TRANSCRIPTION_PROFILES.find(p => p.id === 'e');
+  assert.equal(e.provider, 'elevenlabs');
+  assert.equal(e.live, true);
+  assert.equal(e.streamModel, 'scribe_v2_realtime');
+
+  const m = out.TRANSCRIPTION_PROFILES.find(p => p.id === 'm');
+  assert.equal(m.provider, 'mistral');
+  assert.equal(m.live, true);
+  assert.equal(m.streamModel, 'voxtral-mini-transcribe-realtime-3');
+  assert.equal(providers.TRANSCRIPTION_PROVIDERS.assemblyai_stream, undefined);
+});
+
+test('public profile exposes live, exact active model and both model labels', () => {
+  const profile = {
+    id: 'p', provider: 'assemblyai',
+    model: 'universal-3-5-pro',
+    streamModel: 'universal-streaming-english',
+    live: true,
+    apiKey: 'secret-key'
+  };
   const pub = providers.publicProfile(profile, 'transcription', 'p');
-  assert.equal(pub.supportsStreaming, true);
-  assert.deepEqual(pub.batchFallback, {
-    protocol: 'assemblyai', model: 'default', providerName: 'AssemblyAI'
-  });
+  assert.equal(pub.live, true);
+  assert.equal(pub.supportsLive, true);
+  assert.equal(pub.model, 'universal-streaming-english');
+  assert.equal(pub.batchModel, 'universal-3-5-pro');
+  assert.equal(pub.streamModel, 'universal-streaming-english');
+  assert.equal(pub.modelMeta.displayName, 'Universal-Streaming English');
+  assert.equal(pub.batchModelMeta.displayName, 'Universal-3.5 Pro');
+  assert.equal(pub.batchFallback.model, 'universal-3-5-pro');
   assert.equal(JSON.stringify(pub).includes('secret-key'), false);
+});
+
+test('AssemblyAI live models: official labels, exact IDs, no invented versions', () => {
+  const preset = providers.TRANSCRIPTION_PROVIDERS.assemblyai;
+  assert.deepEqual(preset.stream.models, [
+    'universal-streaming-english',
+    'universal-streaming-multilingual',
+    'universal-3-6-pro'
+  ]);
+  assert.equal(preset.stream.models.includes('universal-3-5-pro'), false);
+  assert.deepEqual(preset.stream.modelLabels['universal-streaming-english'], {
+    displayName: 'Universal-Streaming English',
+    costLabel: '$0.15/hr of open-session time, incl idle',
+    languageNote: 'English only. Cheapest live option.'
+  });
+  assert.deepEqual(preset.stream.modelLabels['universal-3-6-pro'], {
+    displayName: 'Universal-3.6 Pro Realtime',
+    costLabel: '$0.45/hr of open-session time, incl idle',
+    languageNote: '32 languages incl Hindi.'
+  });
+});
+
+test('every curated model has a display name and a price/basis label', () => {
+  for (const [id, preset] of Object.entries(providers.TRANSCRIPTION_PROVIDERS)) {
+    if (id === 'custom' || id === 'openrouter') continue;
+    for (const model of preset.models) {
+      const meta = preset.modelLabels && preset.modelLabels[model];
+      assert.ok(meta && meta.displayName, `${id}/${model} missing display name`);
+      assert.ok(meta.costLabel, `${id}/${model} missing cost label`);
+    }
+    if (preset.stream) {
+      for (const model of preset.stream.models) {
+        const meta = preset.stream.modelLabels && preset.stream.modelLabels[model];
+        assert.ok(meta && meta.displayName, `${id} live/${model} missing display name`);
+        assert.ok(meta.costLabel, `${id} live/${model} missing cost label`);
+      }
+    }
+  }
+});
+
+test('Cartesia is streaming-only: Live is on and locked', () => {
+  const stored = { id: 'c', provider: 'cartesia', model: 'ink-2', apiKey: 'k' };
+  const resolved = providers.resolveProfile(stored);
+  assert.equal(resolved.protocol, 'cartesia');
+  assert.equal(resolved.live, true);
+  assert.equal(resolved.supportsStreaming, true);
+  const pub = providers.publicProfile(stored, 'transcription', 'c');
+  assert.equal(pub.live, true);
+  assert.equal(pub.supportsLive, true);
+  assert.equal(pub.liveLocked, true);
+  assert.equal(pub.model, 'ink-2');
+  assert.equal(pub.supportsStreaming, true);
 });

@@ -703,10 +703,21 @@ function validateProfileInput(kind, body, { requireKey }) {
   }
   if (requireKey && !body.key) return { error: 'API key is required.' };
   if (label.length > 60) return { error: 'Profile name must be 60 characters or fewer.' };
+  const preset = catalog[provider];
+  const alwaysLive = kind === 'transcription' && !!(preset && preset.protocol === 'cartesia' && !preset.stream);
+  const supportsLive = kind === 'transcription' && (!!(preset && preset.stream) || alwaysLive);
+  const live = supportsLive && (
+    alwaysLive || body.live === true || body.live === 'true' || body.live === 1 || body.live === '1'
+  );
+  const streamModel = supportsLive && preset.stream
+    ? (String(body.streamModel || '').trim() || preset.stream.models[0])
+    : '';
   return {
     value: {
       provider,
       model,
+      streamModel,
+      live,
       label: label || catalog[provider].name,
       baseUrl: provider === 'custom' ? baseUrl : '',
       engine: String(body.engine || 'whisper')
@@ -740,10 +751,13 @@ function registerProfileRoutes(kind) {
     const profile = providers.findProfile(current, kind, req.params.id);
     if (!profile) return res.status(404).json({ error: 'Profile not found.' });
     if (req.body.provider !== undefined || req.body.model !== undefined
-      || req.body.label !== undefined || req.body.baseUrl !== undefined) {
+      || req.body.label !== undefined || req.body.baseUrl !== undefined
+      || req.body.live !== undefined || req.body.streamModel !== undefined) {
       const checked = validateProfileInput(kind, {
         provider: req.body.provider === undefined ? profile.provider : req.body.provider,
         model: req.body.model === undefined ? profile.model : req.body.model,
+        streamModel: req.body.streamModel === undefined ? profile.streamModel : req.body.streamModel,
+        live: req.body.live === undefined ? profile.live : req.body.live,
         label: req.body.label === undefined ? profile.label : req.body.label,
         baseUrl: req.body.baseUrl === undefined ? profile.baseUrl : req.body.baseUrl,
         engine: req.body.engine === undefined ? profile.engine : req.body.engine
@@ -802,6 +816,8 @@ app.get('/api/active-profile', requireOwner, (req, res) => {
     provider: profile.provider,
     protocol: profile.protocol,
     model: profile.model,
+    modelMeta: profile.modelMeta || null,
+    live: !!profile.live,
     supportsStreaming: !!profile.supportsStreaming
   } : { protocol: 'none', supportsStreaming: false });
 });
@@ -1510,7 +1526,15 @@ function buildProfileFromRequest(body, kind) {
     const current = loadSettings();
     const list = kind === 'cleanup' ? current.CLEANUP_PROFILES : current.TRANSCRIPTION_PROFILES;
     const profile = (list || []).find(p => p.id === body.profileId);
-    if (profile && profile.apiKey) return providers.resolveProfile(profile, kind);
+    if (profile && profile.apiKey) {
+      // Test the values currently in the form, not the last saved ones.
+      return providers.resolveProfile({
+        ...profile,
+        model: body.model === undefined ? profile.model : body.model,
+        streamModel: body.streamModel === undefined ? profile.streamModel : body.streamModel,
+        live: body.live === undefined ? profile.live : body.live
+      }, kind);
+    }
     if (saved && saved.id === body.profileId) return saved;
     return null;
   }
@@ -1524,6 +1548,8 @@ function buildProfileFromRequest(body, kind) {
     engine: body.engine || preset.protocol || 'whisper',
     baseUrl: body.url || body.baseUrl || '',
     model: body.model || '',
+    streamModel: body.streamModel || '',
+    live: body.live === true || body.live === 'true',
     apiKey: body.key || ''
   }, kind);
 }
@@ -1609,11 +1635,25 @@ async function listNativeGeminiModels(providerId, preset, key) {
 }
 
 app.post('/api/models', requireOwner, async (req, res) => {
-  const { provider, key, baseUrl, kind, profileId } = req.body || {};
+  const { provider, key, baseUrl, kind, profileId, live } = req.body || {};
   const catalog = kind === 'cleanup' ? providers.CLEANUP_PROVIDERS : providers.TRANSCRIPTION_PROVIDERS;
   const preset = catalog[provider] || {};
-  const curated = Array.isArray(preset.models) ? preset.models : [];
+  const listPreset = kind !== 'cleanup' && live && preset.stream ? preset.stream : preset;
+  const curated = Array.isArray(listPreset.models) ? listPreset.models : [];
   try {
+    // Streaming model lists are curated: these providers expose no compatible
+    // public model-list API, so there is nothing to fetch.
+    if (kind !== 'cleanup' && live && preset.stream) {
+      return res.json({ ok: true, models: curated });
+    }
+    // Native adapters (AssemblyAI, ElevenLabs, Deepgram, Cohere, Corti,
+    // Cartesia) have no compatible model-list endpoint: the curated list is the
+    // complete list. Return it silently instead of showing a fetch warning.
+    const supportsListFetch = kind === 'cleanup' || !!preset.modelsUrl ||
+      ['openai', 'groq', 'mistral', 'openrouter', 'custom', 'gemini', 'gemini_transcribe'].includes(provider);
+    if (!supportsListFetch) {
+      return res.json({ ok: true, models: curated });
+    }
     // Prefer the key of the profile being edited. Never send one provider's
     // saved key to a different provider.
     let apiKey = key;

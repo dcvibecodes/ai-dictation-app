@@ -237,7 +237,8 @@ test('Cartesia: handshake params, header, frames, one finalize, final text', asy
 test('batch fallback: a live ElevenLabs profile sends the batch model', async () => {
   const providers = require('../lib/providers');
   const resolved = providers.resolveProfile({
-    id: 'live', provider: 'elevenlabs_stream', model: 'scribe_v2_realtime', apiKey: 'xi-123'
+    id: 'live', provider: 'elevenlabs', model: 'scribe_v2',
+    streamModel: 'scribe_v2_realtime', live: true, apiKey: 'xi-123'
   });
   const batch = providers.resolveBatchProfile(resolved);
   const audioPath = tmpAudio();
